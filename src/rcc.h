@@ -467,11 +467,6 @@ Type *vla_of(Type *base, Node *expr, int64_t arr_len);
 void optimize(Program *prog);
 
 // Unicode identifiers
-uint32_t decode_utf8(char **new_pos, char *p);
-bool is32_ident1(uint32_t c);
-bool is32_ident2(uint32_t c);
-int utf8_len(char *str);
-const char *u8ident_check_ident(const char *name, int len);
-void u8ident_allow_script(const char *name);
+#include "unicode.h"
 
 #endif // RCC_H
