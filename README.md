@@ -1,4 +1,4 @@
-# RCC — Rising C Compiler
+# RCC — Regoshi C Compiler
 
 A fast, self-contained C compiler targeting x86-64 Windows. Written from scratch in C11.
 **RCC generates faster code than TCC** while keeping compilation speed competitive.
