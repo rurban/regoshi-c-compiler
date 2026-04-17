@@ -248,6 +248,10 @@ struct Node {
     // Local variable
     LVar *var;
 
+    // Cleanup range for control-flow that exits scopes
+    LVar *cleanup_begin;
+    LVar *cleanup_end;
+
     int64_t val;   // Used if kind == ND_NUM
     double fval;   // Used if kind == ND_FNUM
     int array_len; // Used if kind == TY_ARRAY
@@ -268,6 +272,7 @@ typedef struct Function Function;
 struct Function {
     Function *next;
     char *name;
+    char *asm_name;
     Type *ty;
     LVar *params;
     LVar *locals;

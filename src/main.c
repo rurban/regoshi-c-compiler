@@ -91,7 +91,7 @@ int main(int argc, char **argv) {
         if (opt_c) {
             snprintf(cmd, sizeof(cmd), "gcc -c %s -o %s", asm_path, out_path);
         } else {
-            snprintf(cmd, sizeof(cmd), "gcc %s -o %s", asm_path, out_path);
+            snprintf(cmd, sizeof(cmd), "gcc -no-pie %s -o %s", asm_path, out_path);
         }
         
         int status = system(cmd);
