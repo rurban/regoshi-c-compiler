@@ -468,9 +468,9 @@ static int gen(Node *node) {
     case ND_FUNCALL: {
         Node *argv[64];
         int nargs = 0;
-        int arg_regs[4];
-        int arg_sizes[4];
-        bool arg_is_float[4];
+        int arg_regs[6];
+        int arg_sizes[6];
+        bool arg_is_float[6];
         for (Node *arg = node->args; arg; arg = arg->next)
             argv[nargs++] = arg;
 
@@ -480,49 +480,69 @@ static int gen(Node *node) {
             node->lhs->var && node->lhs->var->is_function)
             call_target = node->lhs->var->name;
 
+#ifdef _WIN32
         char *argreg32[] = {"ecx", "edx", "r8d", "r9d"};
         char *argreg64[] = {"rcx", "rdx", "r8", "r9"};
         char *argxmm[] = {"xmm0", "xmm1", "xmm2", "xmm3"};
+        int max_reg_args = 4;
+        int shadow_space = 32;
+#else
+        char *argreg32[] = {"edi", "esi", "edx", "ecx", "r8d", "r9d"};
+        char *argreg64[] = {"rdi", "rsi", "rdx", "rcx", "r8", "r9"};
+        char *argxmm[] = {"xmm0", "xmm1", "xmm2", "xmm3", "xmm4", "xmm5"};
+        int max_reg_args = 6;
+        int shadow_space = 0;
+#endif
 
-        int stack_args = nargs > 4 ? nargs - 4 : 0;
+        int stack_args = nargs > max_reg_args ? nargs - max_reg_args : 0;
         int stack_pad = (stack_args & 1) ? 8 : 0;
-        int stack_reserve = stack_args > 0 ? 32 + stack_args * 8 + stack_pad : 0;
+        int stack_reserve = stack_args > 0 ? shadow_space + stack_args * 8 + stack_pad : 0;
 
         // Save live scratch registers to spill slots (instead of push/pop)
         int saved_scratch = used_regs & 3;
         if (saved_scratch & 1) { printf("  mov [rbp-%d], r10\n", SPILL_R10); used_regs &= ~1; }
         if (saved_scratch & 2) { printf("  mov [rbp-%d], r11\n", SPILL_R11); used_regs &= ~2; }
 
-        int reg_nargs = nargs < 4 ? nargs : 4;
+        int reg_nargs = nargs < max_reg_args ? nargs : max_reg_args;
         for (int i = 0; i < reg_nargs; i++) {
             arg_regs[i] = gen(argv[i]);
             arg_sizes[i] = argv[i]->ty->size;
             arg_is_float[i] = is_flonum(argv[i]->ty);
         }
 
-        // For >4 args: allocate shadow + stack arg space dynamically
+        // For >max_reg_args args: allocate stack arg space dynamically
         if (stack_reserve > 0)
             printf("  sub rsp, %d\n", stack_reserve);
 
-        for (int i = nargs - 1; i >= 4; i--) {
+        for (int i = nargs - 1; i >= max_reg_args; i--) {
             int r = gen(argv[i]);
             if (is_flonum(argv[i]->ty)) {
-                printf("  mov qword ptr [rsp+%d], %s\n", 32 + (i - 4) * 8, reg64[r]);
+                printf("  mov qword ptr [rsp+%d], %s\n", shadow_space + (i - max_reg_args) * 8, reg64[r]);
             } else {
                 if (argv[i]->ty->size == 1)
                     printf("  movzx %s, %s\n", reg64[r], reg8[r]);
                 else if (argv[i]->ty->size == 4)
                     printf("  mov %s, %s\n", reg32[r], reg32[r]);
-                printf("  mov qword ptr [rsp+%d], %s\n", 32 + (i - 4) * 8, reg64[r]);
+                printf("  mov qword ptr [rsp+%d], %s\n", shadow_space + (i - max_reg_args) * 8, reg64[r]);
             }
             free_reg(r);
         }
 
+        int xmm_args = 0;
+        for (int i = 0; i < reg_nargs; i++) {
+            if (arg_is_float[i]) xmm_args++;
+        }
+
         for (int i = 0; i < reg_nargs; i++) {
             if (arg_is_float[i]) {
+#ifdef _WIN32
                 // Windows ABI: float args go in BOTH xmm and integer regs
                 printf("  movq %s, %s\n", argxmm[i], reg64[arg_regs[i]]);
                 printf("  mov %s, %s\n", argreg64[i], reg64[arg_regs[i]]);
+#else
+                // Linux ABI: float args go only in xmm regs
+                printf("  movq %s, %s\n", argxmm[i], reg64[arg_regs[i]]);
+#endif
             } else if (arg_sizes[i] == 1) {
                 printf("  movzx %s, %s\n", argreg64[i], reg8[arg_regs[i]]);
             } else if (arg_sizes[i] == 4) {
@@ -533,6 +553,10 @@ static int gen(Node *node) {
             free_reg(arg_regs[i]);
         }
 
+#ifndef _WIN32
+        // Linux: al = count of xmm registers used (required for variadic calls)
+        printf("  mov eax, %d\n", xmm_args);
+#endif
         if (call_target) {
             printf("  call %s\n", call_target);
         } else {
@@ -965,11 +989,17 @@ void codegen(Program *prog) {
         ctrl_depth = 0;
 
         // Save params to locals (emitted to body buffer, will be after prologue)
-        char *argreg64[] = {"rcx", "rdx", "r8", "r9"};
+#ifdef _WIN32
+        char *param_regs[] = {"rcx", "rdx", "r8", "r9"};
+        int max_param_regs = 4;
+#else
+        char *param_regs[] = {"rdi", "rsi", "rdx", "rcx", "r8", "r9"};
+        int max_param_regs = 6;
+#endif
         int i = 0;
         for (LVar *var = fn->params; var; var = var->param_next) {
-            if (i < 4) {
-                printf("  mov [rbp-%d], %s\n", var->offset, argreg64[i++]);
+            if (i < max_param_regs) {
+                printf("  mov [rbp-%d], %s\n", var->offset, param_regs[i++]);
             }
         }
 
