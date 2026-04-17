@@ -73,9 +73,14 @@ static void emit_cleanup_range(LVar *begin, LVar *end) {
 static int gen_funcall(Node *node, int hidden_ret_reg) {
     Node *argv[64];
     int nargs = 0;
-    int arg_regs[6];
-    int arg_sizes[6];
-    bool arg_is_float[6];
+    int arg_regs[64];
+    int arg_sizes[64];
+    bool arg_is_float[64];
+#ifndef _WIN32
+    int arg_gp_idx[64];
+    int arg_fp_idx[64];
+    int arg_stack_idx[64];
+#endif
     for (Node *arg = node->args; arg; arg = arg->next)
         argv[nargs++] = arg;
 
@@ -93,21 +98,53 @@ static int gen_funcall(Node *node, int hidden_ret_reg) {
 #else
     char *argreg32[] = {"edi", "esi", "edx", "ecx", "r8d", "r9d"};
     char *argreg64[] = {"rdi", "rsi", "rdx", "rcx", "r8", "r9"};
-    char *argxmm[] = {"xmm0", "xmm1", "xmm2", "xmm3", "xmm4", "xmm5"};
-    int max_reg_args = 6;
+    char *argxmm[] = {"xmm0", "xmm1", "xmm2", "xmm3", "xmm4", "xmm5", "xmm6", "xmm7"};
+    int max_gp_args = 6;
+    int max_fp_args = 8;
     int shadow_space = 0;
 #endif
 
     bool has_hidden_retbuf = node->ty && (node->ty->kind == TY_STRUCT || node->ty->kind == TY_UNION);
+#ifdef _WIN32
     int fixed_reg_args = nargs + (has_hidden_retbuf ? 1 : 0);
     int stack_args = fixed_reg_args > max_reg_args ? fixed_reg_args - max_reg_args : 0;
     int stack_pad = (stack_args & 1) ? 8 : 0;
     int stack_reserve = stack_args > 0 ? shadow_space + stack_args * 8 + stack_pad : 0;
+#else
+    int gp_reg_args = has_hidden_retbuf ? 1 : 0;
+    int fp_reg_args = 0;
+    int stack_args = 0;
+    for (int i = 0; i < nargs; i++) {
+        arg_regs[i] = -1;
+        arg_sizes[i] = argv[i]->ty->size;
+        arg_is_float[i] = is_flonum(argv[i]->ty);
+        arg_gp_idx[i] = -1;
+        arg_fp_idx[i] = -1;
+        arg_stack_idx[i] = -1;
+
+        if (arg_is_float[i]) {
+            if (fp_reg_args < max_fp_args)
+                arg_fp_idx[i] = fp_reg_args++;
+            else
+                arg_stack_idx[i] = stack_args++;
+            continue;
+        }
+
+        if (gp_reg_args < max_gp_args)
+            arg_gp_idx[i] = gp_reg_args++;
+        else
+            arg_stack_idx[i] = stack_args++;
+    }
+
+    int stack_pad = (stack_args & 1) ? 8 : 0;
+    int stack_reserve = stack_args > 0 ? shadow_space + stack_args * 8 + stack_pad : 0;
+#endif
 
     int saved_scratch = used_regs & 3;
     if (saved_scratch & 1) { printf("  mov [rbp-%d], r10\n", SPILL_R10); used_regs &= ~1; }
     if (saved_scratch & 2) { printf("  mov [rbp-%d], r11\n", SPILL_R11); used_regs &= ~2; }
 
+#ifdef _WIN32
     int reg_nargs = nargs < max_reg_args - (has_hidden_retbuf ? 1 : 0) ? nargs : max_reg_args - (has_hidden_retbuf ? 1 : 0);
     for (int i = 0; i < reg_nargs; i++) {
         arg_regs[i] = gen(argv[i]);
@@ -131,11 +168,41 @@ static int gen_funcall(Node *node, int hidden_ret_reg) {
         }
         free_reg(r);
     }
+#else
+    for (int i = 0; i < nargs; i++) {
+        if (arg_stack_idx[i] >= 0)
+            continue;
+        arg_regs[i] = gen(argv[i]);
+    }
+
+    if (stack_reserve > 0)
+        printf("  sub rsp, %d\n", stack_reserve);
+
+    for (int i = nargs - 1; i >= 0; i--) {
+        if (arg_stack_idx[i] < 0)
+            continue;
+        int r = gen(argv[i]);
+        if (is_flonum(argv[i]->ty)) {
+            printf("  mov qword ptr [rsp+%d], %s\n", shadow_space + arg_stack_idx[i] * 8, reg64[r]);
+        } else {
+            if (argv[i]->ty->size == 1)
+                printf("  movzx %s, %s\n", reg64[r], reg8[r]);
+            else if (argv[i]->ty->size == 4)
+                printf("  mov %s, %s\n", reg32[r], reg32[r]);
+            printf("  mov qword ptr [rsp+%d], %s\n", shadow_space + arg_stack_idx[i] * 8, reg64[r]);
+        }
+        free_reg(r);
+    }
+#endif
 
     int xmm_args = 0;
+#ifdef _WIN32
     for (int i = 0; i < reg_nargs; i++) {
         if (arg_is_float[i]) xmm_args++;
     }
+#else
+    xmm_args = fp_reg_args;
+#endif
 
     int temp_ret_reg = -1;
     if (has_hidden_retbuf) {
@@ -148,6 +215,7 @@ static int gen_funcall(Node *node, int hidden_ret_reg) {
         printf("  mov %s, %s\n", argreg64[0], reg64[hidden_ret_reg]);
     }
 
+#ifdef _WIN32
     for (int i = 0; i < reg_nargs; i++) {
         int argi = i + (has_hidden_retbuf ? 1 : 0);
         if (arg_is_float[i]) {
@@ -166,6 +234,22 @@ static int gen_funcall(Node *node, int hidden_ret_reg) {
         }
         free_reg(arg_regs[i]);
     }
+#else
+    for (int i = 0; i < nargs; i++) {
+        if (arg_stack_idx[i] >= 0)
+            continue;
+        if (arg_is_float[i]) {
+            printf("  movq %s, %s\n", argxmm[arg_fp_idx[i]], reg64[arg_regs[i]]);
+        } else if (arg_sizes[i] == 1) {
+            printf("  movzx %s, %s\n", argreg64[arg_gp_idx[i]], reg8[arg_regs[i]]);
+        } else if (arg_sizes[i] == 4) {
+            printf("  mov %s, %s\n", argreg32[arg_gp_idx[i]], reg(arg_regs[i], 4));
+        } else {
+            printf("  mov %s, %s\n", argreg64[arg_gp_idx[i]], reg(arg_regs[i], 8));
+        }
+        free_reg(arg_regs[i]);
+    }
+#endif
 
 #ifndef _WIN32
     printf("  mov eax, %d\n", xmm_args);
@@ -632,14 +716,10 @@ static int gen(Node *node) {
         }
         return -1;
     case ND_STMT_EXPR: {
-        Node *last = node->body;
-        while (last && last->next)
-            last = last->next;
-
         int result = -1;
         for (Node *n = node->body; n; n = n->next) {
-            if (n == last && n->kind == ND_EXPR_STMT && n->lhs) {
-                result = gen(n->lhs);
+            if (node->stmt_expr_result && n->kind == ND_EXPR_STMT && n->lhs == node->stmt_expr_result) {
+                result = gen(node->stmt_expr_result);
             } else {
                 int r = gen(n);
                 if (r != -1)
@@ -1131,11 +1211,15 @@ void codegen(Program *prog) {
         char *param_regs32[] = {"edi",  "esi",  "edx",  "ecx",  "r8d",  "r9d" };
         char *param_regs16[] = {"di",   "si",   "dx",   "cx",   "r8w",  "r9w" };
         char *param_regs8[]  = {"dil",  "sil",  "dl",   "cl",   "r8b",  "r9b" };
+        char *param_xmm[] = {"xmm0", "xmm1", "xmm2", "xmm3", "xmm4", "xmm5", "xmm6", "xmm7"};
         int max_param_regs = 6;
+        int max_param_xmm = 8;
+        int param_xmm_index = 0;
 #endif
         int param_index = fn->ty->return_ty && (fn->ty->return_ty->kind == TY_STRUCT || fn->ty->return_ty->kind == TY_UNION) ? 1 : 0;
         int i = 0;
         for (LVar *var = fn->params; var; var = var->param_next) {
+#ifdef _WIN32
             if (param_index < max_param_regs) {
                 char *preg = var->ty->size == 1 ? param_regs8[param_index]
                            : var->ty->size == 2 ? param_regs16[param_index]
@@ -1144,6 +1228,26 @@ void codegen(Program *prog) {
                 printf("  mov [rbp-%d], %s\n", var->offset, preg);
                 param_index++;
             }
+#else
+            if (is_flonum(var->ty)) {
+                if (param_xmm_index < max_param_xmm) {
+                    if (var->ty->size == 4) {
+                        printf("  cvtsd2ss xmm0, %s\n", param_xmm[param_xmm_index]);
+                        printf("  movss dword ptr [rbp-%d], xmm0\n", var->offset);
+                    } else {
+                        printf("  movsd qword ptr [rbp-%d], %s\n", var->offset, param_xmm[param_xmm_index]);
+                    }
+                    param_xmm_index++;
+                }
+            } else if (param_index < max_param_regs) {
+                char *preg = var->ty->size == 1 ? param_regs8[param_index]
+                           : var->ty->size == 2 ? param_regs16[param_index]
+                           : var->ty->size <= 4 ? param_regs32[param_index]
+                           : param_regs64[param_index];
+                printf("  mov [rbp-%d], %s\n", var->offset, preg);
+                param_index++;
+            }
+#endif
             i++;
         }
 
@@ -1333,16 +1437,6 @@ void codegen(Program *prog) {
                                 lines[li] = "";
                             continue;
                         }
-                        // mov REG, IMM; mov [mem], REGb → mov byte ptr [mem], IMM
-                        if (sscanf(lines[lj], "  mov %[^,], %s", od, os) == 2 &&
-                            same_phys(os, rd) && od[0] == '[' && (imm_val >= 0 && imm_val <= 255)) {
-                            char newline[160];
-                            snprintf(newline, sizeof(newline), "  mov byte ptr %s, %d", od, imm_val);
-                            lines[lj] = strdup(newline);
-                            if (rd_pid >= 0 && !reg_live_after(lines, nlines, lj, rd_pid))
-                                lines[li] = "";
-                            continue;
-                        }
                     }
                 }
 
@@ -1387,7 +1481,7 @@ void codegen(Program *prog) {
         for (LVar *var = fn->locals; var; var = var->next)
             if (var->cleanup_func && var->is_local) { has_cleanup = true; break; }
         if (has_cleanup)
-            printf("  push rax\n");
+            printf("  mov [rbp-%d], rax\n", SPILL_R10);
         for (LVar *var = fn->locals; var; var = var->next) {
             if (var->cleanup_func && var->is_local) {
 #ifdef _WIN32
@@ -1399,7 +1493,7 @@ void codegen(Program *prog) {
             }
         }
         if (has_cleanup)
-            printf("  pop rax\n");
+            printf("  mov rax, [rbp-%d]\n", SPILL_R10);
         printf("  add rsp, %d\n", sub_amount);
         for (int j = 5; j >= 0; j--) {
             if (callee_mask & (1 << j))

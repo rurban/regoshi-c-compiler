@@ -1367,6 +1367,7 @@ static Node *stmt(Token **rest, Token *tok) {
         tok = skip(tok, ")");
         Node *saved_loop = current_loop;
         node->cleanup_end = locals;
+        node->continue_cleanup_end = locals;
         current_loop = node;
         node->then = stmt(&tok, tok);
         current_loop = saved_loop;
@@ -1378,6 +1379,7 @@ static Node *stmt(Token **rest, Token *tok) {
         Node *node = new_node(ND_DO, tok);
         Node *saved_loop = current_loop;
         node->cleanup_end = locals;
+        node->continue_cleanup_end = locals;
         current_loop = node;
         node->then = stmt(&tok, tok->next);
         current_loop = saved_loop;
@@ -1410,11 +1412,14 @@ static Node *stmt(Token **rest, Token *tok) {
             node->cond = expr(&tok, tok);
         tok = skip(tok, ";");
 
+        LVar *for_init_locals = locals;
+
         if (!equal(tok, ")"))
             node->inc = expr(&tok, tok);
         tok = skip(tok, ")");
         Node *saved_loop = current_loop;
-        node->cleanup_end = saved_locals;
+        node->cleanup_end = for_init_locals;
+        node->continue_cleanup_end = for_init_locals;
         current_loop = node;
         node->then = stmt(&tok, tok);
         current_loop = saved_loop;
@@ -1501,7 +1506,7 @@ static Node *stmt(Token **rest, Token *tok) {
         *rest = skip(tok->next, ";");
         if (!current_loop)
             error_tok(tok, "stray continue");
-        node->cleanup_end = current_loop->cleanup_end;
+        node->cleanup_end = current_loop->continue_cleanup_end;
         return node;
     }
 
@@ -1554,6 +1559,11 @@ static Node *primary(Token **rest, Token *tok) {
             node = new_node(ND_STMT_EXPR, tok);
             Node *block = compound_stmt(&tok, tok->next);
             node->body = block->body;
+            Node *last = node->body;
+            while (last && last->next)
+                last = last->next;
+            if (last && last->kind == ND_EXPR_STMT && last->lhs)
+                node->stmt_expr_result = last->lhs;
             tok = skip(tok, ")");
         } else {
             node = expr(&tok, tok->next);
@@ -2330,7 +2340,7 @@ Program *parse(Token *tok) {
             Type *fty = func_type(ty);
             Type *fn_symbol_ty = pointer_to(fty);
             locals = NULL;
-            stack_offset = 64; // 48 (callee-saved pushes) + 16 (spill slots for r10/r11)
+            stack_offset = 80; // reserve locals plus spill slots below rbp for r10/r11 saves
             label_scopes = NULL;
             pending_gotos = NULL;
             current_switch = NULL;

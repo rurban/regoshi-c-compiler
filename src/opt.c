@@ -124,6 +124,22 @@ static int eval_ast(Program *prog, Function *fn, Node *node, int *env, int *cf, 
     }
 }
 
+static bool has_cleanup_local(Function *fn) {
+    for (LVar *var = fn->locals; var; var = var->next) {
+        if (var->cleanup_func)
+            return true;
+    }
+    return false;
+}
+
+static bool has_addr_arg(Node *node) {
+    for (Node *arg = node->args; arg; arg = arg->next) {
+        if (arg->kind == ND_ADDR)
+            return true;
+    }
+    return false;
+}
+
 static Node *optimize_node(Program *prog, Node *node) {
     if (!node) return NULL;
     node->lhs = optimize_node(prog, node->lhs);
@@ -181,14 +197,14 @@ static Node *optimize_node(Program *prog, Node *node) {
             }
             if (nargs < 10) args[nargs++] = arg->val;
         }
-        if (all_const && strcmp(node->funcname, "printf") != 0) {
+        if (all_const && !has_addr_arg(node) && strcmp(node->funcname, "printf") != 0) {
             Function *target = NULL;
             for (Function *fn = prog->funcs; fn; fn = fn->next) {
                 if (strcmp(fn->name, node->funcname) == 0) {
                     target = fn; break;
                 }
             }
-            if (target && target->body) {
+            if (target && target->body && !has_cleanup_local(target)) {
                 bool success = true;
                 int env[256] = {0}; // simple addressing
                 LVar *param = target->params;

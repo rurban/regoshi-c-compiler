@@ -236,6 +236,7 @@ struct Node {
     // Block or arguments
     Node *body;
     Node *args; // Linked list of args
+    Node *stmt_expr_result;
 
     // Function call
     char *funcname;
@@ -251,6 +252,7 @@ struct Node {
     // Cleanup range for control-flow that exits scopes
     LVar *cleanup_begin;
     LVar *cleanup_end;
+    LVar *continue_cleanup_end;
 
     int64_t val;   // Used if kind == ND_NUM
     double fval;   // Used if kind == ND_FNUM

@@ -251,12 +251,9 @@ static void add_type_internal(Node *node) {
         node->ty = node->member->ty;
         return;
     case ND_STMT_EXPR: {
-        Node *last = node->body;
-        while (last && last->next)
-            last = last->next;
-        if (last && last->kind == ND_EXPR_STMT && last->lhs) {
-            add_type_internal(last->lhs);
-            node->ty = last->lhs->ty;
+        if (node->stmt_expr_result) {
+            add_type_internal(node->stmt_expr_result);
+            node->ty = node->stmt_expr_result->ty;
         } else {
             node->ty = ty_int;
         }
