@@ -151,7 +151,7 @@ static LVar *new_var(char *name, Type *ty, bool is_local) {
 
     if (is_local) {
         int size = ty->size < 4 ? 4 : ty->size;
-        int align = ty->align < 8 ? 8 : ty->align;
+        int align = ty->align < 4 ? 4 : ty->align;
         stack_offset = align_to(stack_offset + size, align);
         var->offset = stack_offset;
         var->next = locals;

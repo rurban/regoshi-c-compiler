@@ -1034,16 +1034,27 @@ void codegen(Program *prog) {
 
         // Save params to locals (emitted to body buffer, will be after prologue)
 #ifdef _WIN32
-        char *param_regs[] = {"rcx", "rdx", "r8", "r9"};
+        char *param_regs64[] = {"rcx",  "rdx",  "r8",   "r9"  };
+        char *param_regs32[] = {"ecx",  "edx",  "r8d",  "r9d" };
+        char *param_regs16[] = {"cx",   "dx",   "r8w",  "r9w" };
+        char *param_regs8[]  = {"cl",   "dl",   "r8b",  "r9b" };
         int max_param_regs = 4;
 #else
-        char *param_regs[] = {"rdi", "rsi", "rdx", "rcx", "r8", "r9"};
+        char *param_regs64[] = {"rdi",  "rsi",  "rdx",  "rcx",  "r8",   "r9"  };
+        char *param_regs32[] = {"edi",  "esi",  "edx",  "ecx",  "r8d",  "r9d" };
+        char *param_regs16[] = {"di",   "si",   "dx",   "cx",   "r8w",  "r9w" };
+        char *param_regs8[]  = {"dil",  "sil",  "dl",   "cl",   "r8b",  "r9b" };
         int max_param_regs = 6;
 #endif
         int i = 0;
         for (LVar *var = fn->params; var; var = var->param_next) {
             if (i < max_param_regs) {
-                printf("  mov [rbp-%d], %s\n", var->offset, param_regs[i++]);
+                char *preg = var->ty->size == 1 ? param_regs8[i]
+                           : var->ty->size == 2 ? param_regs16[i]
+                           : var->ty->size <= 4 ? param_regs32[i]
+                           : param_regs64[i];
+                printf("  mov [rbp-%d], %s\n", var->offset, preg);
+                i++;
             }
         }
 
