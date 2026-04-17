@@ -71,8 +71,8 @@ for src in "$TEST_DIR"/*.c; do
 
     printf "  %-40s " "$base..."
 
-    # 1. Compile
-    if ! "$RCC" "$src" -o "$TMP_EXE" >/dev/null 2>&1; then
+    # 1. Compile (capture warnings/notes to TMP_OUT; errors abort)
+    if ! "$RCC" "$src" -o "$TMP_EXE" 2>"$TMP_OUT"; then
         printf "${RED}COMPILE FAIL${RESET}\n"
         failed=$((failed + 1))
         report_rows="${report_rows}| $base | COMPILE_FAIL | rcc returned non-zero |\n"
@@ -85,11 +85,11 @@ for src in "$TEST_DIR"/*.c; do
         continue
     fi
 
-    # 2. Execute
+    # 2. Execute (append runtime output after compile warnings)
     args="$(test_args "$base")"
     if [ -n "$args" ]; then
         # shellcheck disable=SC2086
-        if ! "$TMP_EXE" $args >"$TMP_OUT" 2>&1; then
+        if ! "$TMP_EXE" $args >>"$TMP_OUT" 2>&1; then
             printf "${RED}EXEC FAIL${RESET}\n"
             failed=$((failed + 1))
             report_rows="${report_rows}| $base | EXEC_FAIL | non-zero exit |\n"
@@ -97,7 +97,7 @@ for src in "$TEST_DIR"/*.c; do
             continue
         fi
     else
-        if ! "$TMP_EXE" >"$TMP_OUT" 2>&1; then
+        if ! "$TMP_EXE" >>"$TMP_OUT" 2>&1; then
             printf "${RED}EXEC FAIL${RESET}\n"
             failed=$((failed + 1))
             report_rows="${report_rows}| $base | EXEC_FAIL | non-zero exit |\n"
