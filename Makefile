@@ -11,7 +11,16 @@ $(TARGET): $(OBJS)
 %.o: %.c
 	$(CC) $(CFLAGS) -c $< -o $@
 
+ifeq ($(OS),Windows_NT)
+TEST_RUNNER = powershell -ExecutionPolicy Bypass -File run_tcc_suite.ps1
+else
+TEST_RUNNER = ./run_tcc_suite.sh ./$(TARGET)
+endif
+
+test check: $(TARGET)
+	@$(TEST_RUNNER)
+
 clean:
 	rm -f $(OBJS) $(TARGET) $(TARGET).exe
 
-.PHONY: clean
+.PHONY: clean test check

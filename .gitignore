@@ -6,6 +6,7 @@
 *.log
 *.zip
 *.txt
+rcc
 actual.txt
 fred.txt
 err.log
