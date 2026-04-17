@@ -2,7 +2,7 @@ CC = gcc
 CFLAGS = -std=c11 -Wall -Wextra -O2 -g
 TARGET = rcc
 
-SRCS = src/main.c src/lexer.c src/parser.c src/type.c src/codegen.c src/alloc.c
+SRCS = src/main.c src/lexer.c src/preprocess.c src/parser.c src/type.c src/codegen.c src/opt.c src/alloc.c
 OBJS = $(SRCS:.c=.o)
 
 $(TARGET): $(OBJS)

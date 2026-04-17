@@ -143,8 +143,13 @@ static bool file_exists(char *path) {
 
 static char *canonical_path(char *path) {
     char full[4096];
+#ifdef _WIN32
     if (_fullpath(full, path, sizeof(full)))
         return str_intern(full, strlen(full));
+#else
+    if (realpath(path, full))
+        return str_intern(full, strlen(full));
+#endif
     return str_intern(path, strlen(path));
 }
 
