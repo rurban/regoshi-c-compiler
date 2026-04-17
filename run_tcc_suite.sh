@@ -130,6 +130,74 @@ for src in "$TEST_DIR"/*.c; do
     fi
 done
 
+# Run tests in test/ directory
+UNIT_TEST_DIR="$SCRIPT_DIR/test"
+if [ -d "$UNIT_TEST_DIR" ]; then
+    printf "\n${CYAN}Unit tests (test/)...${RESET}\n"
+
+    # Tests expected to fail compilation (compile error is the correct outcome)
+    expect_compile_fail() {
+        case "$1" in test_err) return 0 ;; esac
+        return 1
+    }
+
+    # Tests to skip (benchmarks, logs)
+    skip_test() {
+        case "$1" in benchmark|primes) return 0 ;; esac
+        return 1
+    }
+
+    for src in "$UNIT_TEST_DIR"/*.c; do
+        fname="$(basename "$src")"
+        base="${fname%.c}"
+
+        skip_test "$base" && continue
+
+        total=$((total + 1))
+        printf "  %-40s " "$base..."
+
+        if expect_compile_fail "$base"; then
+            if "$RCC" "$src" -o "$TMP_EXE" >/dev/null 2>&1; then
+                printf "${RED}SHOULD FAIL (compiled ok)${RESET}\n"
+                failed=$((failed + 1))
+                report_rows="${report_rows}| $base | FAIL | expected compile error but succeeded |\n"
+                rm -f "$TMP_EXE"
+            else
+                printf "${GREEN}PASS (expected compile error)${RESET}\n"
+                passed=$((passed + 1))
+                report_rows="${report_rows}| $base | PASS | compile error as expected |\n"
+            fi
+            continue
+        fi
+
+        if ! "$RCC" "$src" -o "$TMP_EXE" >/dev/null 2>&1; then
+            printf "${RED}COMPILE FAIL${RESET}\n"
+            failed=$((failed + 1))
+            report_rows="${report_rows}| $base | COMPILE_FAIL | rcc returned non-zero |\n"
+            continue
+        fi
+        if [ ! -x "$TMP_EXE" ]; then
+            printf "${RED}NO EXE PRODUCED${RESET}\n"
+            failed=$((failed + 1))
+            report_rows="${report_rows}| $base | COMPILE_FAIL | executable missing |\n"
+            continue
+        fi
+
+        if ! "$TMP_EXE" >"$TMP_OUT" 2>&1; then
+            printf "${RED}EXEC FAIL${RESET}\n"
+            failed=$((failed + 1))
+            report_rows="${report_rows}| $base | EXEC_FAIL | non-zero exit |\n"
+            rm -f "$TMP_EXE"
+            continue
+        fi
+        rm -f "$TMP_EXE"
+
+        printf "${GREEN}PASS${RESET}\n"
+        passed=$((passed + 1))
+        report_rows="${report_rows}| $base | PASS | Executed successfully |\n"
+    done
+fi
+
 rm -f "$TMP_OUT"
 
 # Summary
