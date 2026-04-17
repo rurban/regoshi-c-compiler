@@ -211,10 +211,8 @@ Token *tokenize(char *filename, char *p) {
         if (isdigit(*p) || (*p == '.' && isdigit(p[1]))) {
             char *q = p;
             bool is_float = false;
-            bool is_hex = false;
 
             if (*p == '0' && (p[1] == 'x' || p[1] == 'X')) {
-                is_hex = true;
                 p += 2;
                 while (isxdigit(*p)) p++;
                 if (*p == '.') {

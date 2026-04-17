@@ -1047,7 +1047,8 @@ void codegen(Program *prog) {
 
         // Read all body text
         char *body_text = malloc(body_len + 1);
-        fread(body_text, 1, body_len, body_file);
+        size_t nread = fread(body_text, 1, body_len, body_file);
+        (void)nread;
         body_text[body_len] = '\0';
         fclose(body_file);
 
@@ -1125,7 +1126,7 @@ void codegen(Program *prog) {
                 if (sscanf(lines[li], "  mov %[^,], %s", d1, s1) == 2 &&
                     sscanf(lines[lj], "  mov %[^,], %s", d2, s2) == 2 &&
                     strcmp(s2, d1) == 0 && is_reg(d1) && is_reg(s1)) {
-                    char newline[160];
+                    char newline[200];
                     snprintf(newline, sizeof(newline), "  mov %s, %s", d2, s1);
                     lines[lj] = strdup(newline);
                     int pid = phys_reg_id(d1);
@@ -1237,7 +1238,7 @@ void codegen(Program *prog) {
                             strcmp(r1, r2) == 0 && strcmp(r2, r3) == 0 &&
                             is_reg(d3) && !is_reg(mem1) &&
                             (!strcmp(op2, "add") || !strcmp(op2, "sub"))) {
-                            char nl1[160], nl2[160];
+                            char nl1[200], nl2[100];
                             snprintf(nl1, sizeof(nl1), "  mov %s, %s", d3, mem1);
                             snprintf(nl2, sizeof(nl2), "  %s %s, %s", op2, d3, imm2);
                             lines[li] = strdup(nl1);

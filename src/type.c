@@ -1,20 +1,20 @@
 #include "rcc.h"
 
-Type *ty_void = &(Type){TY_VOID, 1, 1, false, NULL, NULL, NULL};
-Type *ty_bool = &(Type){TY_BOOL, 1, 1, true, NULL, NULL, NULL};
-Type *ty_char = &(Type){TY_CHAR, 1, 1, false, NULL, NULL, NULL};
-Type *ty_uchar = &(Type){TY_CHAR, 1, 1, true, NULL, NULL, NULL};
-Type *ty_short = &(Type){TY_SHORT, 2, 2, false, NULL, NULL, NULL};
-Type *ty_ushort = &(Type){TY_SHORT, 2, 2, true, NULL, NULL, NULL};
-Type *ty_int = &(Type){TY_INT, 4, 4, false, NULL, NULL, NULL};
-Type *ty_uint = &(Type){TY_INT, 4, 4, true, NULL, NULL, NULL};
-Type *ty_long = &(Type){TY_LONG, 4, 4, false, NULL, NULL, NULL};
-Type *ty_ulong = &(Type){TY_LONG, 4, 4, true, NULL, NULL, NULL};
-Type *ty_llong = &(Type){TY_LLONG, 8, 8, false, NULL, NULL, NULL};
-Type *ty_ullong = &(Type){TY_LLONG, 8, 8, true, NULL, NULL, NULL};
-Type *ty_float = &(Type){TY_FLOAT, 4, 4, false, NULL, NULL, NULL};
-Type *ty_double = &(Type){TY_DOUBLE, 8, 8, false, NULL, NULL, NULL};
-Type *ty_ldouble = &(Type){TY_LDOUBLE, 16, 16, false, NULL, NULL, NULL};
+Type *ty_void    = &(Type){.kind=TY_VOID,    .size=1,  .align=1};
+Type *ty_bool    = &(Type){.kind=TY_BOOL,    .size=1,  .align=1,  .is_unsigned=true};
+Type *ty_char    = &(Type){.kind=TY_CHAR,    .size=1,  .align=1};
+Type *ty_uchar   = &(Type){.kind=TY_CHAR,    .size=1,  .align=1,  .is_unsigned=true};
+Type *ty_short   = &(Type){.kind=TY_SHORT,   .size=2,  .align=2};
+Type *ty_ushort  = &(Type){.kind=TY_SHORT,   .size=2,  .align=2,  .is_unsigned=true};
+Type *ty_int     = &(Type){.kind=TY_INT,     .size=4,  .align=4};
+Type *ty_uint    = &(Type){.kind=TY_INT,     .size=4,  .align=4,  .is_unsigned=true};
+Type *ty_long    = &(Type){.kind=TY_LONG,    .size=4,  .align=4};
+Type *ty_ulong   = &(Type){.kind=TY_LONG,    .size=4,  .align=4,  .is_unsigned=true};
+Type *ty_llong   = &(Type){.kind=TY_LLONG,   .size=8,  .align=8};
+Type *ty_ullong  = &(Type){.kind=TY_LLONG,   .size=8,  .align=8,  .is_unsigned=true};
+Type *ty_float   = &(Type){.kind=TY_FLOAT,   .size=4,  .align=4};
+Type *ty_double  = &(Type){.kind=TY_DOUBLE,  .size=8,  .align=8};
+Type *ty_ldouble = &(Type){.kind=TY_LDOUBLE, .size=16, .align=16};
 
 bool is_integer(Type *ty) {
     return ty->kind == TY_BOOL || ty->kind == TY_CHAR || ty->kind == TY_SHORT ||
