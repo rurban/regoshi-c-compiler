@@ -2,6 +2,8 @@
 #include <stdarg.h>
 
 static FILE *cg_stream;
+static Function *current_fn_def;
+static Function *all_funcs;
 static void cg_emit(const char *fmt, ...) {
     va_list ap;
     va_start(ap, fmt);
@@ -36,6 +38,166 @@ static int ever_used_regs = 0;
 // Spill slot offsets from rbp for scratch register saves across calls
 #define SPILL_R10 56
 #define SPILL_R11 64
+
+static char *reg(int r, int size);
+static int alloc_reg(void);
+static void free_reg(int i);
+static int gen(Node *node);
+
+static char *func_asm_name(char *name) {
+    for (Function *fn = all_funcs; fn; fn = fn->next) {
+        if (fn->name == name)
+            return fn->asm_name ? fn->asm_name : fn->name;
+    }
+    return name;
+}
+
+static void emit_direct_call(char *name) {
+    printf("  lea r11, [rip + %s]\n", func_asm_name(name));
+    printf("  call r11\n");
+}
+
+static void emit_cleanup_range(LVar *begin, LVar *end) {
+    for (LVar *var = begin; var && var != end; var = var->next) {
+        if (!var->is_local || !var->cleanup_func)
+            continue;
+#ifdef _WIN32
+        printf("  lea rcx, [rbp-%d]\n", var->offset);
+#else
+        printf("  lea rdi, [rbp-%d]\n", var->offset);
+#endif
+        emit_direct_call(var->cleanup_func);
+    }
+}
+
+static int gen_funcall(Node *node, int hidden_ret_reg) {
+    Node *argv[64];
+    int nargs = 0;
+    int arg_regs[6];
+    int arg_sizes[6];
+    bool arg_is_float[6];
+    for (Node *arg = node->args; arg; arg = arg->next)
+        argv[nargs++] = arg;
+
+    char *call_target = node->funcname;
+    if (!call_target && node->lhs && node->lhs->kind == ND_LVAR &&
+        node->lhs->var && node->lhs->var->is_function)
+        call_target = node->lhs->var->name;
+
+#ifdef _WIN32
+    char *argreg32[] = {"ecx", "edx", "r8d", "r9d"};
+    char *argreg64[] = {"rcx", "rdx", "r8", "r9"};
+    char *argxmm[] = {"xmm0", "xmm1", "xmm2", "xmm3"};
+    int max_reg_args = 4;
+    int shadow_space = 32;
+#else
+    char *argreg32[] = {"edi", "esi", "edx", "ecx", "r8d", "r9d"};
+    char *argreg64[] = {"rdi", "rsi", "rdx", "rcx", "r8", "r9"};
+    char *argxmm[] = {"xmm0", "xmm1", "xmm2", "xmm3", "xmm4", "xmm5"};
+    int max_reg_args = 6;
+    int shadow_space = 0;
+#endif
+
+    bool has_hidden_retbuf = node->ty && (node->ty->kind == TY_STRUCT || node->ty->kind == TY_UNION);
+    int fixed_reg_args = nargs + (has_hidden_retbuf ? 1 : 0);
+    int stack_args = fixed_reg_args > max_reg_args ? fixed_reg_args - max_reg_args : 0;
+    int stack_pad = (stack_args & 1) ? 8 : 0;
+    int stack_reserve = stack_args > 0 ? shadow_space + stack_args * 8 + stack_pad : 0;
+
+    int saved_scratch = used_regs & 3;
+    if (saved_scratch & 1) { printf("  mov [rbp-%d], r10\n", SPILL_R10); used_regs &= ~1; }
+    if (saved_scratch & 2) { printf("  mov [rbp-%d], r11\n", SPILL_R11); used_regs &= ~2; }
+
+    int reg_nargs = nargs < max_reg_args - (has_hidden_retbuf ? 1 : 0) ? nargs : max_reg_args - (has_hidden_retbuf ? 1 : 0);
+    for (int i = 0; i < reg_nargs; i++) {
+        arg_regs[i] = gen(argv[i]);
+        arg_sizes[i] = argv[i]->ty->size;
+        arg_is_float[i] = is_flonum(argv[i]->ty);
+    }
+
+    if (stack_reserve > 0)
+        printf("  sub rsp, %d\n", stack_reserve);
+
+    for (int i = nargs - 1; i >= reg_nargs; i--) {
+        int r = gen(argv[i]);
+        if (is_flonum(argv[i]->ty)) {
+            printf("  mov qword ptr [rsp+%d], %s\n", shadow_space + (i - reg_nargs) * 8, reg64[r]);
+        } else {
+            if (argv[i]->ty->size == 1)
+                printf("  movzx %s, %s\n", reg64[r], reg8[r]);
+            else if (argv[i]->ty->size == 4)
+                printf("  mov %s, %s\n", reg32[r], reg32[r]);
+            printf("  mov qword ptr [rsp+%d], %s\n", shadow_space + (i - reg_nargs) * 8, reg64[r]);
+        }
+        free_reg(r);
+    }
+
+    int xmm_args = 0;
+    for (int i = 0; i < reg_nargs; i++) {
+        if (arg_is_float[i]) xmm_args++;
+    }
+
+    int temp_ret_reg = -1;
+    if (has_hidden_retbuf) {
+        if (hidden_ret_reg == -1) {
+            temp_ret_reg = alloc_reg();
+            printf("  sub rsp, %d\n", node->ty->size);
+            printf("  mov %s, rsp\n", reg64[temp_ret_reg]);
+            hidden_ret_reg = temp_ret_reg;
+        }
+        printf("  mov %s, %s\n", argreg64[0], reg64[hidden_ret_reg]);
+    }
+
+    for (int i = 0; i < reg_nargs; i++) {
+        int argi = i + (has_hidden_retbuf ? 1 : 0);
+        if (arg_is_float[i]) {
+#ifdef _WIN32
+            printf("  movq %s, %s\n", argxmm[argi], reg64[arg_regs[i]]);
+            printf("  mov %s, %s\n", argreg64[argi], reg64[arg_regs[i]]);
+#else
+            printf("  movq %s, %s\n", argxmm[argi], reg64[arg_regs[i]]);
+#endif
+        } else if (arg_sizes[i] == 1) {
+            printf("  movzx %s, %s\n", argreg64[argi], reg8[arg_regs[i]]);
+        } else if (arg_sizes[i] == 4) {
+            printf("  mov %s, %s\n", argreg32[argi], reg(arg_regs[i], 4));
+        } else {
+            printf("  mov %s, %s\n", argreg64[argi], reg(arg_regs[i], 8));
+        }
+        free_reg(arg_regs[i]);
+    }
+
+#ifndef _WIN32
+    printf("  mov eax, %d\n", xmm_args);
+#endif
+    if (call_target) {
+        emit_direct_call(call_target);
+    } else {
+        int callee = gen(node->lhs);
+        printf("  call %s\n", reg64[callee]);
+        free_reg(callee);
+    }
+
+    if (stack_reserve > 0)
+        printf("  add rsp, %d\n", stack_reserve);
+
+    if (saved_scratch & 2) { used_regs |= 2; printf("  mov r11, [rbp-%d]\n", SPILL_R11); }
+    if (saved_scratch & 1) { used_regs |= 1; printf("  mov r10, [rbp-%d]\n", SPILL_R10); }
+
+    if (has_hidden_retbuf) {
+        if (temp_ret_reg != -1)
+            return temp_ret_reg;
+        return hidden_ret_reg;
+    }
+
+    int r = alloc_reg();
+    if (node->ty && is_flonum(node->ty)) {
+        printf("  movq %s, xmm0\n", reg64[r]);
+    } else {
+        printf("  mov %s, rax\n", reg64[r]);
+    }
+    return r;
+}
 
 // Map any register name to a physical register ID (for peephole optimization)
 static int phys_reg_id(const char *s) {
@@ -269,6 +431,11 @@ static int gen(Node *node) {
             int c = ++rcc_label_count;
             int dst = gen_addr(node->lhs);
             int src;
+            if (node->rhs->kind == ND_FUNCALL && node->rhs->ty &&
+                (node->rhs->ty->kind == TY_STRUCT || node->rhs->ty->kind == TY_UNION)) {
+                gen_funcall(node->rhs, dst);
+                return dst;
+            }
             if (node->rhs->ty && (node->rhs->ty->kind == TY_STRUCT || node->rhs->ty->kind == TY_UNION || node->rhs->ty->kind == TY_ARRAY))
                 src = gen_addr(node->rhs);
             else
@@ -415,14 +582,39 @@ static int gen(Node *node) {
     }
     case ND_RETURN: {
         if (node->lhs) {
-            int r = gen(node->lhs);
-            if (node->lhs->ty && is_flonum(node->lhs->ty)) {
-                printf("  movq xmm0, %s\n", reg64[r]);
+            if (node->lhs->ty && (node->lhs->ty->kind == TY_STRUCT || node->lhs->ty->kind == TY_UNION)) {
+                int src = gen_addr(node->lhs);
+                int c = ++rcc_label_count;
+                int retbuf_offset = 0;
+                for (LVar *var = current_fn_def->locals; var; var = var->next) {
+                    if (var->name && var->name[0] == '\0') {
+                        retbuf_offset = var->offset;
+                        break;
+                    }
+                }
+                printf("  mov r11, [rbp-%d]\n", retbuf_offset);
+                printf("  mov rcx, %d\n", node->lhs->ty->size);
+                printf(".L.retcopy.%d:\n", c);
+                printf("  cmp rcx, 0\n");
+                printf("  je .L.retcopy_end.%d\n", c);
+                printf("  mov al, byte ptr [%s + rcx - 1]\n", reg64[src]);
+                printf("  mov byte ptr [r11 + rcx - 1], al\n");
+                printf("  sub rcx, 1\n");
+                printf("  jmp .L.retcopy.%d\n", c);
+                printf(".L.retcopy_end.%d:\n", c);
+                printf("  mov rax, r11\n");
+                free_reg(src);
             } else {
-                printf("  mov rax, %s\n", reg64[r]);
+                int r = gen(node->lhs);
+                if (node->lhs->ty && is_flonum(node->lhs->ty)) {
+                    printf("  movq xmm0, %s\n", reg64[r]);
+                } else {
+                    printf("  mov rax, %s\n", reg64[r]);
+                }
+                free_reg(r);
             }
-            free_reg(r);
         }
+        emit_cleanup_range(node->cleanup_begin, node->cleanup_end);
         printf("  jmp .L.return.%s\n", current_fn);
         return -1;
     }
@@ -466,120 +658,7 @@ static int gen(Node *node) {
         return -1;
     }
     case ND_FUNCALL: {
-        Node *argv[64];
-        int nargs = 0;
-        int arg_regs[6];
-        int arg_sizes[6];
-        bool arg_is_float[6];
-        for (Node *arg = node->args; arg; arg = arg->next)
-            argv[nargs++] = arg;
-
-        // Determine call target for direct calls
-        char *call_target = node->funcname;
-        if (!call_target && node->lhs && node->lhs->kind == ND_LVAR &&
-            node->lhs->var && node->lhs->var->is_function)
-            call_target = node->lhs->var->name;
-
-#ifdef _WIN32
-        char *argreg32[] = {"ecx", "edx", "r8d", "r9d"};
-        char *argreg64[] = {"rcx", "rdx", "r8", "r9"};
-        char *argxmm[] = {"xmm0", "xmm1", "xmm2", "xmm3"};
-        int max_reg_args = 4;
-        int shadow_space = 32;
-#else
-        char *argreg32[] = {"edi", "esi", "edx", "ecx", "r8d", "r9d"};
-        char *argreg64[] = {"rdi", "rsi", "rdx", "rcx", "r8", "r9"};
-        char *argxmm[] = {"xmm0", "xmm1", "xmm2", "xmm3", "xmm4", "xmm5"};
-        int max_reg_args = 6;
-        int shadow_space = 0;
-#endif
-
-        int stack_args = nargs > max_reg_args ? nargs - max_reg_args : 0;
-        int stack_pad = (stack_args & 1) ? 8 : 0;
-        int stack_reserve = stack_args > 0 ? shadow_space + stack_args * 8 + stack_pad : 0;
-
-        // Save live scratch registers to spill slots (instead of push/pop)
-        int saved_scratch = used_regs & 3;
-        if (saved_scratch & 1) { printf("  mov [rbp-%d], r10\n", SPILL_R10); used_regs &= ~1; }
-        if (saved_scratch & 2) { printf("  mov [rbp-%d], r11\n", SPILL_R11); used_regs &= ~2; }
-
-        int reg_nargs = nargs < max_reg_args ? nargs : max_reg_args;
-        for (int i = 0; i < reg_nargs; i++) {
-            arg_regs[i] = gen(argv[i]);
-            arg_sizes[i] = argv[i]->ty->size;
-            arg_is_float[i] = is_flonum(argv[i]->ty);
-        }
-
-        // For >max_reg_args args: allocate stack arg space dynamically
-        if (stack_reserve > 0)
-            printf("  sub rsp, %d\n", stack_reserve);
-
-        for (int i = nargs - 1; i >= max_reg_args; i--) {
-            int r = gen(argv[i]);
-            if (is_flonum(argv[i]->ty)) {
-                printf("  mov qword ptr [rsp+%d], %s\n", shadow_space + (i - max_reg_args) * 8, reg64[r]);
-            } else {
-                if (argv[i]->ty->size == 1)
-                    printf("  movzx %s, %s\n", reg64[r], reg8[r]);
-                else if (argv[i]->ty->size == 4)
-                    printf("  mov %s, %s\n", reg32[r], reg32[r]);
-                printf("  mov qword ptr [rsp+%d], %s\n", shadow_space + (i - max_reg_args) * 8, reg64[r]);
-            }
-            free_reg(r);
-        }
-
-        int xmm_args = 0;
-        for (int i = 0; i < reg_nargs; i++) {
-            if (arg_is_float[i]) xmm_args++;
-        }
-
-        for (int i = 0; i < reg_nargs; i++) {
-            if (arg_is_float[i]) {
-#ifdef _WIN32
-                // Windows ABI: float args go in BOTH xmm and integer regs
-                printf("  movq %s, %s\n", argxmm[i], reg64[arg_regs[i]]);
-                printf("  mov %s, %s\n", argreg64[i], reg64[arg_regs[i]]);
-#else
-                // Linux ABI: float args go only in xmm regs
-                printf("  movq %s, %s\n", argxmm[i], reg64[arg_regs[i]]);
-#endif
-            } else if (arg_sizes[i] == 1) {
-                printf("  movzx %s, %s\n", argreg64[i], reg8[arg_regs[i]]);
-            } else if (arg_sizes[i] == 4) {
-                printf("  mov %s, %s\n", argreg32[i], reg(arg_regs[i], 4));
-            } else {
-                printf("  mov %s, %s\n", argreg64[i], reg(arg_regs[i], 8));
-            }
-            free_reg(arg_regs[i]);
-        }
-
-#ifndef _WIN32
-        // Linux: al = count of xmm registers used (required for variadic calls)
-        printf("  mov eax, %d\n", xmm_args);
-#endif
-        if (call_target) {
-            printf("  call %s\n", call_target);
-        } else {
-            int callee = gen(node->lhs);
-            printf("  call %s\n", reg64[callee]);
-            free_reg(callee);
-        }
-
-        // Deallocate stack space for >4 args
-        if (stack_reserve > 0)
-            printf("  add rsp, %d\n", stack_reserve);
-
-        // Restore live scratch registers from spill slots
-        if (saved_scratch & 2) { used_regs |= 2; printf("  mov r11, [rbp-%d]\n", SPILL_R11); }
-        if (saved_scratch & 1) { used_regs |= 1; printf("  mov r10, [rbp-%d]\n", SPILL_R10); }
-        
-        int r = alloc_reg();
-        if (node->ty && is_flonum(node->ty)) {
-            printf("  movq %s, xmm0\n", reg64[r]);
-        } else {
-            printf("  mov %s, rax\n", reg64[r]);
-        }
-        return r;
+        return gen_funcall(node, -1);
     }
     case ND_LOGAND: {
         int c = ++rcc_label_count;
@@ -751,7 +830,7 @@ static int gen(Node *node) {
         }
         free_reg(cond);
         break_stack[ctrl_depth] = c;
-        continue_stack[ctrl_depth] = c;
+        continue_stack[ctrl_depth] = ctrl_depth > 0 ? continue_stack[ctrl_depth - 1] : c;
         ctrl_depth++;
         int r_body = gen(node->then);
         if (r_body != -1) free_reg(r_body);
@@ -768,14 +847,17 @@ static int gen(Node *node) {
     case ND_BREAK:
         if (ctrl_depth == 0)
             error("stray break");
+        emit_cleanup_range(node->cleanup_begin, node->cleanup_end);
         printf("  jmp .L.end.%d\n", break_stack[ctrl_depth - 1]);
         return -1;
     case ND_CONTINUE:
         if (ctrl_depth == 0)
             error("stray continue");
+        emit_cleanup_range(node->cleanup_begin, node->cleanup_end);
         printf("  jmp .L.continue.%d\n", continue_stack[ctrl_depth - 1]);
         return -1;
     case ND_GOTO:
+        emit_cleanup_range(node->cleanup_begin, node->cleanup_end);
         printf("  jmp .L.label.%s.%s\n", current_fn, node->label_name);
         return -1;
     case ND_LABEL: {
@@ -971,6 +1053,7 @@ static int reg_live_after(char **lines, int nlines, int after, int pid) {
 
 void codegen(Program *prog) {
     cg_stream = stdout;
+    all_funcs = prog->funcs;
     // Assembly header
     printf(".intel_syntax noprefix\n");
 #ifndef _WIN32
@@ -1027,6 +1110,7 @@ void codegen(Program *prog) {
 
     for (Function *fn = prog->funcs; fn; fn = fn->next) {
         current_fn = fn->name;
+        current_fn_def = fn;
 
         // Pass 1: Generate function body to temp file to discover register usage
         FILE *body_file = tmpfile();
@@ -1049,16 +1133,18 @@ void codegen(Program *prog) {
         char *param_regs8[]  = {"dil",  "sil",  "dl",   "cl",   "r8b",  "r9b" };
         int max_param_regs = 6;
 #endif
+        int param_index = fn->ty->return_ty && (fn->ty->return_ty->kind == TY_STRUCT || fn->ty->return_ty->kind == TY_UNION) ? 1 : 0;
         int i = 0;
         for (LVar *var = fn->params; var; var = var->param_next) {
-            if (i < max_param_regs) {
-                char *preg = var->ty->size == 1 ? param_regs8[i]
-                           : var->ty->size == 2 ? param_regs16[i]
-                           : var->ty->size <= 4 ? param_regs32[i]
-                           : param_regs64[i];
+            if (param_index < max_param_regs) {
+                char *preg = var->ty->size == 1 ? param_regs8[param_index]
+                           : var->ty->size == 2 ? param_regs16[param_index]
+                           : var->ty->size <= 4 ? param_regs32[param_index]
+                           : param_regs64[param_index];
                 printf("  mov [rbp-%d], %s\n", var->offset, preg);
-                i++;
+                param_index++;
             }
+            i++;
         }
 
         for (Node *n = fn->body; n; n = n->next) {
@@ -1087,7 +1173,8 @@ void codegen(Program *prog) {
 
         // Emit prologue
         printf(".globl %s\n", fn->name);
-        printf("%s:\n", fn->name);
+        printf("%s = %s\n", fn->name, fn->asm_name ? fn->asm_name : fn->name);
+        printf("%s:\n", fn->asm_name ? fn->asm_name : fn->name);
         printf("  push rbp\n");
         printf("  mov rbp, rsp\n");
 
@@ -1097,6 +1184,23 @@ void codegen(Program *prog) {
                 printf("  push %s\n", reg64[j + 2]);
         }
         printf("  sub rsp, %d\n", sub_amount);
+
+        if (fn->ty->return_ty && (fn->ty->return_ty->kind == TY_STRUCT || fn->ty->return_ty->kind == TY_UNION)) {
+            int retbuf_offset = 0;
+            for (LVar *var = fn->locals; var; var = var->next) {
+                if (var->name && var->name[0] == '\0') {
+                    retbuf_offset = var->offset;
+                    break;
+                }
+            }
+            printf("  mov [rbp-%d], %s\n", retbuf_offset,
+#ifdef _WIN32
+                   "rcx"
+#else
+                   "rdi"
+#endif
+            );
+        }
 
         // Read body into lines, optimize, emit
         fseek(body_file, 0, SEEK_END);
@@ -1111,11 +1215,14 @@ void codegen(Program *prog) {
         fclose(body_file);
 
         // Split into lines
-        #define PEEP_MAX 65536
-        char *lines[PEEP_MAX];
+        int line_cap = 1;
+        for (char *q = body_text; *q; q++)
+            if (*q == '\n')
+                line_cap++;
+        char **lines = malloc(sizeof(char *) * line_cap);
         int nlines = 0;
         char *p = body_text;
-        while (*p && nlines < PEEP_MAX) {
+        while (*p) {
             lines[nlines] = p;
             char *nl = strchr(p, '\n');
             if (nl) { *nl = '\0'; p = nl + 1; }
@@ -1123,7 +1230,8 @@ void codegen(Program *prog) {
             nlines++;
         }
 
-        // Peephole optimization passes
+        // Skip peephole on very large functions to avoid truncation/pathological compile behavior.
+        if (nlines < 50000)
         for (int pass = 0; pass < 4; pass++) {
             for (int li = 0; li < nlines - 1; li++) {
                 if (!lines[li] || !lines[li][0]) continue;
@@ -1268,6 +1376,7 @@ void codegen(Program *prog) {
             if (lines[li] && lines[li][0])
                 fprintf(stdout, "%s\n", lines[li]);
         }
+        free(lines);
         free(body_text);
 
         // Emit epilogue
@@ -1286,7 +1395,7 @@ void codegen(Program *prog) {
 #else
                 printf("  lea rdi, [rbp-%d]\n", var->offset);
 #endif
-                printf("  call %s\n", var->cleanup_func);
+                emit_direct_call(var->cleanup_func);
             }
         }
         if (has_cleanup)

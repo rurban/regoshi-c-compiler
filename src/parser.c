@@ -34,11 +34,33 @@ static StrLit *str_lits;
 static int str_lit_counter;
 
 static Node *current_switch;
+static Node *current_loop;
 static int static_local_counter;
+static LVar *current_fn_scope_locals;
+static int current_block_depth;
+static bool suppress_fn_scope_update;
+
+typedef struct LabelScope LabelScope;
+typedef struct PendingGoto PendingGoto;
+struct LabelScope {
+    LabelScope *next;
+    char *name;
+    LVar *locals;
+};
+
+static LabelScope *label_scopes;
+struct PendingGoto {
+    PendingGoto *next;
+    char *name;
+    Node *node;
+};
+
+static PendingGoto *pending_gotos;
 static Node *conditional(Token **rest, Token *tok);
 
 static bool equal(Token *tok, char *op) {
-    return memcmp(tok->loc, op, tok->len) == 0 && op[tok->len] == '\0';
+    int len = (int)strlen(op);
+    return tok->len == len && memcmp(tok->loc, op, len) == 0;
 }
 
 static Token *skip(Token *tok, char *op) {
@@ -187,6 +209,42 @@ static LVar *find_global_name(char *name) {
     return NULL;
 }
 
+static LabelScope *find_label_scope(char *name) {
+    for (LabelScope *ls = label_scopes; ls; ls = ls->next)
+        if (ls->name == name)
+            return ls;
+    return NULL;
+}
+
+static void record_label_scope(char *name, LVar *locals_at_label) {
+    LabelScope *ls = find_label_scope(name);
+    if (ls) {
+        ls->locals = locals_at_label;
+        return;
+    }
+
+    ls = arena_alloc(sizeof(LabelScope));
+    ls->name = name;
+    ls->locals = locals_at_label;
+    ls->next = label_scopes;
+    label_scopes = ls;
+}
+
+static void add_pending_goto(char *name, Node *node) {
+    PendingGoto *pg = arena_alloc(sizeof(PendingGoto));
+    pg->name = name;
+    pg->node = node;
+    pg->next = pending_gotos;
+    pending_gotos = pg;
+}
+
+static void resolve_pending_gotos(char *name, LVar *locals_at_label) {
+    for (PendingGoto *pg = pending_gotos; pg; pg = pg->next) {
+        if (pg->name == name)
+            pg->node->cleanup_end = locals_at_label;
+    }
+}
+
 static Typedef *find_typedef(Token *tok) {
     for (Typedef *td = typedefs; td; td = td->next)
         if (equal(tok, td->name))
@@ -233,6 +291,42 @@ static StrLit *new_str_lit(char *str) {
     s->next = str_lits;
     str_lits = s;
     return s;
+}
+
+static Node *make_cleanup_stmt(LVar *var, Token *tok) {
+    Node *call = new_node(ND_FUNCALL, tok);
+    call->funcname = var->cleanup_func;
+    LVar *fn = find_global_name(var->cleanup_func);
+    if (fn)
+        call->lhs = new_var_node(fn, tok);
+    call->args = new_unary(ND_ADDR, new_var_node(var, tok), tok);
+
+    Node *stmt = new_unary(ND_EXPR_STMT, call, tok);
+    add_type(stmt);
+    return stmt;
+}
+
+static Node *append_cleanup_range(Node *body, LVar *begin, LVar *end, Token *tok) {
+    Node head = {};
+    Node *cur = &head;
+
+    if (body) {
+        head.next = body;
+        while (cur->next)
+            cur = cur->next;
+    }
+
+    for (LVar *var = begin; var && var != end; var = var->next) {
+        if (var->is_local && var->cleanup_func)
+            cur = cur->next = make_cleanup_stmt(var, tok);
+    }
+
+    if (!head.next)
+        return body;
+
+    Node *node = new_node(ND_BLOCK, tok);
+    node->body = head.next;
+    return node;
 }
 
 static bool is_storage_class(Token *tok) {
@@ -1156,6 +1250,8 @@ static Node *declaration(Token **rest, Token *tok) {
                 ty = infer_array_type(ty, tok->next);
             LVar *var = new_var(name, ty, true);
             var->cleanup_func = cleanup;
+            if (current_block_depth == 1)
+                current_fn_scope_locals = locals;
             if (equal(tok, "=")) {
                 Token *start = tok;
                 tok = tok->next;
@@ -1201,10 +1297,12 @@ static Node *compound_stmt_ex(Token **rest, Token *tok, LVar **out_locals) {
     Typedef *saved_typedefs = typedefs;
     TagScope *saved_tags = tags;
     EnumConst *saved_enum_consts = enum_consts;
+    int saved_block_depth = current_block_depth;
 
     Node head = {};
     Node *cur = &head;
     tok = skip(tok, "{");
+    current_block_depth++;
 
     while (!equal(tok, "}")) {
         if (is_typename(tok)) {
@@ -1222,6 +1320,9 @@ static Node *compound_stmt_ex(Token **rest, Token *tok, LVar **out_locals) {
 
     if (out_locals)
         *out_locals = locals;
+    else
+        node->body = append_cleanup_range(node->body, locals, saved_locals, tok);
+    current_block_depth = saved_block_depth;
     locals = saved_locals;
     typedefs = saved_typedefs;
     tags = saved_tags;
@@ -1236,6 +1337,8 @@ static Node *compound_stmt(Token **rest, Token *tok) {
 static Node *stmt(Token **rest, Token *tok) {
     if (equal(tok, "return")) {
         Node *node = new_node(ND_RETURN, tok);
+        node->cleanup_begin = locals;
+        node->cleanup_end = current_fn_scope_locals;
         if (equal(tok->next, ";")) {
             *rest = tok->next->next;
             return node;
@@ -1262,14 +1365,22 @@ static Node *stmt(Token **rest, Token *tok) {
         tok = skip(tok->next, "(");
         node->cond = expr(&tok, tok);
         tok = skip(tok, ")");
+        Node *saved_loop = current_loop;
+        node->cleanup_end = locals;
+        current_loop = node;
         node->then = stmt(&tok, tok);
+        current_loop = saved_loop;
         *rest = tok;
         return node;
     }
 
     if (equal(tok, "do")) {
         Node *node = new_node(ND_DO, tok);
+        Node *saved_loop = current_loop;
+        node->cleanup_end = locals;
+        current_loop = node;
         node->then = stmt(&tok, tok->next);
+        current_loop = saved_loop;
         tok = skip(tok, "while");
         tok = skip(tok, "(");
         node->cond = expr(&tok, tok);
@@ -1302,7 +1413,12 @@ static Node *stmt(Token **rest, Token *tok) {
         if (!equal(tok, ")"))
             node->inc = expr(&tok, tok);
         tok = skip(tok, ")");
+        Node *saved_loop = current_loop;
+        node->cleanup_end = saved_locals;
+        current_loop = node;
         node->then = stmt(&tok, tok);
+        current_loop = saved_loop;
+        node = append_cleanup_range(node, locals, saved_locals, tok);
         locals = saved_locals;
         typedefs = saved_typedefs;
         *rest = tok;
@@ -1315,6 +1431,7 @@ static Node *stmt(Token **rest, Token *tok) {
         node->cond = expr(&tok, tok);
         tok = skip(tok, ")");
         Node *saved = current_switch;
+        node->cleanup_end = locals;
         current_switch = node;
         node->then = stmt(&tok, tok);
         current_switch = saved;
@@ -1364,13 +1481,28 @@ static Node *stmt(Token **rest, Token *tok) {
     }
 
     if (equal(tok, "break")) {
+        Node *node = new_node(ND_BREAK, tok);
+        node->cleanup_begin = locals;
         *rest = skip(tok->next, ";");
-        return new_node(ND_BREAK, tok);
+        if (current_switch) {
+            node->cleanup_end = current_switch->cleanup_end;
+            return node;
+        }
+        if (current_loop) {
+            node->cleanup_end = current_loop->cleanup_end;
+            return node;
+        }
+        error_tok(tok, "stray break");
     }
 
     if (equal(tok, "continue")) {
+        Node *node = new_node(ND_CONTINUE, tok);
+        node->cleanup_begin = locals;
         *rest = skip(tok->next, ";");
-        return new_node(ND_CONTINUE, tok);
+        if (!current_loop)
+            error_tok(tok, "stray continue");
+        node->cleanup_end = current_loop->cleanup_end;
+        return node;
     }
 
     if (equal(tok, "goto")) {
@@ -1379,6 +1511,11 @@ static Node *stmt(Token **rest, Token *tok) {
         if (tok->kind != TK_IDENT)
             error_tok(tok, "expected label name");
         node->label_name = tok->name;
+        node->cleanup_begin = locals;
+        LabelScope *label = find_label_scope(node->label_name);
+        node->cleanup_end = label ? label->locals : current_fn_scope_locals;
+        if (!label)
+            add_pending_goto(node->label_name, node);
         *rest = skip(tok->next, ";");
         return node;
     }
@@ -1386,6 +1523,8 @@ static Node *stmt(Token **rest, Token *tok) {
     if (tok->kind == TK_IDENT && equal(tok->next, ":")) {
         Node *node = new_node(ND_LABEL, tok);
         node->label_name = tok->name;
+        record_label_scope(node->label_name, locals);
+        resolve_pending_gotos(node->label_name, locals);
         tok = tok->next->next;
         tok = skip_attributes(tok);
         node->lhs = stmt(&tok, tok);
@@ -1426,8 +1565,12 @@ static Node *primary(Token **rest, Token *tok) {
             LVar *var = find_var(tok);
             if (var)
                 node->lhs = new_var_node(var, tok);
-            else
+            else {
                 node->funcname = tok->name;
+                LVar *gvar = find_global_name(tok->name);
+                if (gvar && gvar->is_function)
+                    node->lhs = new_var_node(gvar, tok);
+            }
             tok = skip(tok->next, "(");
             Node head = {};
             Node *cur = &head;
@@ -2188,11 +2331,23 @@ Program *parse(Token *tok) {
             Type *fn_symbol_ty = pointer_to(fty);
             locals = NULL;
             stack_offset = 64; // 48 (callee-saved pushes) + 16 (spill slots for r10/r11)
+            label_scopes = NULL;
+            pending_gotos = NULL;
+            current_switch = NULL;
+            current_loop = NULL;
 
             tok = tok->next;
             LVar *params = parse_params(&tok, tok, &is_variadic);
             tok = skip(tok, ")");
             tok = skip_attributes(tok);
+            current_fn_scope_locals = params;
+            current_block_depth = 0;
+            suppress_fn_scope_update = false;
+
+            if (fty->return_ty && (fty->return_ty->kind == TY_STRUCT || fty->return_ty->kind == TY_UNION)) {
+                LVar *retbuf = new_var("", pointer_to(fty->return_ty), true);
+                retbuf->cleanup_func = NULL;
+            }
 
             // Build parameter type list
             fty->is_variadic = is_variadic;
@@ -2228,6 +2383,7 @@ Program *parse(Token *tok) {
             Node *body = compound_stmt_ex(&tok, tok, &fn_locals);
             Function *fn = arena_alloc(sizeof(Function));
             fn->name = name;
+            fn->asm_name = format(".Lfn.%s", name);
             fn->ty = fty;
             fn->params = params;
             fn->locals = fn_locals;
@@ -2235,6 +2391,9 @@ Program *parse(Token *tok) {
             fn->stack_size = align_to(stack_offset, 16);
             fn->is_variadic = is_variadic;
             fn_cur = fn_cur->next = fn;
+            current_fn_scope_locals = NULL;
+            current_block_depth = 0;
+            suppress_fn_scope_update = false;
             continue;
         }
 
