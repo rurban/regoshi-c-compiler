@@ -567,12 +567,80 @@ static int gen(Node *node) {
         // Bitfield assignment: read-modify-write
         if (node->lhs->kind == ND_MEMBER && node->lhs->member &&
             node->lhs->member->bit_width > 0) {
-            int r2 = gen(node->rhs);
-            int r1 = gen_addr(node->lhs);
             int bw = node->lhs->member->bit_width;
             int bo = node->lhs->member->bit_offset;
             int unit_sz = node->lhs->member->ty->size;
             unsigned long long mask = ((1ULL << bw) - 1) << bo;
+            
+            // Check if RHS reads the same bitfield (compound assignment like s.x += 1)
+            // In that case, we need to read the current value first
+            bool rhs_reads_same = false;
+            if (node->rhs->kind == ND_MEMBER && node->rhs->member == node->lhs->member) {
+                rhs_reads_same = true;
+            } else if (node->rhs->kind == ND_ADD || node->rhs->kind == ND_SUB ||
+                       node->rhs->kind == ND_MUL || node->rhs->kind == ND_DIV ||
+                       node->rhs->kind == ND_BITAND || node->rhs->kind == ND_BITOR ||
+                       node->rhs->kind == ND_BITXOR) {
+                // Check if any operand reads the same bitfield
+                if (node->rhs->lhs && node->rhs->lhs->kind == ND_MEMBER &&
+                    node->rhs->lhs->member == node->lhs->member)
+                    rhs_reads_same = true;
+                if (node->rhs->rhs && node->rhs->rhs->kind == ND_MEMBER &&
+                    node->rhs->rhs->member == node->lhs->member)
+                    rhs_reads_same = true;
+            }
+            
+            // Generate RHS (the new value to assign)
+            int r2 = gen(node->rhs);
+            
+            if (rhs_reads_same) {
+                // Compound assignment: RHS reads the bitfield, so we need read-modify-write
+                int ra = gen_addr(node->lhs);
+                int rt = alloc_reg();
+                // rt = old value from storage unit (full extraction)
+                emit_load(node->lhs->member->ty, rt, format("[%s]", reg64[ra]));
+                // Extract current bitfield value
+                if (bo > 0) {
+                    printf("  shr %s, %d\n", reg64[rt], bo);
+                }
+                if (bw < unit_sz * 8) {
+                    unsigned long long m = (1ULL << bw) - 1;
+                    printf("  movabs rax, %llu\n", m);
+                    printf("  and %s, rax\n", reg64[rt]);
+                }
+                // Now r2 should contain the result of the compound operation (e.g., old+1)
+                // But the gen() call above already evaluated the RHS which included reading
+                // the bitfield with our normal bitfield read code - so r2 has the result
+                // We just need to store it back with proper masking
+                
+                // Clear the bitfield bits in old value
+                printf("  movabs rax, %llu\n", ~mask);
+                printf("  and %s, rax\n", reg64[rt]);
+                // Mask and shift new value into position
+                int rv = alloc_reg();
+                printf("  mov %s, %s\n", reg64[rv], reg64[r2]);
+                printf("  movabs rax, %llu\n", (1ULL << bw) - 1);
+                printf("  and %s, rax\n", reg64[rv]);
+                if (bo > 0)
+                    printf("  shl %s, %d\n", reg64[rv], bo);
+                printf("  or %s, %s\n", reg64[rt], reg64[rv]);
+                // Store back
+                if (unit_sz == 1)
+                    printf("  mov byte ptr [%s], %s\n", reg64[ra], reg8[rt]);
+                else if (unit_sz == 2)
+                    printf("  mov word ptr [%s], %s\n", reg64[ra], reg(rt, 2));
+                else if (unit_sz == 4)
+                    printf("  mov dword ptr [%s], %s\n", reg64[ra], reg(rt, 4));
+                else
+                    printf("  mov qword ptr [%s], %s\n", reg64[ra], reg64[rt]);
+                free_reg(rv);
+                free_reg(rt);
+                free_reg(ra);
+                return r2;
+            }
+            
+            // Original simple assignment code
+            int r1 = gen_addr(node->lhs);
             // Load current storage unit
             emit_load(node->lhs->member->ty, r1, format("[%s]", reg64[r1]));
             // We used r1 for loading, but we need the address again.
