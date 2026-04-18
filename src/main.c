@@ -32,10 +32,17 @@ static char *read_file(char *path) {
 bool opt_O0 = false;
 
 int main(int argc, char **argv) {
-    char *out_path = "a.exe";
+    char *out_path =
+#ifdef _WIN32
+        "a.exe"
+#else
+        "a.out"
+#endif
+        ;
     char *in_path = NULL;
     bool opt_S = false;
     bool opt_c = false;
+    bool opt_o = false;
     char libs[512] =
 #ifdef _WIN32
         ""
@@ -58,6 +65,7 @@ int main(int argc, char **argv) {
                 return 1;
             }
             out_path = argv[i];
+            opt_o = true;
         } else if (!strncmp(argv[i], "-l", 2) || !strncmp(argv[i], "-L", 2)) {
             int n = snprintf(libs + libs_len, sizeof(libs) - libs_len, " %s", argv[i]);
             if (n > 0 && libs_len + n < (int)sizeof(libs))
@@ -74,7 +82,9 @@ int main(int argc, char **argv) {
         return 1;
     }
 
-    char *asm_path = opt_S ? out_path : format("rcc_tmp_%d.s", _getpid());
+    char *asm_path = opt_S
+        ? opt_o ? out_path : format("%s.s", in_path)
+        : format("rcc_tmp_%d.s", _getpid());
 
     // Tokenize and Parse
     char *contents = read_file(in_path);
