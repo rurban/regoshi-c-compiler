@@ -747,12 +747,35 @@ static char *preprocess_file(char *filename, char *input) {
                 s += 7;
                 while (s < end && isspace((unsigned char)*s))
                     s++;
-                if (s < end && (*s == '"' || *s == '<')) {
-                    char close = (*s == '"') ? '"' : '>';
-                    char *start = ++s;
-                    while (s < end && *s != close)
-                        s++;
-                    char *spec = pp_strndup(start, s - start);
+                char *inc_arg = s;
+                // Find end of the include argument (rest of line)
+                while (s < end && *s != '\n')
+                    s++;
+                char *inc_end = s;
+                // Try direct "..." or <...>
+                char *spec = NULL;
+                if (inc_arg < inc_end && (*inc_arg == '"' || *inc_arg == '<')) {
+                    char close = (*inc_arg == '"') ? '"' : '>';
+                    char *start = ++inc_arg;
+                    while (inc_arg < inc_end && *inc_arg != close)
+                        inc_arg++;
+                    spec = pp_strndup(start, inc_arg - start);
+                } else {
+                    // Macro-expand the include argument (C99 §6.10.2p4)
+                    char *arg_str = pp_strndup(inc_arg, inc_end - inc_arg);
+                    char *expanded = expand_text(arg_str, filename, 1, 0);
+                    if (expanded) {
+                        char *p = expanded;
+                        while (*p && isspace((unsigned char)*p)) p++;
+                        if (*p == '"' || *p == '<') {
+                            char close = (*p == '"') ? '"' : '>';
+                            char *start = ++p;
+                            while (*p && *p != close) p++;
+                            spec = pp_strndup(start, p - start);
+                        }
+                    }
+                }
+                if (spec) {
                     char *path = resolve_include(filename, spec);
                     if (path) {
                         char *inc = read_pp_file(path);
