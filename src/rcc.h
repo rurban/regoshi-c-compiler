@@ -125,6 +125,8 @@ extern Type *ty_float;
 extern Type *ty_double;
 extern Type *ty_ldouble;
 
+extern bool opt_O0;
+
 bool is_integer(Type *ty);
 bool is_flonum(Type *ty);
 bool is_number(Type *ty);

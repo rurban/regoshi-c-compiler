@@ -29,6 +29,8 @@ static char *read_file(char *path) {
     return buf;
 }
 
+bool opt_O0 = false;
+
 int main(int argc, char **argv) {
     char *out_path = "a.exe";
     char *in_path = NULL;
@@ -48,6 +50,8 @@ int main(int argc, char **argv) {
             opt_S = true;
         } else if (!strcmp(argv[i], "-c")) {
             opt_c = true;
+        } else if (!strcmp(argv[i], "-O0")) {
+            opt_O0 = true;
         } else if (!strcmp(argv[i], "-o")) {
             if (++i >= argc) {
                 fprintf(stderr, "error: missing argument for -o\n");

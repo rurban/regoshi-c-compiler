@@ -59,8 +59,9 @@ gcc -std=c11 -O2 -o rcc.exe src/main.c src/lexer.c src/parser.c src/type.c src/c
 # Output assembly
 ./rcc.exe source.c -S -o output.s
 
-# Run benchmark
+# Run tests and benchmark
 make check
+make bench
 ```
 
 ## Options
@@ -70,6 +71,7 @@ make check
     -S       assemble-only
     -c       compile-only
     -o file  set output filename
+    -O0      skip peephole optimizer
 
 ## Project Structure
 

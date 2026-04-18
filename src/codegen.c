@@ -1335,6 +1335,7 @@ void codegen(Program *prog) {
         }
 
         // Skip peephole on very large functions to avoid truncation/pathological compile behavior.
+        if (opt_O0) goto skip_peep;
         if (nlines < 50000)
         for (int pass = 0; pass < 4; pass++) {
             for (int li = 0; li < nlines - 1; li++) {
@@ -1465,6 +1466,7 @@ void codegen(Program *prog) {
             }
         }
 
+    skip_peep:
         // Emit optimized lines
         for (int li = 0; li < nlines; li++) {
             if (lines[li] && lines[li][0])
