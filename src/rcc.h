@@ -102,6 +102,7 @@ struct Type {
     Type *param_types; // linked list of parameter types (for function)
     Type *param_next;  // next in parameter type list
     bool is_variadic;  // for function
+    int pack_align;    // #pragma pack(n) alignment, 0 = default
 };
 
 typedef struct Typedef Typedef;
@@ -128,6 +129,7 @@ extern Type *ty_double;
 extern Type *ty_ldouble;
 
 extern bool opt_O0;
+extern int pack_align;
 
 bool is_integer(Type *ty);
 bool is_flonum(Type *ty);

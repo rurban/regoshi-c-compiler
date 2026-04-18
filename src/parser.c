@@ -764,6 +764,7 @@ static Type *struct_or_union_specifier(Token **rest, Token *tok, bool is_union) 
     int max_align = 1;
     int bit_pos = 0;        // current bit position within the struct (for bitfield packing)
     int bf_unit_size = 0;   // size of current bitfield storage unit (0 = none active)
+    int struct_pack = pack_align;  // capture #pragma pack value at struct start
 
     while (!equal(tok, "}")) {
         VarAttr attr = {};
@@ -795,7 +796,33 @@ static Type *struct_or_union_specifier(Token **rest, Token *tok, bool is_union) 
                     error_tok(tok, "bitfield width out of range");
             }
 
-            if (!name && !bit_width)
+            // Handle anonymous bitfield: "int : N" or "int : 0"
+            // These don't create named members but affect layout
+            if (!name && bit_width >= 0) {
+                int unit = mem_ty->size;
+                if (!is_union) {
+                    int unit_bits = unit * 8;
+                    // :0 always forces a new storage unit
+                    if (bit_width == 0 || bf_unit_size != unit ||
+                        bit_pos % unit_bits + bit_width > unit_bits) {
+                        offset = align_to(offset, unit);
+                        bit_pos = offset * 8;
+                        bf_unit_size = unit;
+                    }
+                    if (bit_width > 0) {
+                        bit_pos += bit_width;
+                        int end_byte = (bit_pos + 7) / 8;
+                        if (end_byte > offset)
+                            offset = end_byte;
+                    }
+                }
+                if (!equal(tok, ","))
+                    break;
+                tok = tok->next;
+                continue;
+            }
+
+            if (!name)
                 error_tok(tok, "expected member name");
 
             Member *mem = arena_alloc(sizeof(Member));
@@ -813,7 +840,10 @@ static Type *struct_or_union_specifier(Token **rest, Token *tok, bool is_union) 
                     bit_pos % (unit * 8) + bit_width > unit_bits) {
                     // Align to start of a new storage unit
                     if (!is_union) {
-                        offset = align_to(offset, unit);
+                        int a = unit;
+                        if (struct_pack > 0 && (struct_pack < a || a == 0))
+                            a = struct_pack;
+                        offset = align_to(offset, a);
                         bit_pos = offset * 8;
                     }
                     bf_unit_size = unit;
@@ -844,14 +874,19 @@ static Type *struct_or_union_specifier(Token **rest, Token *tok, bool is_union) 
                     if (max_size < mem_ty->size)
                         max_size = mem_ty->size;
                 } else {
-                    offset = align_to(offset, mem_ty->align);
+                    int a = mem_ty->align;
+                    if (struct_pack > 0 && (struct_pack < a || a == 0))
+                        a = struct_pack;
+                    offset = align_to(offset, a);
                     bit_pos = offset * 8;
                     mem->offset = offset;
                     offset += mem_ty->size;
                     bit_pos = offset * 8;
+                    if (max_align < a)
+                        max_align = a;
                 }
-                if (max_align < mem_ty->align)
-                    max_align = mem_ty->align;
+                if (struct_pack > 0 && ty->pack_align == 0)
+                    ty->pack_align = struct_pack;
             }
             if (name)
                 cur = cur->next = mem;
@@ -868,8 +903,11 @@ static Type *struct_or_union_specifier(Token **rest, Token *tok, bool is_union) 
     if (type_cleanup)
         warn_tok(tok, "attribute '__cleanup__' ignored on type");
     ty->members = head.next;
-    ty->align = max_align;
-    ty->size = is_union ? align_to(max_size, max_align) : align_to(offset, max_align);
+    int final_align = max_align;
+    if (struct_pack > 0 && struct_pack < max_align)
+        final_align = struct_pack;
+    ty->align = final_align;
+    ty->size = is_union ? align_to(max_size, final_align) : align_to(offset, final_align);
     *rest = tok;
     return ty;
 }

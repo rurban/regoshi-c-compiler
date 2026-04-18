@@ -36,6 +36,9 @@ typedef struct {
 static Macro *macros;
 static OnceFile *once_files;
 static int pp_counter;
+int pack_align = 0;
+int pack_align_stack[16];
+int pack_align_idx = 0;
 
 static bool pp_startswith(char *p, char *q) {
     return strncmp(p, q, strlen(q)) == 0;
@@ -693,6 +696,30 @@ static char *preprocess_file(char *filename, char *input) {
                     s++;
                 if (pp_startswith(s, "once"))
                     mark_once_file(filename);
+                else if (pp_startswith(s, "pack")) {
+                    s += 4;
+                    while (s < end && isspace((unsigned char)*s)) s++;
+                    if (pp_startswith(s, "push")) {
+                        pack_align_stack[pack_align_idx++] = pack_align;
+                        s += 4;
+                        while (s < end && isspace((unsigned char)*s)) s++;
+                        if (*s == ',') {
+                            s++;
+                            while (s < end && isspace((unsigned char)*s)) s++;
+                        }
+                        if (*s >= '1' && *s <= '9')
+                            pack_align = *s - '0';
+                    } else if (pp_startswith(s, "pop")) {
+                        pack_align = pack_align_stack[--pack_align_idx];
+                    } else if (*s >= '1' && *s <= '9') {
+                        pack_align = *s - '0';
+                    } else if (*s == '(') {
+                        s++;
+                        while (s < end && isspace((unsigned char)*s)) s++;
+                        if (*s >= '1' && *s <= '9')
+                            pack_align = *s - '0';
+                    }
+                }
             } else if (pp_startswith(s, "define") && active) {
                 s += 6;
                 while (s < end && isspace((unsigned char)*s))
