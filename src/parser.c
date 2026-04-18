@@ -1372,9 +1372,64 @@ static Node *declaration(Token **rest, Token *tok) {
                         cur = cur->next = new_unary(ND_EXPR_STMT, new_binary(ND_ASSIGN, lhs, rhs, start), start);
                     }
                 } else {
-                    Node *lhs = new_var_node(var, start);
-                    Node *rhs = assign(&tok, tok);
-                    cur = cur->next = new_unary(ND_EXPR_STMT, new_binary(ND_ASSIGN, lhs, rhs, start), start);
+                    // Handle struct/union initializer: { val1, val2, ... }
+                    if (var->ty->kind == TY_STRUCT || var->ty->kind == TY_UNION) {
+                        Node *lhs = new_var_node(var, start);
+                        if (equal(tok, "{")) {
+                            // Struct initializer - create member assignments
+                            tok = tok->next;
+                            Member *m = var->ty->members;
+                            while (!equal(tok, "}") && m) {
+                                // Handle nested struct initializers: { {a,b}, {c,d} }
+                                if (equal(tok, "{") && m->ty && 
+                                    (m->ty->kind == TY_STRUCT || m->ty->kind == TY_UNION)) {
+                                    // Create a temporary lvar for the member
+                                    LVar *mem_var = arena_alloc(sizeof(LVar));
+                                    mem_var->name = "";
+                                    mem_var->ty = m->ty;
+                                    mem_var->is_local = true;
+                                    
+                                    // Recursively initialize the nested struct
+                                    Node *mem_lhs = new_var_node(mem_var, tok);
+                                    tok = tok->next;
+                                    Member *nm = m->ty->members;
+                                    while (!equal(tok, "}") && nm) {
+                                        if (!equal(tok, ",")) {
+                                            Node *rhs = assign(&tok, tok);
+                                            Node *mem = new_node(ND_MEMBER, tok);
+                                            mem->lhs = mem_lhs;
+                                            mem->member = nm;
+                                            cur = cur->next = new_unary(ND_EXPR_STMT, 
+                                                new_binary(ND_ASSIGN, mem, rhs, tok), tok);
+                                        }
+                                        if (equal(tok, ","))
+                                            tok = tok->next;
+                                        nm = nm->next;
+                                    }
+                                    tok = skip(tok, "}");
+                                } else if (!equal(tok, ",")) {
+                                    Node *rhs = assign(&tok, tok);
+                                    Node *mem = new_node(ND_MEMBER, tok);
+                                    mem->lhs = lhs;
+                                    mem->member = m;
+                                    cur = cur->next = new_unary(ND_EXPR_STMT, 
+                                        new_binary(ND_ASSIGN, mem, rhs, tok), tok);
+                                }
+                                if (equal(tok, ","))
+                                    tok = tok->next;
+                                m = m->next;
+                            }
+                            tok = skip(tok, "}");
+                        } else {
+                            Node *rhs = assign(&tok, tok);
+                            cur = cur->next = new_unary(ND_EXPR_STMT, 
+                                new_binary(ND_ASSIGN, lhs, rhs, start), start);
+                        }
+                    } else {
+                        Node *lhs = new_var_node(var, start);
+                        Node *rhs = assign(&tok, tok);
+                        cur = cur->next = new_unary(ND_EXPR_STMT, new_binary(ND_ASSIGN, lhs, rhs, start), start);
+                    }
                 }
             }
         }
