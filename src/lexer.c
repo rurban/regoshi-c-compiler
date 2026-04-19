@@ -200,8 +200,8 @@ static char read_escaped_char(char **new_pos, char *p) {
 }
 
 // Tokenize a given string and return new tokens.
+// Note: Input should already be preprocessed by the caller.
 Token *tokenize(char *filename, char *p) {
-    p = preprocess(filename, p);
     current_input = p;
     current_filename = filename;
     Token head = {};
@@ -230,13 +230,12 @@ Token *tokenize(char *filename, char *p) {
                 if (*q == '"') {
                     // Parse filename
                     q++;
-                    char *fname_start = q;
                     while (*q && *q != '"') q++;
                     if (*q == '"') {
                         // Save current position for line counting
                         current_input = p;
                         current_line_offset = q + 1 - current_input;
-                        // Update line number (subtract 1 since we start counting from 1)
+                        // Update line number
                         line_num = n - 1;
                         // Skip to end of line
                         p = q + 1;

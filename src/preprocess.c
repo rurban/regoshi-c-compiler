@@ -36,6 +36,12 @@ typedef struct {
 static Macro *macros;
 static OnceFile *once_files;
 static int pp_counter;
+static Macro *cmdline_macros;
+
+static void clear_macros(void) {
+    macros = cmdline_macros;
+}
+
 int pack_align = 0;
 int pack_align_stack[16];
 int pack_align_idx = 0;
@@ -190,6 +196,37 @@ static void define_macro(char *name, bool is_function, char **params, int param_
     m->params = params;
     m->param_len = param_len;
     m->body = body;
+}
+
+void add_define(char *def) {
+    char *eq = strchr(def, '=');
+    char *name;
+    char *body;
+    if (eq) {
+        name = strndup(def, eq - def);
+        body = strdup(eq + 1);
+    } else {
+        name = strdup(def);
+        body = strdup("1");
+    }
+    Macro *m = arena_alloc(sizeof(Macro));
+    m->name = name;
+    m->is_function = false;
+    m->params = NULL;
+    m->param_len = 0;
+    m->body = body;
+    m->next = cmdline_macros;
+    cmdline_macros = m;
+}
+
+void add_undef(char *name) {
+    Macro **prev = &macros;
+    for (Macro *m = macros; m; prev = &m->next, m = m->next) {
+        if (strcmp(m->name, name) == 0) {
+            *prev = m->next;
+            return;
+        }
+    }
 }
 
 static bool is_once_file(char *path) {
@@ -775,12 +812,57 @@ static char *preprocess_file(char *filename, char *input) {
                 while (s < end && isspace((unsigned char)*s))
                     s++;
                 char *inc_arg = s;
+                while (s < end && *s != '\n')
+                    s++;
+                char *inc_end = s;
+                char *spec = NULL;
+                char *expanded = NULL;
+                if (inc_arg < inc_end && (*inc_arg == '"' || *inc_arg == '<')) {
+                    char close = (*inc_arg == '"') ? '"' : '>';
+                    char *start = ++inc_arg;
+                    while (inc_arg < inc_end && *inc_arg != close)
+                        inc_arg++;
+                    spec = pp_strndup(start, inc_arg - start);
+                } else {
+                    char *arg_str = pp_strndup(inc_arg, inc_end - inc_arg);
+                    expanded = expand_text(arg_str, filename, 1, 0);
+                    if (expanded) {
+                        char *p = expanded;
+                        while (*p && isspace((unsigned char)*p)) p++;
+                        if (*p == '"' || *p == '<') {
+                            char close = (*p == '"') ? '"' : '>';
+                            char *start = ++p;
+                            while (*p && *p != close) p++;
+                            spec = pp_strndup(start, p - start);
+                        }
+                    }
+                }
+                if (spec) {
+                    char *path = resolve_include(filename, spec);
+                    if (path) {
+                        char *inc = read_pp_file(path);
+                        if (inc) {
+                            int incl_lines = 0;
+                            for (char *p = inc; *p; p++)
+                                if (*p == '\n') incl_lines++;
+                            sb_puts(&out, format("# %d \"%s\"\n", line_no + 1, filename));
+                            sb_puts(&out, preprocess_file(path, inc));
+                            line_no += incl_lines;
+                            sb_puts(&out, format("# %d \"%s\"\n", line_no + 1, filename));
+                        }
+                    }
+                }
+            } else if ((pp_startswith(s, "if") && !pp_startswith(s, "ifdef") && !pp_startswith(s, "ifndef") && !pp_startswith(s, "elif"))) {
+                while (s < end && isspace((unsigned char)*s))
+                    s++;
+                char *inc_arg = s;
                 // Find end of the include argument (rest of line)
                 while (s < end && *s != '\n')
                     s++;
                 char *inc_end = s;
                 // Try direct "..." or <...>
                 char *spec = NULL;
+                char *expanded = NULL;
                 if (inc_arg < inc_end && (*inc_arg == '"' || *inc_arg == '<')) {
                     char close = (*inc_arg == '"') ? '"' : '>';
                     char *start = ++inc_arg;
@@ -790,7 +872,7 @@ static char *preprocess_file(char *filename, char *input) {
                 } else {
                     // Macro-expand the include argument (C99 §6.10.2p4)
                     char *arg_str = pp_strndup(inc_arg, inc_end - inc_arg);
-                    char *expanded = expand_text(arg_str, filename, 1, 0);
+                    expanded = expand_text(arg_str, filename, 1, 0);
                     if (expanded) {
                         char *p = expanded;
                         while (*p && isspace((unsigned char)*p)) p++;
@@ -819,6 +901,43 @@ static char *preprocess_file(char *filename, char *input) {
                             sb_puts(&out, format("# %d \"%s\"\n", line_no + 1, filename));
                         }
                     }
+                }
+            } else if ((pp_startswith(s, "if") && !pp_startswith(s, "ifdef") && !pp_startswith(s, "ifndef") && !pp_startswith(s, "elif"))) {
+                // Handle #if - only if it's not #ifdef, #ifndef, or #elif
+                // Note: check elif first since "elif" starts with "if"
+                s += 2;
+                while (s < end && isspace((unsigned char)*s))
+                    s++;
+                char *expr = pp_strndup(s, end - s);
+                long val = eval_condition(expr, filename);
+                CondIncl *ci = arena_alloc(sizeof(CondIncl));
+                ci->parent_active = active;
+                // Only take this branch if parent is active AND condition is true
+                ci->active = active && (val != 0);
+                // Only mark as taken if we actually entered this branch
+                ci->branch_taken = ci->active;
+                ci->next = conds;
+                conds = ci;
+                active = ci->active;
+            } else if (pp_startswith(s, "elif")) {
+                // #elif - check if we already took a branch
+                s += 4;
+                while (s < end && isspace((unsigned char)*s))
+                    s++;
+                if (conds) {
+                    // If no branch taken yet, evaluate the condition
+                    if (!conds->branch_taken) {
+                        conds->active = eval_condition(trim_copy(s, end - s), filename);
+                        if (conds->active)
+                            conds->branch_taken = true;
+                    } else {
+                        // Already took a branch, this #elif is inactive
+                        conds->active = false;
+                    }
+                    active = conds->active;
+                } else {
+                    // #elif without prior #if - treat as error but handle gracefully
+                    active = false;
                 }
             } else if (pp_startswith(s, "ifdef")) {
                 s += 5;
@@ -849,27 +968,7 @@ static char *preprocess_file(char *filename, char *input) {
                 ci->branch_taken = ci->active;
                 ci->next = conds;
                 conds = ci;
-                active = ci->active;
-            } else if (pp_startswith(s, "if")) {
-                s += 2;
-                CondIncl *ci = arena_alloc(sizeof(CondIncl));
-                ci->parent_active = active;
-                ci->active = active && eval_condition(trim_copy(s, end - s), filename);
-                ci->branch_taken = ci->active;
-                ci->next = conds;
-                conds = ci;
-                active = ci->active;
-            } else if (pp_startswith(s, "elif")) {
-                s += 4;
-                if (conds) {
-                    if (!conds->parent_active || conds->branch_taken)
-                        conds->active = false;
-                    else
-                        conds->active = eval_condition(trim_copy(s, end - s), filename);
-                    if (conds->active)
-                        conds->branch_taken = true;
-                    active = conds->active;
-                }
+active = ci->active;
             } else if (pp_startswith(s, "else")) {
                 if (conds) {
                     conds->active = conds->parent_active && !conds->branch_taken;
@@ -898,8 +997,10 @@ static char *preprocess_file(char *filename, char *input) {
 }
 
 char *preprocess(char *filename, char *p) {
+    clear_macros();
     static char *builtin_expect_params[] = {"x", "y"};
-
+    
+    // Add builtin macros first - BEFORE calling preprocess_file
     if (!find_macro("__has_include"))
         define_macro("__has_include", false, NULL, 0, "1");
     if (!find_macro("__has_include_next"))
@@ -990,5 +1091,7 @@ char *preprocess(char *filename, char *p) {
         define_macro("__SIZEOF_FLOAT__", false, NULL, 0, "4");
     if (!find_macro("__SIZEOF_DOUBLE__"))
         define_macro("__SIZEOF_DOUBLE__", false, NULL, 0, "8");
-    return preprocess_file(canonical_path(filename), splice_lines(p));
+        
+    char *result = preprocess_file(canonical_path(filename), splice_lines(p));
+    return result;
 }

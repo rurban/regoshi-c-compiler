@@ -54,6 +54,8 @@ char *str_intern(char *start, int len);
 
 // Lexer entry point
 char *preprocess(char *filename, char *p);
+void add_define(char *def);
+void add_undef(char *name);
 Token *tokenize(char *filename, char *p);
 
 //

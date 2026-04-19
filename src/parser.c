@@ -1072,7 +1072,7 @@ static Type *declspec(Token **rest, Token *tok, VarAttr *attr) {
     }
 
     if (!ty)
-        error_tok(tok, "expected type name");
+        error_tok(tok, "expected type name, got kind=%d text='%.20s'", tok->kind, tok->loc);
 
     ty = apply_type_align(ty, attr_align);
     tok = skip_attributes(tok);

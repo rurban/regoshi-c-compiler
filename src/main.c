@@ -9,6 +9,9 @@
 #define GCC "gcc"
 #endif
 
+void add_define(char *def);
+void add_undef(char *name);
+
 // Returns the contents of a given file.
 static char *read_file(char *path) {
     FILE *fp = fopen(path, "r");
@@ -42,6 +45,7 @@ int main(int argc, char **argv) {
     char *in_path = NULL;
     bool opt_S = false;
     bool opt_c = false;
+    bool opt_E = false;
     bool opt_o = false;
     char libs[512] =
 #ifdef _WIN32
@@ -57,6 +61,8 @@ int main(int argc, char **argv) {
             opt_S = true;
         } else if (!strcmp(argv[i], "-c")) {
             opt_c = true;
+        } else if (!strcmp(argv[i], "-E")) {
+            opt_E = true;
         } else if (!strcmp(argv[i], "-O0")) {
             opt_O0 = true;
         } else if (!strcmp(argv[i], "-o")) {
@@ -70,6 +76,26 @@ int main(int argc, char **argv) {
             int n = snprintf(libs + libs_len, sizeof(libs) - libs_len, " %s", argv[i]);
             if (n > 0 && libs_len + n < (int)sizeof(libs))
                 libs_len += n;
+        } else if (!strncmp(argv[i], "-D", 2)) {
+            char *def = argv[i] + 2;
+            if (*def == '\0') {
+                if (++i >= argc) {
+                    fprintf(stderr, "error: missing argument for -D\n");
+                    return 1;
+                }
+                def = argv[i];
+            }
+            add_define(def);
+        } else if (!strncmp(argv[i], "-U", 2)) {
+            char *name = argv[i] + 2;
+            if (*name == '\0') {
+                if (++i >= argc) {
+                    fprintf(stderr, "error: missing argument for -U\n");
+                    return 1;
+                }
+                name = argv[i];
+            }
+            add_undef(name);
         } else if (argv[i][0] == '-' && argv[i][1] != '\0') {
             fprintf(stderr, "rcc: warning: ignored unknown option %s\n", argv[i]);
         } else {
@@ -88,7 +114,16 @@ int main(int argc, char **argv) {
 
     // Tokenize and Parse
     char *contents = read_file(in_path);
-    Token *tok = tokenize(in_path, contents);
+    
+    // Always preprocess - opt_E just outputs preprocessed result
+    char *preprocessed = preprocess(in_path, contents);
+    
+    if (opt_E) {
+        printf("%s", preprocessed);
+        return 0;
+    }
+    
+    Token *tok = tokenize(in_path, preprocessed);
     Program *prog = parse(tok);
     
     // Type system / Semantic checks
