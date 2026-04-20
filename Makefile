@@ -15,15 +15,17 @@ src/main.o: src/main.c
 
 ifeq ($(OS),Windows_NT)
 TEST_RUNNER = powershell -ExecutionPolicy Bypass -File run_tcc_suite.ps1
+BENCH_RUNNER = powershell -ExecutionPolicy Bypass -File bench/run_bench.ps1 ./$(TARGET)
 else
 TEST_RUNNER = ./run_tcc_suite.sh ./$(TARGET)
+BENCH_RUNNER = ./bench/run_bench.sh ./$(TARGET)
 endif
 
 test check: $(TARGET)
 	@$(TEST_RUNNER)
 
 bench: $(TARGET)
-	@./bench/run_bench.sh ./$(TARGET)
+	@$(BENCH_RUNNER)
 
 clean:
 	rm -f $(OBJS) $(TARGET) $(TARGET).exe
