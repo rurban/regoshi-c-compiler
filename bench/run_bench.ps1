@@ -1,7 +1,7 @@
 $ErrorActionPreference = "Continue"
 $SRC   = "d:\rcc\bench\bench.c"
 $RCC   = "d:\rcc\rcc.exe"
-$TCC   = "d:\rcc\tcc_bin\tcc\tcc.exe"
+$TCC   = "d:\rcc\tinycc\tcc.exe"
 $GCC   = "gcc"
 
 $RCC_EXE = "d:\rcc\bench\bench_rcc.exe"

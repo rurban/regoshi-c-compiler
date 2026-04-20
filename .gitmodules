@@ -1,0 +1,4 @@
+[submodule "tinycc"]
+	path = tinycc
+	url = https://github.com/TinyCC/tinycc.git
+	branch = mob

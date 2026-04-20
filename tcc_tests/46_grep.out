@@ -1,8 +1,0 @@
-﻿46_grep.exe : ?GREP-E-No arguments
-発生場所 D:\rcc\run_tcc_suite.ps1:57 文字:25
-+         $actualOutput = & $exe 2>&1 | Out-String
-+                         ~~~~~~~~~~~
-    + CategoryInfo          : NotSpecified: (?GREP-E-No arguments:String) [], RemoteException
-    + FullyQualifiedErrorId : NativeCommandError
- 
-Usage: grep [-cfnv] pattern [file ...].  grep ? for help

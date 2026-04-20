@@ -1,4 +1,4 @@
-$TestDir = "d:\rcc\tcc_tests"
+$TestDir = "d:\rcc\tinycc\tests\tests2"
 $RCC = if (Test-Path "d:\rcc\rcc.exe") { "d:\rcc\rcc.exe" } elseif (Test-Path "d:\rcc\rcc_new.exe") { "d:\rcc\rcc_new.exe" } else { "d:\rcc\rcc.exe" }
 $ReportFile = "d:\rcc\tcc_test_report.md"
 
