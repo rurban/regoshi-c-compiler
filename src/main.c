@@ -156,7 +156,7 @@ int main(int argc, char **argv) {
             snprintf(cmd, sizeof(cmd), GCC " -c %s -o %s", asm_path, out_path);
         } else {
 #if defined(__APPLE__)
-            snprintf(cmd, sizeof(cmd), GCC " %s -o %s%s", asm_path, out_path, libs);
+            snprintf(cmd, sizeof(cmd), GCC " -Wl,-e,main %s -o %s%s", asm_path, out_path, libs);
 #else
             snprintf(cmd, sizeof(cmd), GCC " -no-pie %s -o %s%s", asm_path, out_path, libs);
 #endif
