@@ -29,6 +29,7 @@ static TagScope *tags;
 static EnumConst *enum_consts;
 static int stack_offset;
 static char *pending_cleanup_func;
+static Token *pending_cleanup_tok;
 
 static StrLit *str_lits;
 static int str_lit_counter;
@@ -413,6 +414,7 @@ static Token *read_type_attrs(Token *tok, int *align) {
             tok = skip(tok, "(");
             while (!(equal(tok, ")") && equal(tok->next, ")"))) {
                 if (equal(tok, "__cleanup__") || equal(tok, "cleanup")) {
+                    pending_cleanup_tok = tok;
                     tok = tok->next;
                     tok = skip(tok, "(");
                     if (tok->kind == TK_IDENT)
@@ -725,6 +727,7 @@ static Type *struct_or_union_specifier(Token **rest, Token *tok, bool is_union) 
     tok = skip_attributes(tok);
     char *type_cleanup = pending_cleanup_func;
     pending_cleanup_func = NULL;
+    pending_cleanup_tok = NULL;
 
     Token *tag_tok = NULL;
     if (tok->kind == TK_IDENT) {
@@ -901,7 +904,7 @@ static Type *struct_or_union_specifier(Token **rest, Token *tok, bool is_union) 
 
     tok = skip(tok, "}");
     if (type_cleanup)
-        warn_tok(tok, "attribute '__cleanup__' ignored on type");
+        ty->cleanup_func = type_cleanup;
     ty->members = head.next;
     int final_align = max_align;
     if (struct_pack > 0 && struct_pack < max_align)
@@ -1345,7 +1348,7 @@ static Node *declaration(Token **rest, Token *tok) {
             if (equal(tok, "="))
                 ty = infer_array_type(ty, tok->next);
             LVar *var = new_var(name, ty, true);
-            var->cleanup_func = cleanup;
+            var->cleanup_func = cleanup ? cleanup : ty->cleanup_func;
             if (current_block_depth == 1)
                 current_fn_scope_locals = locals;
             if (equal(tok, "=")) {

@@ -57,16 +57,40 @@ static void emit_direct_call(char *name) {
     printf("  call r11\n");
 }
 
-static void emit_cleanup_range(LVar *begin, LVar *end) {
-    for (LVar *var = begin; var && var != end; var = var->next) {
-        if (!var->is_local || !var->cleanup_func)
-            continue;
+static bool var_has_cleanup(LVar *var) {
+    if (!var->is_local) return false;
+    if (var->cleanup_func) return true;
+    return var->ty->kind == TY_ARRAY && var->ty->base && var->ty->base->cleanup_func;
+}
+
+static void emit_cleanup_var(LVar *var) {
+    if (var->cleanup_func) {
 #ifdef _WIN32
         printf("  lea rcx, [rbp-%d]\n", var->offset);
 #else
         printf("  lea rdi, [rbp-%d]\n", var->offset);
 #endif
         emit_direct_call(var->cleanup_func);
+        return;
+    }
+    // Array whose element type carries __cleanup__: call per element, LIFO
+    char *func = var->ty->base->cleanup_func;
+    int elem_size = var->ty->base->size;
+    int nelem = elem_size ? var->ty->size / elem_size : 0;
+    for (int i = nelem - 1; i >= 0; i--) {
+#ifdef _WIN32
+        printf("  lea rcx, [rbp-%d]\n", var->offset - i * elem_size);
+#else
+        printf("  lea rdi, [rbp-%d]\n", var->offset - i * elem_size);
+#endif
+        emit_direct_call(func);
+    }
+}
+
+static void emit_cleanup_range(LVar *begin, LVar *end) {
+    for (LVar *var = begin; var && var != end; var = var->next) {
+        if (var_has_cleanup(var))
+            emit_cleanup_var(var);
     }
 }
 
@@ -1612,18 +1636,12 @@ void codegen(Program *prog) {
         // Emit __cleanup__ calls (LIFO: locals list is in reverse declaration order)
         bool has_cleanup = false;
         for (LVar *var = fn->locals; var; var = var->next)
-            if (var->cleanup_func && var->is_local) { has_cleanup = true; break; }
+            if (var_has_cleanup(var)) { has_cleanup = true; break; }
         if (has_cleanup)
             printf("  mov [rbp-%d], rax\n", SPILL_R10);
         for (LVar *var = fn->locals; var; var = var->next) {
-            if (var->cleanup_func && var->is_local) {
-#ifdef _WIN32
-                printf("  lea rcx, [rbp-%d]\n", var->offset);
-#else
-                printf("  lea rdi, [rbp-%d]\n", var->offset);
-#endif
-                emit_direct_call(var->cleanup_func);
-            }
+            if (var_has_cleanup(var))
+                emit_cleanup_var(var);
         }
         if (has_cleanup)
             printf("  mov rax, [rbp-%d]\n", SPILL_R10);

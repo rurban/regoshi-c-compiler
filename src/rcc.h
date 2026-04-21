@@ -105,6 +105,7 @@ struct Type {
     Type *param_next;  // next in parameter type list
     bool is_variadic;  // for function
     int pack_align;    // #pragma pack(n) alignment, 0 = default
+    char *cleanup_func; // __attribute__((__cleanup__(func))) on the type
 };
 
 typedef struct Typedef Typedef;
