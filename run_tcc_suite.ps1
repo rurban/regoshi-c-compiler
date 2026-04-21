@@ -1,9 +1,26 @@
-$TestDir = "d:\rcc\tinycc\tests\tests2"
-$RCC = if (Test-Path "d:\rcc\rcc.exe") { "d:\rcc\rcc.exe" } elseif (Test-Path "d:\rcc\rcc_new.exe") { "d:\rcc\rcc_new.exe" } else { "d:\rcc\rcc.exe" }
-$ReportFile = "d:\rcc\tcc_test_report.md"
+$ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+Set-Location $ScriptDir
 
-if (-not (Test-Path $RCC)) {
-    Write-Error "rcc.exe not found at $RCC. Please build it first."
+$TestDir = if (Test-Path (Join-Path $ScriptDir "tinycc\tests\tests2")) {
+    Join-Path $ScriptDir "tinycc\tests\tests2"
+} elseif (Test-Path (Join-Path $ScriptDir "tests2")) {
+    Join-Path $ScriptDir "tests2"
+} else {
+    Join-Path $ScriptDir "tinycc\tests\tests2"
+}
+$ReportFile = Join-Path $ScriptDir "tcc_test_report.md"
+
+$RCC = $null
+@("rcc.exe", "rcc.exe", "rcc") | ForEach-Object {
+    $candidate = Join-Path $ScriptDir $_
+    if (Test-Path $candidate) {
+        $RCC = $candidate
+        return
+    }
+}
+
+if (-not $RCC) {
+    Write-Error "rcc.exe not found in $ScriptDir. Please build it first."
     exit 1
 }
 
