@@ -1,0 +1,54 @@
+name: CI
+on: [ push, pull_request]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+          - os: macos-latest
+          - os: windows-latest
+
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          submodules: recursive
+
+      - name: Install dependencies (Linux)
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc build-essential
+          cd tinycc && ./configure && make && sudo make install
+
+      - name: Install dependencies (macOS)
+        if: matrix.os == 'macos-latest'
+        run: |
+          brew install gcc
+          cd tinycc && ./configure && make && sudo make install
+
+      - name: Install dependencies (Windows)
+        if: matrix.os == 'windows-latest'
+        uses: msys2/setup-msys2@e9898307ac31d1a803454791be09ab9973336e1c # v2.31.1
+        with:
+          msystem: MINGW64
+          update: true
+          install: |
+            mingw-w64-x86_64-gcc
+
+      - name: Build
+        run: make
+
+      - name: Run tests
+        if: matrix.os != 'macos-latest'
+        run: make check
+
+      - name: Run benchmarks
+        if: matrix.os != 'macos-latest'
+        run: make bench
