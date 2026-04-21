@@ -852,57 +852,8 @@ static char *preprocess_file(char *filename, char *input) {
                         }
                     }
                 }
-            } else if ((pp_startswith(s, "if") && !pp_startswith(s, "ifdef") && !pp_startswith(s, "ifndef") && !pp_startswith(s, "elif"))) {
-                while (s < end && isspace((unsigned char)*s))
-                    s++;
-                char *inc_arg = s;
-                // Find end of the include argument (rest of line)
-                while (s < end && *s != '\n')
-                    s++;
-                char *inc_end = s;
-                // Try direct "..." or <...>
-                char *spec = NULL;
-                char *expanded = NULL;
-                if (inc_arg < inc_end && (*inc_arg == '"' || *inc_arg == '<')) {
-                    char close = (*inc_arg == '"') ? '"' : '>';
-                    char *start = ++inc_arg;
-                    while (inc_arg < inc_end && *inc_arg != close)
-                        inc_arg++;
-                    spec = pp_strndup(start, inc_arg - start);
-                } else {
-                    // Macro-expand the include argument (C99 §6.10.2p4)
-                    char *arg_str = pp_strndup(inc_arg, inc_end - inc_arg);
-                    expanded = expand_text(arg_str, filename, 1, 0);
-                    if (expanded) {
-                        char *p = expanded;
-                        while (*p && isspace((unsigned char)*p)) p++;
-                        if (*p == '"' || *p == '<') {
-                            char close = (*p == '"') ? '"' : '>';
-                            char *start = ++p;
-                            while (*p && *p != close) p++;
-                            spec = pp_strndup(start, p - start);
-                        }
-                    }
-                }
-                if (spec) {
-                    char *path = resolve_include(filename, spec);
-                    if (path) {
-                        char *inc = read_pp_file(path);
-                        if (inc) {
-                            // Count lines in included file for line number tracking
-                            int incl_lines = 0;
-                            for (char *p = inc; *p; p++)
-                                if (*p == '\n') incl_lines++;
-                            // Output #line directive before include to track original file
-                            sb_puts(&out, format("# %d \"%s\"\n", line_no + 1, filename));
-                            sb_puts(&out, preprocess_file(path, inc));
-                            // After include, restore line numbers for current file
-                            line_no += incl_lines;
-                            sb_puts(&out, format("# %d \"%s\"\n", line_no + 1, filename));
-                        }
-                    }
-                }
-            } else if ((pp_startswith(s, "if") && !pp_startswith(s, "ifdef") && !pp_startswith(s, "ifndef") && !pp_startswith(s, "elif"))) {
+            }
+            else if ((pp_startswith(s, "if") && !pp_startswith(s, "ifdef") && !pp_startswith(s, "ifndef"))) {
                 // Handle #if - only if it's not #ifdef, #ifndef, or #elif
                 // Note: check elif first since "elif" starts with "if"
                 s += 2;
