@@ -203,7 +203,7 @@ void add_define(char *def) {
     char *name;
     char *body;
     if (eq) {
-        name = strndup(def, eq - def);
+        name = pp_strndup(def, eq - def);
         body = strdup(eq + 1);
     } else {
         name = strdup(def);
