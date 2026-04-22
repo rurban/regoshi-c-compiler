@@ -436,6 +436,16 @@ static Token *read_type_attrs(Token *tok, int *align) {
             continue;
         }
 
+        if (equal(tok, "__asm__") || equal(tok, "__asm")) {
+            tok = tok->next;
+            tok = skip(tok, "(");
+            while (tok->kind == TK_STR || (tok->kind == TK_IDENT && equal(tok, "_"))) {
+                tok = tok->next;
+            }
+            tok = skip(tok, ")");
+            continue;
+        }
+
         if (equal(tok, "__attribute__") || equal(tok, "__attribute")) {
             tok = tok->next;
             tok = skip(tok, "(");

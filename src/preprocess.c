@@ -1000,12 +1000,19 @@ char *preprocess(char *filename, char *p) {
         );
     if (!find_macro("_Atomic"))
         define_macro("_Atomic", false, NULL, 0, "");
+#ifdef _WIN32
     if (!find_macro("_WIN32"))
         define_macro("_WIN32", false, NULL, 0, "1");
-    if (!find_macro("__x86_64__"))
-        define_macro("__x86_64__", false, NULL, 0, "1");
     if (!find_macro("__LLP64__"))
         define_macro("__LLP64__", false, NULL, 0, "1");
+#else
+    if (!find_macro("__linux__"))
+        define_macro("__linux__", false, NULL, 0, "1");
+    if (!find_macro("__LP64__"))
+        define_macro("__LP64__", false, NULL, 0, "1");
+#endif
+    if (!find_macro("__x86_64__"))
+        define_macro("__x86_64__", false, NULL, 0, "1");
     if (!find_macro("__builtin_expect"))
         define_macro("__builtin_expect", true, builtin_expect_params, 2, "x");
     if (!find_macro("__builtin_abort"))

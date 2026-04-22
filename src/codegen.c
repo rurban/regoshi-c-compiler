@@ -803,7 +803,23 @@ static int gen(Node *node) {
         if (is_flonum(from) && is_integer(to)) {
             // float→int: value is always double internally
             printf("  movq xmm0, %s\n", reg64[r]);
-            printf("  cvttsd2si %s, xmm0\n", to->size == 8 ? reg64[r] : reg32[r]);
+            if (to->size == 8 && to->is_unsigned) {
+                int c = ++rcc_label_count;
+                printf("  mov rax, 0x43e0000000000000\n");
+                printf("  movq xmm1, rax\n");
+                printf("  comisd xmm0, xmm1\n");
+                printf("  jb .L.ucast.%d\n", c);
+                printf("  subsd xmm0, xmm1\n");
+                printf("  cvttsd2siq %s, xmm0\n", reg64[r]);
+                printf("  mov rcx, 0x8000000000000000\n");
+                printf("  or %s, rcx\n", reg64[r]);
+                printf("  jmp .L.ucast_end.%d\n", c);
+                printf(".L.ucast.%d:\n", c);
+                printf("  cvttsd2siq %s, xmm0\n", reg64[r]);
+                printf(".L.ucast_end.%d:\n", c);
+            } else {
+                printf("  cvttsd2si %s, xmm0\n", to->size == 8 ? reg64[r] : reg32[r]);
+            }
         } else if (is_integer(from) && is_flonum(to)) {
             // int→float: always produce double internally
             printf("  cvtsi2sd xmm0, %s\n", from->size < 4 ? reg32[r] : reg(r, from->size));
@@ -1670,6 +1686,14 @@ void codegen(Program *prog) {
                         int imm_val;
                         char op[16], od[64], os[32];
                         if (sscanf(lines[li], "  mov %[^,], %d", rd, &imm_val) == 2 && is_reg(rd)) {
+                            // Skip hex values: sscanf %d parses only leading '0' of 0x...
+                            char *comma = strchr(lines[li], ',');
+                            if (comma) {
+                                char *val = comma + 1;
+                                while (*val == ' ' || *val == '\t') val++;
+                                if (val[0] == '0' && (val[1] == 'x' || val[1] == 'X'))
+                                    continue;
+                            }
                             int rd_pid = phys_reg_id(rd);
                             if (sscanf(lines[lj], "  %s %[^,], %s", op, od, os) == 3 &&
                                 same_phys(os, rd) &&

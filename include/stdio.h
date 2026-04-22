@@ -5,11 +5,16 @@
 
 typedef struct __rcc_FILE FILE;
 
+#ifdef _WIN32
 FILE *__acrt_iob_func(unsigned idx);
-
 #define stdin (__acrt_iob_func(0))
 #define stdout (__acrt_iob_func(1))
 #define stderr (__acrt_iob_func(2))
+#else
+extern FILE *stdin;
+extern FILE *stdout;
+extern FILE *stderr;
+#endif
 #define EOF (-1)
 
 int printf(const char *fmt, ...);
