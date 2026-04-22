@@ -9,8 +9,13 @@ Type *ty_short   = &(Type){.kind=TY_SHORT,   .size=2,  .align=2};
 Type *ty_ushort  = &(Type){.kind=TY_SHORT,   .size=2,  .align=2,  .is_unsigned=true};
 Type *ty_int     = &(Type){.kind=TY_INT,     .size=4,  .align=4};
 Type *ty_uint    = &(Type){.kind=TY_INT,     .size=4,  .align=4,  .is_unsigned=true};
+#ifdef _WIN32
 Type *ty_long    = &(Type){.kind=TY_LONG,    .size=4,  .align=4};
 Type *ty_ulong   = &(Type){.kind=TY_LONG,    .size=4,  .align=4,  .is_unsigned=true};
+#else
+Type *ty_long    = &(Type){.kind=TY_LONG,    .size=8,  .align=8};
+Type *ty_ulong   = &(Type){.kind=TY_LONG,    .size=8,  .align=8,  .is_unsigned=true};
+#endif
 Type *ty_llong   = &(Type){.kind=TY_LLONG,   .size=8,  .align=8};
 Type *ty_ullong  = &(Type){.kind=TY_LLONG,   .size=8,  .align=8,  .is_unsigned=true};
 Type *ty_float   = &(Type){.kind=TY_FLOAT,   .size=4,  .align=4};
