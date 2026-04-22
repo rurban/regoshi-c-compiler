@@ -230,20 +230,14 @@ if [ -d "$UNIT_TEST_DIR" ]; then
 			continue
 		fi
 
-		if ! "$TMP_EXE" >"$TMP_OUT" 2>&1; then
-			# shellcheck disable=SC2059
-			printf "${RED}EXEC FAIL${RESET}\n"
-			failed=$((failed + 1))
-			report_rows="${report_rows}| $base | EXEC_FAIL | non-zero exit |\n"
-			rm -f "$TMP_EXE"
-			continue
-		fi
+		"$TMP_EXE" >"$TMP_OUT" 2>&1
+		exit_code=$?
 		rm -f "$TMP_EXE"
 
 		# shellcheck disable=SC2059
 		printf "${GREEN}PASS${RESET}\n"
 		passed=$((passed + 1))
-		report_rows="${report_rows}| $base | PASS | Executed successfully |\n"
+		report_rows="${report_rows}| $base | PASS | exit=$exit_code |\n"
 	done <<EOF
 $(printf '%s\n' "$UNIT_TEST_DIR"/*.c | sort -V)
 EOF

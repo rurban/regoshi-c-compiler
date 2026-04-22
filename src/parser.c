@@ -1882,7 +1882,7 @@ static Node *primary(Token **rest, Token *tok) {
         if (equal(tok, "->")) {
             tok = tok->next;
             add_type(node);
-            if (node->ty->kind != TY_PTR ||
+            if ((node->ty->kind != TY_PTR && node->ty->kind != TY_ARRAY) ||
                 (node->ty->base->kind != TY_STRUCT && node->ty->base->kind != TY_UNION))
                 error_tok(tok, "not a pointer to struct or union");
             node = new_unary(ND_DEREF, node, tok);
