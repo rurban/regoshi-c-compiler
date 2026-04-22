@@ -81,6 +81,40 @@ if [ "$RCC" = "$SCRIPT_DIR/mingw-cross.sh" ]; then
 fi
 trap 'rm -f "$TMP_OUT" "$TMP_EXE"' EXIT INT TERM
 
+# Parse previous report for change detection
+OLD_STATES="$TMPDIR/rcc_old_states_$$.txt"
+if [ -f "$REPORT_FILE" ]; then
+	awk -F'|' 'NR>3 && /^\|/ { name=$2; status=$3; gsub(/[[:space:]]/, "", name); gsub(/[[:space:]]/, "", status); if (name != "" && status != "") print name, status }' "$REPORT_FILE" > "$OLD_STATES"
+else
+	: > "$OLD_STATES"
+fi
+trap 'rm -f "$TMP_OUT" "$TMP_EXE" "$OLD_STATES"' EXIT INT TERM
+
+regressions=0
+fixes=0
+changed=0
+
+print_change() {
+	_base="$1"
+	_new="$2"
+	_old=$(awk -v n="$_base" '$1 == n { print $2; exit }' "$OLD_STATES" 2>/dev/null)
+	[ -z "$_old" ] && return
+	[ "$_old" = "$_new" ] && return
+	if [ "$_new" = "PASS" ]; then
+		# shellcheck disable=SC2059
+		printf "    ${GREEN}-> FIXED${RESET} (was %s)\n" "$_old"
+		fixes=$((fixes + 1))
+	elif [ "$_old" = "PASS" ]; then
+		# shellcheck disable=SC2059
+		printf "    ${RED}-> REGRESSION${RESET} (was PASS)\n"
+		regressions=$((regressions + 1))
+	else
+		# shellcheck disable=SC2059
+		printf "    ${YELLOW}-> CHANGED${RESET} (%s -> %s)\n" "$_old" "$_new"
+		changed=$((changed + 1))
+	fi
+}
+
 # Iterate over all *.c files; skip helper files containing '+' in the name
 while IFS= read -r src; do
 	fname="$(basename "$src")"
@@ -107,6 +141,7 @@ while IFS= read -r src; do
 		printf "${RED}COMPILE FAIL${RESET}\n"
 		failed=$((failed + 1))
 		report_rows="${report_rows}| $base | COMPILE_FAIL | rcc returned non-zero |\n"
+		print_change "$base" "COMPILE_FAIL"
 		continue
 	fi
 	if [ ! -x "$TMP_EXE" ]; then
@@ -114,6 +149,7 @@ while IFS= read -r src; do
 		printf "${RED}NO EXE PRODUCED${RESET}\n"
 		failed=$((failed + 1))
 		report_rows="${report_rows}| $base | COMPILE_FAIL | executable missing |\n"
+		print_change "$base" "COMPILE_FAIL"
 		continue
 	fi
 
@@ -126,6 +162,7 @@ while IFS= read -r src; do
 			printf "${RED}EXEC FAIL${RESET}\n"
 			failed=$((failed + 1))
 			report_rows="${report_rows}| $base | EXEC_FAIL | non-zero exit |\n"
+			print_change "$base" "EXEC_FAIL"
 			rm -f "$TMP_EXE"
 			continue
 		fi
@@ -135,6 +172,7 @@ while IFS= read -r src; do
 			printf "${RED}EXEC FAIL${RESET}\n"
 			failed=$((failed + 1))
 			report_rows="${report_rows}| $base | EXEC_FAIL | non-zero exit |\n"
+			print_change "$base" "EXEC_FAIL"
 			rm -f "$TMP_EXE"
 			continue
 		fi
@@ -156,11 +194,13 @@ while IFS= read -r src; do
 			printf "${GREEN}PASS${RESET}\n"
 			passed=$((passed + 1))
 			report_rows="${report_rows}| $base | PASS | Output matches |\n"
+			print_change "$base" "PASS"
 		else
 			# shellcheck disable=SC2059
 			printf "${YELLOW}MISMATCH${RESET}\n"
 			failed=$((failed + 1))
 			report_rows="${report_rows}| $base | MISMATCH | Output does not match .expect |\n"
+			print_change "$base" "MISMATCH"
 			cp "$TMP_OUT" "$TEST_DIR/$base.out"
 		fi
 	else
@@ -168,6 +208,7 @@ while IFS= read -r src; do
 		printf "${GRAY}PASS (no expect)${RESET}\n"
 		passed=$((passed + 1))
 		report_rows="${report_rows}| $base | PASS | Executed successfully (no .expect) |\n"
+		print_change "$base" "PASS"
 	fi
 done <<EOF
 $(printf '%s\n' "$TEST_DIR"/*.c | sort -V)
@@ -199,12 +240,14 @@ if [ -d "$UNIT_TEST_DIR" ]; then
 				printf "${RED}SHOULD FAIL (compiled ok)${RESET}\n"
 				failed=$((failed + 1))
 				report_rows="${report_rows}| $base | FAIL | expected compile error but succeeded |\n"
+				print_change "$base" "FAIL"
 				rm -f "$TMP_EXE"
 			else
 				# shellcheck disable=SC2059
 				printf "${GREEN}PASS (expected compile error)${RESET}\n"
 				passed=$((passed + 1))
 				report_rows="${report_rows}| $base | PASS | compile error as expected |\n"
+				print_change "$base" "PASS"
 			fi
 			continue
 		fi
@@ -214,6 +257,7 @@ if [ -d "$UNIT_TEST_DIR" ]; then
 			printf "${RED}COMPILE FAIL${RESET}\n"
 			failed=$((failed + 1))
 			report_rows="${report_rows}| $base | COMPILE_FAIL | rcc returned non-zero |\n"
+			print_change "$base" "COMPILE_FAIL"
 			continue
 		fi
 		if [ ! -x "$TMP_EXE" ]; then
@@ -221,6 +265,7 @@ if [ -d "$UNIT_TEST_DIR" ]; then
 			printf "${RED}NO EXE PRODUCED${RESET}\n"
 			failed=$((failed + 1))
 			report_rows="${report_rows}| $base | COMPILE_FAIL | executable missing |\n"
+			print_change "$base" "COMPILE_FAIL"
 			continue
 		fi
 
@@ -232,6 +277,7 @@ if [ -d "$UNIT_TEST_DIR" ]; then
 		printf "${GREEN}PASS${RESET}\n"
 		passed=$((passed + 1))
 		report_rows="${report_rows}| $base | PASS | exit=$exit_code |\n"
+		print_change "$base" "PASS"
 	done <<EOF
 $(printf '%s\n' "$UNIT_TEST_DIR"/test_*.c | sort -V)
 EOF
@@ -249,6 +295,17 @@ fi
 # shellcheck disable=SC2059
 printf "${CYAN}Results: %d/%d passed (%d%%), %d failed.${RESET}\n" \
 	"$passed" "$total" "$pct" "$failed"
+
+if [ $((regressions + fixes + changed)) -gt 0 ]; then
+	printf "Changes vs previous run:"
+	# shellcheck disable=SC2059
+	[ "$regressions" -gt 0 ] && printf "  ${RED}%d regression(s)${RESET}" "$regressions"
+	# shellcheck disable=SC2059
+	[ "$fixes" -gt 0 ]       && printf "  ${GREEN}%d fixed${RESET}" "$fixes"
+	# shellcheck disable=SC2059
+	[ "$changed" -gt 0 ]     && printf "  ${YELLOW}%d changed${RESET}" "$changed"
+	printf "\n"
+fi
 
 # Markdown report
 {

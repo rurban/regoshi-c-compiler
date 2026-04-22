@@ -15,11 +15,7 @@ fred.txt
 err.log
 tmp*.c
 101_cleanup.md
-test_comma.c
-test_float.c
+tcc_tests
 tcc_test_report.md
-tcc_source_temp/
-tinycc_source/
-tinycc_mob.zip
 amazon_bug_bounty/
 tinycc/tests/tests2/03_struct.expect
