@@ -57,7 +57,7 @@ gcc -std=c11 -O2 -o rcc.exe src/main.c src/lexer.c src/parser.c src/type.c src/c
 ./rcc.exe source.c -o output.exe
 
 # Output assembly
-./rcc.exe source.c -S -o output.s
+./rcc.exe source.c -S -o output.S
 
 # Run tests and benchmark
 make check

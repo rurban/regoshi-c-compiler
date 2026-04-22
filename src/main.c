@@ -115,8 +115,8 @@ int main(int argc, char **argv) {
     }
 
     char *asm_path = opt_S
-        ? opt_o ? out_path : format("%s.s", in_path)
-        : format("rcc_tmp_%d.s", _getpid());
+        ? opt_o ? out_path : format("%s.S", in_path)
+        : format("rcc_tmp_%d.S", _getpid());
 
     // Tokenize and Parse
     char *contents = read_file(in_path);
