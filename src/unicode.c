@@ -10,8 +10,8 @@
 #define MASK2(bits, shift) (uint8_t)(MASK(bits) << (shift))
 
 typedef struct {
-  uint32_t first;
-  uint32_t last;
+    uint32_t first;
+    uint32_t last;
 } UTF32Range;
 
 // clang-format off

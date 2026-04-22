@@ -645,9 +645,14 @@ static long eval_mul(char **rest, char *p, char *filename) {
     for (;;) {
         p = skip_spaces(p);
         if (*p == '*') val *= eval_primary(&p, p + 1, filename);
-        else if (*p == '/') { long rhs = eval_primary(&p, p + 1, filename); val = rhs ? val / rhs : 0; }
-        else if (*p == '%') { long rhs = eval_primary(&p, p + 1, filename); val = rhs ? val % rhs : 0; }
-        else break;
+        else if (*p == '/') {
+            long rhs = eval_primary(&p, p + 1, filename);
+            val = rhs ? val / rhs : 0;
+        } else if (*p == '%') {
+            long rhs = eval_primary(&p, p + 1, filename);
+            val = rhs ? val % rhs : 0;
+        } else
+            break;
     }
     *rest = p;
     return val;
@@ -658,8 +663,10 @@ static long eval_add(char **rest, char *p, char *filename) {
     for (;;) {
         p = skip_spaces(p);
         if (*p == '+') val += eval_mul(&p, p + 1, filename);
-        else if (*p == '-') val -= eval_mul(&p, p + 1, filename);
-        else break;
+        else if (*p == '-')
+            val -= eval_mul(&p, p + 1, filename);
+        else
+            break;
     }
     *rest = p;
     return val;
@@ -670,10 +677,14 @@ static long eval_rel(char **rest, char *p, char *filename) {
     for (;;) {
         p = skip_spaces(p);
         if (pp_startswith(p, "<=")) val = val <= eval_add(&p, p + 2, filename);
-        else if (pp_startswith(p, ">=")) val = val >= eval_add(&p, p + 2, filename);
-        else if (*p == '<') val = val < eval_add(&p, p + 1, filename);
-        else if (*p == '>') val = val > eval_add(&p, p + 1, filename);
-        else break;
+        else if (pp_startswith(p, ">="))
+            val = val >= eval_add(&p, p + 2, filename);
+        else if (*p == '<')
+            val = val < eval_add(&p, p + 1, filename);
+        else if (*p == '>')
+            val = val > eval_add(&p, p + 1, filename);
+        else
+            break;
     }
     *rest = p;
     return val;
@@ -684,8 +695,10 @@ static long eval_eq(char **rest, char *p, char *filename) {
     for (;;) {
         p = skip_spaces(p);
         if (pp_startswith(p, "==")) val = val == eval_rel(&p, p + 2, filename);
-        else if (pp_startswith(p, "!=")) val = val != eval_rel(&p, p + 2, filename);
-        else break;
+        else if (pp_startswith(p, "!="))
+            val = val != eval_rel(&p, p + 2, filename);
+        else
+            break;
     }
     *rest = p;
     return val;
@@ -870,8 +883,7 @@ static char *preprocess_file(char *filename, char *input) {
                         }
                     }
                 }
-            }
-            else if ((pp_startswith(s, "if") && !pp_startswith(s, "ifdef") && !pp_startswith(s, "ifndef"))) {
+            } else if ((pp_startswith(s, "if") && !pp_startswith(s, "ifdef") && !pp_startswith(s, "ifndef"))) {
                 // Handle #if - only if it's not #ifdef, #ifndef, or #elif
                 // Note: check elif first since "elif" starts with "if"
                 s += 2;
@@ -937,7 +949,7 @@ static char *preprocess_file(char *filename, char *input) {
                 ci->branch_taken = ci->active;
                 ci->next = conds;
                 conds = ci;
-active = ci->active;
+                active = ci->active;
             } else if (pp_startswith(s, "else")) {
                 if (conds) {
                     conds->active = conds->parent_active && !conds->branch_taken;
@@ -968,7 +980,7 @@ active = ci->active;
 char *preprocess(char *filename, char *p) {
     clear_macros();
     static char *builtin_expect_params[] = {"x", "y"};
-    
+
     // Add builtin macros first - BEFORE calling preprocess_file
     if (!find_macro("__has_include"))
         define_macro("__has_include", false, NULL, 0, "1");
@@ -985,7 +997,7 @@ char *preprocess(char *filename, char *p) {
 #else
                      "unsigned int"
 #endif
-                     );
+        );
     if (!find_macro("_Atomic"))
         define_macro("_Atomic", false, NULL, 0, "");
     if (!find_macro("_WIN32"))
@@ -1068,7 +1080,7 @@ char *preprocess(char *filename, char *p) {
         define_macro("__SIZEOF_FLOAT__", false, NULL, 0, "4");
     if (!find_macro("__SIZEOF_DOUBLE__"))
         define_macro("__SIZEOF_DOUBLE__", false, NULL, 0, "8");
-        
+
     char *result = preprocess_file(canonical_path(filename), splice_lines(p));
     return result;
 }

@@ -49,10 +49,10 @@ static void verror_at(char *loc, int len, char *fmt, va_list ap) {
     // Print the squiggly line
     int pos = loc - line + 1; // +1 for the space we added above
     for (int i = 0; i < pos; i++) fprintf(stderr, " "); // Indent
-    
+
     int tilde_len = len > 0 ? len : 1;
     fprintf(stderr, "\033[1;31m^");
-    for(int i = 1; i < tilde_len; i++) fprintf(stderr, "~");
+    for (int i = 1; i < tilde_len; i++) fprintf(stderr, "~");
     fprintf(stderr, "\033[0m\n");
 
     exit(1);

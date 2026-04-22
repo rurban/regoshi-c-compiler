@@ -24,7 +24,7 @@ static char *read_file(char *path) {
     if (!feof(fp)) {
         error("%s: file too large", path);
     }
-    
+
     if (size == 0 || buf[size - 1] != '\n') {
         buf[size++] = '\n';
     }
@@ -119,18 +119,18 @@ int main(int argc, char **argv) {
 
     // Tokenize and Parse
     char *contents = read_file(in_path);
-    
+
     // Always preprocess - opt_E just outputs preprocessed result
     char *preprocessed = preprocess(in_path, contents);
-    
+
     if (opt_E) {
         printf("%s", preprocessed);
         return 0;
     }
-    
+
     Token *tok = tokenize(in_path, preprocessed);
     Program *prog = parse(tok);
-    
+
     // Type system / Semantic checks
     for (Function *fn = prog->funcs; fn; fn = fn->next) {
         for (Node *n = fn->body; n; n = n->next) {
@@ -150,7 +150,7 @@ int main(int argc, char **argv) {
     // Code generation (prints assembly to stdout, which is now asm_path)
     codegen(prog);
     fflush(stdout);
-    
+
     // Restore stdout to console if we want to print further, but we are done.
     fclose(stdout);
 
@@ -166,7 +166,7 @@ int main(int argc, char **argv) {
             snprintf(cmd, sizeof(cmd), GCC " -no-pie %s -o %s%s", asm_path, out_path, libs);
 #endif
         }
-        
+
         int status = system(cmd);
         if (status != 0) {
             fprintf(stderr, "rcc: error: backend gcc failed with code %d\n", status);

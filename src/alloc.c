@@ -40,7 +40,7 @@ char *format(char *fmt, ...) {
     va_start(ap, fmt);
     int len = vsnprintf(buf, sizeof(buf), fmt, ap);
     va_end(ap);
-    
+
     char *s = arena_alloc(len + 1);
     strcpy(s, buf);
     return s;
@@ -83,7 +83,7 @@ char *str_intern(char *start, int len) {
     memcpy(s->str, start, len);
     s->str[len] = '\0';
     s->len = len;
-    
+
     s->next = strings[h];
     strings[h] = s;
     return s->str;

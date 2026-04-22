@@ -68,11 +68,17 @@ static int eval_ast(Program *prog, Function *fn, Node *node, int *env, int *cf, 
         if (node->kind == ND_SUB) return l - r;
         if (node->kind == ND_MUL) return l * r;
         if (node->kind == ND_DIV) {
-            if (r == 0) { *success = false; return 0; }
+            if (r == 0) {
+                *success = false;
+                return 0;
+            }
             return l / r;
         }
         if (node->kind == ND_MOD) {
-            if (r == 0) { *success = false; return 0; }
+            if (r == 0) {
+                *success = false;
+                return 0;
+            }
             return l % r;
         }
         if (node->kind == ND_EQ) return l == r;
@@ -89,19 +95,21 @@ static int eval_ast(Program *prog, Function *fn, Node *node, int *env, int *cf, 
             int dummy_cf = CF_NEXT;
             args[nargs++] = eval_ast(prog, fn, arg, env, &dummy_cf, success);
             if (!*success || nargs >= 10) {
-                *success = false; return 0;
+                *success = false;
+                return 0;
             }
         }
         Function *target = NULL;
         for (Function *f = prog->funcs; f; f = f->next) {
             if (strcmp(f->name, node->funcname) == 0) {
-                target = f; break;
+                target = f;
+                break;
             }
         }
         if (target && target->body && strcmp(target->name, "printf") != 0) {
             int new_env[256] = {0};
             LVar *param = target->params;
-            for (int i=0; i<nargs; i++) {
+            for (int i = 0; i < nargs; i++) {
                 if (param) {
                     new_env[param->offset / 8] = args[i];
                     param = param->param_next;
@@ -149,21 +157,23 @@ static Node *optimize_node(Program *prog, Node *node) {
     node->els = optimize_node(prog, node->els);
     node->init = optimize_node(prog, node->init);
     node->inc = optimize_node(prog, node->inc);
-    
-    // We can't easily map node->next without breaking lists potentially? 
+
+    // We can't easily map node->next without breaking lists potentially?
     // Wait, body is a list. args is a list.
     Node *prev_body = NULL;
     for (Node *n = node->body; n; n = n->next) {
         Node *o = optimize_node(prog, n);
         if (prev_body) prev_body->next = o;
-        else node->body = o;
+        else
+            node->body = o;
         prev_body = o;
     }
     Node *prev_arg = NULL;
     for (Node *n = node->args; n; n = n->next) {
         Node *o = optimize_node(prog, n);
         if (prev_arg) prev_arg->next = o;
-        else node->args = o;
+        else
+            node->args = o;
         prev_arg = o;
     }
 
@@ -186,14 +196,15 @@ static Node *optimize_node(Program *prog, Node *node) {
             return fold;
         }
     }
-    
+
     if (node->kind == ND_FUNCALL && node->funcname) {
         bool all_const = true;
         int args[10];
         int nargs = 0;
         for (Node *arg = node->args; arg; arg = arg->next) {
             if (arg->kind != ND_NUM) {
-                all_const = false; break;
+                all_const = false;
+                break;
             }
             if (nargs < 10) args[nargs++] = arg->val;
         }
@@ -201,14 +212,15 @@ static Node *optimize_node(Program *prog, Node *node) {
             Function *target = NULL;
             for (Function *fn = prog->funcs; fn; fn = fn->next) {
                 if (strcmp(fn->name, node->funcname) == 0) {
-                    target = fn; break;
+                    target = fn;
+                    break;
                 }
             }
             if (target && target->body && !has_cleanup_local(target)) {
                 bool success = true;
                 int env[256] = {0}; // simple addressing
                 LVar *param = target->params;
-                for (int i=0; i<nargs; i++) {
+                for (int i = 0; i < nargs; i++) {
                     if (param) {
                         env[param->offset / 8] = args[i];
                         param = param->param_next;
@@ -240,7 +252,8 @@ void optimize(Program *prog) {
         for (Node *n = fn->body; n; n = n->next) {
             Node *o = optimize_node(prog, n);
             if (prev) prev->next = o;
-            else fn->body = o;
+            else
+                fn->body = o;
             prev = o;
         }
     }

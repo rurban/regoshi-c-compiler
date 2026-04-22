@@ -1,5 +1,6 @@
 #include "rcc.h"
 
+// clang-format off
 Type *ty_void    = &(Type){.kind=TY_VOID,    .size=1,  .align=1};
 Type *ty_bool    = &(Type){.kind=TY_BOOL,    .size=1,  .align=1,  .is_unsigned=true};
 Type *ty_char    = &(Type){.kind=TY_CHAR,    .size=1,  .align=1};
@@ -15,10 +16,11 @@ Type *ty_ullong  = &(Type){.kind=TY_LLONG,   .size=8,  .align=8,  .is_unsigned=t
 Type *ty_float   = &(Type){.kind=TY_FLOAT,   .size=4,  .align=4};
 Type *ty_double  = &(Type){.kind=TY_DOUBLE,  .size=8,  .align=8};
 Type *ty_ldouble = &(Type){.kind=TY_LDOUBLE, .size=16, .align=16};
+// clang-format on
 
 bool is_integer(Type *ty) {
     return ty->kind == TY_BOOL || ty->kind == TY_CHAR || ty->kind == TY_SHORT ||
-           ty->kind == TY_INT || ty->kind == TY_LONG || ty->kind == TY_LLONG;
+        ty->kind == TY_INT || ty->kind == TY_LONG || ty->kind == TY_LLONG;
 }
 
 bool is_flonum(Type *ty) {

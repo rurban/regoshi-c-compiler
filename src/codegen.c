@@ -31,7 +31,7 @@ static FloatLit *float_lits;
 static char *reg64[] = {"r10", "r11", "rbx", "r12", "r13", "r14", "r15", "rsi"};
 static char *reg32[] = {"r10d", "r11d", "ebx", "r12d", "r13d", "r14d", "r15d", "esi"};
 static char *reg16[] = {"r10w", "r11w", "bx", "r12w", "r13w", "r14w", "r15w", "si"};
-static char *reg8[]  = {"r10b", "r11b", "bl", "r12b", "r13b", "r14b", "r15b", "sil"};
+static char *reg8[] = {"r10b", "r11b", "bl", "r12b", "r13b", "r14b", "r15b", "sil"};
 static int used_regs = 0;
 static int ever_used_regs = 0;
 
@@ -165,8 +165,14 @@ static int gen_funcall(Node *node, int hidden_ret_reg) {
 #endif
 
     int saved_scratch = used_regs & 3;
-    if (saved_scratch & 1) { printf("  mov [rbp-%d], r10\n", SPILL_R10); used_regs &= ~1; }
-    if (saved_scratch & 2) { printf("  mov [rbp-%d], r11\n", SPILL_R11); used_regs &= ~2; }
+    if (saved_scratch & 1) {
+        printf("  mov [rbp-%d], r10\n", SPILL_R10);
+        used_regs &= ~1;
+    }
+    if (saved_scratch & 2) {
+        printf("  mov [rbp-%d], r11\n", SPILL_R11);
+        used_regs &= ~2;
+    }
 
 #ifdef _WIN32
     int reg_nargs = nargs < max_reg_args - (has_hidden_retbuf ? 1 : 0) ? nargs : max_reg_args - (has_hidden_retbuf ? 1 : 0);
@@ -289,8 +295,14 @@ static int gen_funcall(Node *node, int hidden_ret_reg) {
     if (stack_reserve > 0)
         printf("  add rsp, %d\n", stack_reserve);
 
-    if (saved_scratch & 2) { used_regs |= 2; printf("  mov r11, [rbp-%d]\n", SPILL_R11); }
-    if (saved_scratch & 1) { used_regs |= 1; printf("  mov r10, [rbp-%d]\n", SPILL_R10); }
+    if (saved_scratch & 2) {
+        used_regs |= 2;
+        printf("  mov r11, [rbp-%d]\n", SPILL_R11);
+    }
+    if (saved_scratch & 1) {
+        used_regs |= 1;
+        printf("  mov r10, [rbp-%d]\n", SPILL_R10);
+    }
 
     if (has_hidden_retbuf) {
         if (temp_ret_reg != -1)
@@ -463,10 +475,13 @@ static void gen_cond_branch_inv(Node *cond, char *label) {
 
         char *jmp = "";
         if (cond->kind == ND_EQ) jmp = "jne";
-        else if (cond->kind == ND_NE) jmp = "je";
-        else if (cond->kind == ND_LT) jmp = use_unsigned_cmp(cond) ? "jae" : "jge";
-        else if (cond->kind == ND_LE) jmp = use_unsigned_cmp(cond) ? "ja" : "jg";
-        
+        else if (cond->kind == ND_NE)
+            jmp = "je";
+        else if (cond->kind == ND_LT)
+            jmp = use_unsigned_cmp(cond) ? "jae" : "jge";
+        else if (cond->kind == ND_LE)
+            jmp = use_unsigned_cmp(cond) ? "ja" : "jg";
+
         printf("  %s %s\n", jmp, label);
         return;
     }
@@ -493,7 +508,7 @@ static int gen(Node *node) {
     }
     case ND_FNUM: {
         int r = alloc_reg();
-        int id = add_float_literal(node->fval, 8);  // Always store as double
+        int id = add_float_literal(node->fval, 8); // Always store as double
         printf("  movsd xmm0, [rip + .LF%d]\n", id);
         // Store float in integer register for now
         printf("  movq %s, xmm0\n", reg64[r]);
@@ -574,7 +589,7 @@ static int gen(Node *node) {
             return r2;
         }
         if (node->lhs->kind == ND_LVAR && node->lhs->var->is_local && node->lhs->var->ty->kind != TY_ARRAY) {
-            if (node->rhs->kind == ND_ADD && node->rhs->lhs->kind == ND_LVAR && 
+            if (node->rhs->kind == ND_ADD && node->rhs->lhs->kind == ND_LVAR &&
                 node->rhs->lhs->var == node->lhs->var && node->rhs->rhs->kind == ND_NUM &&
                 node->rhs->rhs->val == (int32_t)node->rhs->rhs->val) {
                 printf("  add %s [rbp-%d], %d\n", ptr_size(node->lhs->ty->size), node->lhs->var->offset, (int)node->rhs->rhs->val);
@@ -595,7 +610,7 @@ static int gen(Node *node) {
             int bo = node->lhs->member->bit_offset;
             int unit_sz = node->lhs->member->ty->size;
             unsigned long long mask = ((1ULL << bw) - 1) << bo;
-            
+
             // Check if RHS reads the same bitfield (compound assignment like s.x += 1)
             // In that case, we need to read the current value first
             bool rhs_reads_same = false;
@@ -613,10 +628,10 @@ static int gen(Node *node) {
                     node->rhs->rhs->member == node->lhs->member)
                     rhs_reads_same = true;
             }
-            
+
             // Generate RHS (the new value to assign)
             int r2 = gen(node->rhs);
-            
+
             if (rhs_reads_same) {
                 // Compound assignment: RHS reads the bitfield, so we need read-modify-write
                 int ra = gen_addr(node->lhs);
@@ -636,7 +651,7 @@ static int gen(Node *node) {
                 // But the gen() call above already evaluated the RHS which included reading
                 // the bitfield with our normal bitfield read code - so r2 has the result
                 // We just need to store it back with proper masking
-                
+
                 // Clear the bitfield bits in old value
                 printf("  movabs rax, %llu\n", ~mask);
                 printf("  and %s, rax\n", reg64[rt]);
@@ -662,7 +677,7 @@ static int gen(Node *node) {
                 free_reg(ra);
                 return r2;
             }
-            
+
             // Original simple assignment code
             int r1 = gen_addr(node->lhs);
             // Load current storage unit
@@ -1109,17 +1124,19 @@ static int gen(Node *node) {
     int r_lhs = gen(node->lhs);
 
     // Float binary operations (must come before integer ops)
-    if (is_flonum(node->ty) && (node->kind == ND_ADD || node->kind == ND_SUB ||
-        node->kind == ND_MUL || node->kind == ND_DIV)) {
+    if (is_flonum(node->ty) && (node->kind == ND_ADD || node->kind == ND_SUB || node->kind == ND_MUL || node->kind == ND_DIV)) {
         int r_rhs = gen(node->rhs);
         printf("  movq xmm0, %s\n", reg64[r_lhs]);
         printf("  movq xmm1, %s\n", reg64[r_rhs]);
         free_reg(r_rhs);
         char *inst = "";
         if (node->kind == ND_ADD) inst = "addsd";
-        else if (node->kind == ND_SUB) inst = "subsd";
-        else if (node->kind == ND_MUL) inst = "mulsd";
-        else if (node->kind == ND_DIV) inst = "divsd";
+        else if (node->kind == ND_SUB)
+            inst = "subsd";
+        else if (node->kind == ND_MUL)
+            inst = "mulsd";
+        else if (node->kind == ND_DIV)
+            inst = "divsd";
         printf("  %s xmm0, xmm1\n", inst);
         if (node->ty->kind == TY_FLOAT) {
             printf("  cvtsd2ss xmm0, xmm0\n");
@@ -1167,11 +1184,12 @@ static int gen(Node *node) {
                 printf("  xor edx, edx\n");
         } else {
             if (sz == 8) printf("  cqo\n");
-            else printf("  cdq\n");
+            else
+                printf("  cdq\n");
         }
         printf("  %s %s\n", is_unsigned ? "div" : "idiv", reg(r_rhs, sz));
         free_reg(r_rhs);
-        
+
         printf("  mov %s, %s\n", reg(r_lhs, sz), node->kind == ND_DIV ? (sz == 8 ? "rax" : "eax") : (sz == 8 ? "rdx" : "edx"));
         return r_lhs;
     }
@@ -1195,16 +1213,22 @@ static int gen(Node *node) {
         node->kind == ND_EQ || node->kind == ND_NE || node->kind == ND_LT || node->kind == ND_LE) {
         char *inst = "";
         if (node->kind == ND_ADD) inst = "add";
-        else if (node->kind == ND_SUB) inst = "sub";
-        else if (node->kind == ND_MUL) inst = "imul";
-        else if (node->kind == ND_BITAND) inst = "and";
-        else if (node->kind == ND_BITXOR) inst = "xor";
-        else if (node->kind == ND_BITOR) inst = "or";
-        else inst = "cmp";
+        else if (node->kind == ND_SUB)
+            inst = "sub";
+        else if (node->kind == ND_MUL)
+            inst = "imul";
+        else if (node->kind == ND_BITAND)
+            inst = "and";
+        else if (node->kind == ND_BITXOR)
+            inst = "xor";
+        else if (node->kind == ND_BITOR)
+            inst = "or";
+        else
+            inst = "cmp";
 
         int sz = (node->kind == ND_EQ || node->kind == ND_NE || node->kind == ND_LT || node->kind == ND_LE)
-                   ? op_size(node->lhs->ty)
-                   : op_size(node->ty);
+            ? op_size(node->lhs->ty)
+            : op_size(node->ty);
         if (sz < op_size(node->rhs->ty))
             sz = op_size(node->rhs->ty);
 
@@ -1218,7 +1242,10 @@ static int gen(Node *node) {
                 // Strength reduction: multiply by power of 2 → shift
                 int shift = 0;
                 int tmp = imm;
-                while (tmp > 1) { shift++; tmp >>= 1; }
+                while (tmp > 1) {
+                    shift++;
+                    tmp >>= 1;
+                }
                 printf("  shl %s, %d\n", reg(r_lhs, sz), shift);
             } else {
                 printf("  %s %s, %d\n", inst, reg(r_lhs, sz), imm);
@@ -1232,9 +1259,12 @@ static int gen(Node *node) {
         if (node->kind == ND_EQ || node->kind == ND_NE || node->kind == ND_LT || node->kind == ND_LE) {
             char *set = "";
             if (node->kind == ND_EQ) set = "sete";
-            else if (node->kind == ND_NE) set = "setne";
-            else if (node->kind == ND_LT) set = use_unsigned_cmp(node) ? "setb" : "setl";
-            else if (node->kind == ND_LE) set = use_unsigned_cmp(node) ? "setbe" : "setle";
+            else if (node->kind == ND_NE)
+                set = "setne";
+            else if (node->kind == ND_LT)
+                set = use_unsigned_cmp(node) ? "setb" : "setl";
+            else if (node->kind == ND_LE)
+                set = use_unsigned_cmp(node) ? "setbe" : "setle";
             printf("  %s al\n", set);
             printf("  movzx %s, al\n", reg(r_lhs, op_size(node->ty)));
         }
@@ -1250,8 +1280,8 @@ static const char *to32(const char *r64) {
     if (!strcmp(r64, "rax")) return "eax";
     if (!strcmp(r64, "rcx")) return "ecx";
     if (!strcmp(r64, "rdx")) return "edx";
-    if (!strcmp(r64, "r8"))  return "r8d";
-    if (!strcmp(r64, "r9"))  return "r9d";
+    if (!strcmp(r64, "r8")) return "r8d";
+    if (!strcmp(r64, "r9")) return "r9d";
     if (!strcmp(r64, "r10")) return "r10d";
     if (!strcmp(r64, "r11")) return "r11d";
     if (!strcmp(r64, "rbx")) return "ebx";
@@ -1273,12 +1303,28 @@ static int reg_live_after(char **lines, int nlines, int after, int pid) {
     const char *variants[6] = {0};
     int nv = 0;
     for (int vi = 0; vi < 8; vi++) {
-        if (phys_reg_id(reg64[vi]) == pid) { variants[nv++] = reg64[vi]; variants[nv++] = reg32[vi]; break; }
+        if (phys_reg_id(reg64[vi]) == pid) {
+            variants[nv++] = reg64[vi];
+            variants[nv++] = reg32[vi];
+            break;
+        }
     }
-    if (pid == 0) { variants[nv++] = "rax"; variants[nv++] = "eax"; variants[nv++] = "al"; }
-    else if (pid == 1) { variants[nv++] = "rcx"; variants[nv++] = "ecx"; variants[nv++] = "cl"; }
-    else if (pid == 2) { variants[nv++] = "rdx"; variants[nv++] = "edx"; }
-    else if (pid == 3) { variants[nv++] = "rbx"; variants[nv++] = "ebx"; variants[nv++] = "bl"; }
+    if (pid == 0) {
+        variants[nv++] = "rax";
+        variants[nv++] = "eax";
+        variants[nv++] = "al";
+    } else if (pid == 1) {
+        variants[nv++] = "rcx";
+        variants[nv++] = "ecx";
+        variants[nv++] = "cl";
+    } else if (pid == 2) {
+        variants[nv++] = "rdx";
+        variants[nv++] = "edx";
+    } else if (pid == 3) {
+        variants[nv++] = "rbx";
+        variants[nv++] = "ebx";
+        variants[nv++] = "bl";
+    }
     for (int k = after + 1; k < nlines && k < after + 30; k++) {
         if (!lines[k] || !lines[k][0]) continue;
         if (lines[k][0] != ' ') return 1;
@@ -1344,7 +1390,10 @@ void codegen(Program *prog) {
                 while (*p) {
                     char *next;
                     uint32_t c = decode_utf8(&next, p);
-                    if (next == p) { p++; continue; } // invalid UTF-8, skip
+                    if (next == p) {
+                        p++;
+                        continue;
+                    } // invalid UTF-8, skip
                     p = next;
                     if (s->elem_size == 2)
                         printf("  .2byte %u\n", c);
@@ -1378,16 +1427,16 @@ void codegen(Program *prog) {
 
         // Save params to locals (emitted to body buffer, will be after prologue)
 #ifdef _WIN32
-        char *param_regs64[] = {"rcx",  "rdx",  "r8",   "r9"  };
-        char *param_regs32[] = {"ecx",  "edx",  "r8d",  "r9d" };
-        char *param_regs16[] = {"cx",   "dx",   "r8w",  "r9w" };
-        char *param_regs8[]  = {"cl",   "dl",   "r8b",  "r9b" };
+        char *param_regs64[] = {"rcx", "rdx", "r8", "r9"};
+        char *param_regs32[] = {"ecx", "edx", "r8d", "r9d"};
+        char *param_regs16[] = {"cx", "dx", "r8w", "r9w"};
+        char *param_regs8[] = {"cl", "dl", "r8b", "r9b"};
         int max_param_regs = 4;
 #else
-        char *param_regs64[] = {"rdi",  "rsi",  "rdx",  "rcx",  "r8",   "r9"  };
-        char *param_regs32[] = {"edi",  "esi",  "edx",  "ecx",  "r8d",  "r9d" };
-        char *param_regs16[] = {"di",   "si",   "dx",   "cx",   "r8w",  "r9w" };
-        char *param_regs8[]  = {"dil",  "sil",  "dl",   "cl",   "r8b",  "r9b" };
+        char *param_regs64[] = {"rdi", "rsi", "rdx", "rcx", "r8", "r9"};
+        char *param_regs32[] = {"edi", "esi", "edx", "ecx", "r8d", "r9d"};
+        char *param_regs16[] = {"di", "si", "dx", "cx", "r8w", "r9w"};
+        char *param_regs8[] = {"dil", "sil", "dl", "cl", "r8b", "r9b"};
         char *param_xmm[] = {"xmm0", "xmm1", "xmm2", "xmm3", "xmm4", "xmm5", "xmm6", "xmm7"};
         int max_param_regs = 6;
         int max_param_xmm = 8;
@@ -1398,9 +1447,9 @@ void codegen(Program *prog) {
 #ifdef _WIN32
             if (param_index < max_param_regs) {
                 char *preg = var->ty->size == 1 ? param_regs8[param_index]
-                           : var->ty->size == 2 ? param_regs16[param_index]
-                           : var->ty->size <= 4 ? param_regs32[param_index]
-                           : param_regs64[param_index];
+                    : var->ty->size == 2        ? param_regs16[param_index]
+                    : var->ty->size <= 4        ? param_regs32[param_index]
+                                                : param_regs64[param_index];
                 printf("  mov [rbp-%d], %s\n", var->offset, preg);
                 param_index++;
             }
@@ -1417,9 +1466,9 @@ void codegen(Program *prog) {
                 }
             } else if (param_index < max_param_regs) {
                 char *preg = var->ty->size == 1 ? param_regs8[param_index]
-                           : var->ty->size == 2 ? param_regs16[param_index]
-                           : var->ty->size <= 4 ? param_regs32[param_index]
-                           : param_regs64[param_index];
+                    : var->ty->size == 2        ? param_regs16[param_index]
+                    : var->ty->size <= 4        ? param_regs32[param_index]
+                                                : param_regs64[param_index];
                 printf("  mov [rbp-%d], %s\n", var->offset, preg);
                 param_index++;
             }
@@ -1504,142 +1553,147 @@ void codegen(Program *prog) {
         while (*p) {
             lines[nlines] = p;
             char *nl = strchr(p, '\n');
-            if (nl) { *nl = '\0'; p = nl + 1; }
-            else p += strlen(p);
+            if (nl) {
+                *nl = '\0';
+                p = nl + 1;
+            } else
+                p += strlen(p);
             nlines++;
         }
 
         // Skip peephole on very large functions to avoid truncation/pathological compile behavior.
         if (opt_O0) goto skip_peep;
         if (nlines < 50000)
-        for (int pass = 0; pass < 4; pass++) {
-            for (int li = 0; li < nlines - 1; li++) {
-                if (!lines[li] || !lines[li][0]) continue;
-                int lj = li + 1;
-                while (lj < nlines && (!lines[lj] || !lines[lj][0])) lj++;
-                if (lj >= nlines) break;
+            for (int pass = 0; pass < 4; pass++) {
+                for (int li = 0; li < nlines - 1; li++) {
+                    if (!lines[li] || !lines[li][0]) continue;
+                    int lj = li + 1;
+                    while (lj < nlines && (!lines[lj] || !lines[lj][0])) lj++;
+                    if (lj >= nlines) break;
 
-                char d1[80], s1[80], d2[80], s2[80];
+                    char d1[80], s1[80], d2[80], s2[80];
 
-                // Pattern 1: mov REG, SRC; mov DEST, REG → mov DEST, SRC
-                // (copy propagation: eliminate temp register moves)
-                if (sscanf(lines[li], "  mov %[^,], %s", d1, s1) == 2 &&
-                    sscanf(lines[lj], "  mov %[^,], %s", d2, s2) == 2 &&
-                    strcmp(s2, d1) == 0 && is_reg(d1) && is_reg(s1)) {
-                    char newline[200];
-                    snprintf(newline, sizeof(newline), "  mov %s, %s", d2, s1);
-                    lines[lj] = strdup(newline);
-                    int pid = phys_reg_id(d1);
-                    if (pid >= 0 && !reg_live_after(lines, nlines, lj, pid))
-                        lines[li] = "";
-                    continue;
-                }
+                    // Pattern 1: mov REG, SRC; mov DEST, REG → mov DEST, SRC
+                    // (copy propagation: eliminate temp register moves)
+                    if (sscanf(lines[li], "  mov %[^,], %s", d1, s1) == 2 &&
+                        sscanf(lines[lj], "  mov %[^,], %s", d2, s2) == 2 &&
+                        strcmp(s2, d1) == 0 && is_reg(d1) && is_reg(s1)) {
+                        char newline[200];
+                        snprintf(newline, sizeof(newline), "  mov %s, %s", d2, s1);
+                        lines[lj] = strdup(newline);
+                        int pid = phys_reg_id(d1);
+                        if (pid >= 0 && !reg_live_after(lines, nlines, lj, pid))
+                            lines[li] = "";
+                        continue;
+                    }
 
-                // Pattern 2: mov [rbp-N], REG; mov REGx, {dword,qword} ptr [rbp-N]
-                // (store-load forwarding)
-                {
-                    int off1, off2;
-                    char sr[32], dr[32];
-                    if (sscanf(lines[li], "  mov [rbp-%d], %s", &off1, sr) == 2) {
-                        if (sscanf(lines[lj], "  mov %[^,], dword ptr [rbp-%d]", dr, &off2) == 2 &&
-                            off1 == off2) {
-                            const char *r32 = to32(sr);
-                            if (r32) {
+                    // Pattern 2: mov [rbp-N], REG; mov REGx, {dword,qword} ptr [rbp-N]
+                    // (store-load forwarding)
+                    {
+                        int off1, off2;
+                        char sr[32], dr[32];
+                        if (sscanf(lines[li], "  mov [rbp-%d], %s", &off1, sr) == 2) {
+                            if (sscanf(lines[lj], "  mov %[^,], dword ptr [rbp-%d]", dr, &off2) == 2 &&
+                                off1 == off2) {
+                                const char *r32 = to32(sr);
+                                if (r32) {
+                                    char newline[160];
+                                    snprintf(newline, sizeof(newline), "  mov %s, %s", dr, r32);
+                                    lines[lj] = strdup(newline);
+                                    continue;
+                                }
+                            }
+                            if (sscanf(lines[lj], "  mov %[^,], qword ptr [rbp-%d]", dr, &off2) == 2 &&
+                                off1 == off2) {
                                 char newline[160];
-                                snprintf(newline, sizeof(newline), "  mov %s, %s", dr, r32);
+                                snprintf(newline, sizeof(newline), "  mov %s, %s", dr, sr);
                                 lines[lj] = strdup(newline);
                                 continue;
                             }
                         }
-                        if (sscanf(lines[lj], "  mov %[^,], qword ptr [rbp-%d]", dr, &off2) == 2 &&
+                    }
+
+                    // Pattern 2b: mov dword ptr [rbp-N], VAL; mov REGx, dword ptr [rbp-N]
+                    {
+                        int off1, off2, val;
+                        char dr[32];
+                        if (sscanf(lines[li], "  mov dword ptr [rbp-%d], %d", &off1, &val) == 2 &&
+                            sscanf(lines[lj], "  mov %[^,], dword ptr [rbp-%d]", dr, &off2) == 2 &&
                             off1 == off2) {
                             char newline[160];
-                            snprintf(newline, sizeof(newline), "  mov %s, %s", dr, sr);
+                            snprintf(newline, sizeof(newline), "  mov %s, %d", dr, val);
                             lines[lj] = strdup(newline);
                             continue;
                         }
                     }
-                }
 
-                // Pattern 2b: mov dword ptr [rbp-N], VAL; mov REGx, dword ptr [rbp-N]
-                {
-                    int off1, off2, val;
-                    char dr[32];
-                    if (sscanf(lines[li], "  mov dword ptr [rbp-%d], %d", &off1, &val) == 2 &&
-                        sscanf(lines[lj], "  mov %[^,], dword ptr [rbp-%d]", dr, &off2) == 2 &&
-                        off1 == off2) {
-                        char newline[160];
-                        snprintf(newline, sizeof(newline), "  mov %s, %d", dr, val);
-                        lines[lj] = strdup(newline);
-                        continue;
-                    }
-                }
-
-                // Pattern 3: jmp .LABEL; .LABEL: → delete jmp
-                {
-                    char lbl1[80], lbl2[80];
-                    if (sscanf(lines[li], "  jmp %s", lbl1) == 1 &&
-                        sscanf(lines[lj], "%[^:]:", lbl2) == 1) {
-                        char *t = lbl2; while (*t == ' ') t++;
-                        if (strcmp(lbl1, t) == 0) {
-                            lines[li] = "";
-                            continue;
-                        }
-                    }
-                }
-
-                // Pattern 4: mov REG, IMM; OP REG2, REG → OP REG2, IMM
-                // (fold immediate into cmp/add/sub/and/or/xor)
-                {
-                    char rd[32]; int imm_val;
-                    char op[16], od[64], os[32];
-                    if (sscanf(lines[li], "  mov %[^,], %d", rd, &imm_val) == 2 && is_reg(rd)) {
-                        int rd_pid = phys_reg_id(rd);
-                        if (sscanf(lines[lj], "  %s %[^,], %s", op, od, os) == 3 &&
-                            same_phys(os, rd) &&
-                            (!strcmp(op, "cmp") || !strcmp(op, "add") || !strcmp(op, "sub") ||
-                             !strcmp(op, "and") || !strcmp(op, "or") || !strcmp(op, "xor") ||
-                             !strcmp(op, "imul"))) {
-                            // Fold and eliminate identity ops
-                            if (((!strcmp(op, "add") || !strcmp(op, "sub") || !strcmp(op, "or") || !strcmp(op, "xor")) && imm_val == 0) ||
-                                (!strcmp(op, "imul") && imm_val == 1)) {
-                                lines[lj] = "";
-                            } else {
-                                char newline[160];
-                                snprintf(newline, sizeof(newline), "  %s %s, %d", op, od, imm_val);
-                                lines[lj] = strdup(newline);
-                            }
-                            if (rd_pid >= 0 && !reg_live_after(lines, nlines, lj, rd_pid))
+                    // Pattern 3: jmp .LABEL; .LABEL: → delete jmp
+                    {
+                        char lbl1[80], lbl2[80];
+                        if (sscanf(lines[li], "  jmp %s", lbl1) == 1 &&
+                            sscanf(lines[lj], "%[^:]:", lbl2) == 1) {
+                            char *t = lbl2;
+                            while (*t == ' ') t++;
+                            if (strcmp(lbl1, t) == 0) {
                                 lines[li] = "";
-                            continue;
+                                continue;
+                            }
                         }
                     }
-                }
 
-                // Pattern 5: 3-line chain: mov R, [mem]; OP R, IMM; mov dst, R → mov dst, [mem]; OP dst, IMM
-                {
-                    int lk = lj + 1;
-                    while (lk < nlines && (!lines[lk] || !lines[lk][0])) lk++;
-                    if (lk < nlines) {
-                        char r1[32], mem1[128], op2[16], r2[32], imm2[32], d3[32], r3[32];
-                        if (sscanf(lines[li], "  mov %[^,], %[^\n]", r1, mem1) == 2 &&
-                            sscanf(lines[lj], "  %s %[^,], %s", op2, r2, imm2) == 3 &&
-                            sscanf(lines[lk], "  mov %[^,], %s", d3, r3) == 2 &&
-                            strcmp(r1, r2) == 0 && strcmp(r2, r3) == 0 &&
-                            is_reg(d3) && !is_reg(mem1) &&
-                            (!strcmp(op2, "add") || !strcmp(op2, "sub"))) {
-                            char nl1[200], nl2[100];
-                            snprintf(nl1, sizeof(nl1), "  mov %s, %s", d3, mem1);
-                            snprintf(nl2, sizeof(nl2), "  %s %s, %s", op2, d3, imm2);
-                            lines[li] = strdup(nl1);
-                            lines[lj] = strdup(nl2);
-                            lines[lk] = "";
-                            continue;
+                    // Pattern 4: mov REG, IMM; OP REG2, REG → OP REG2, IMM
+                    // (fold immediate into cmp/add/sub/and/or/xor)
+                    {
+                        char rd[32];
+                        int imm_val;
+                        char op[16], od[64], os[32];
+                        if (sscanf(lines[li], "  mov %[^,], %d", rd, &imm_val) == 2 && is_reg(rd)) {
+                            int rd_pid = phys_reg_id(rd);
+                            if (sscanf(lines[lj], "  %s %[^,], %s", op, od, os) == 3 &&
+                                same_phys(os, rd) &&
+                                (!strcmp(op, "cmp") || !strcmp(op, "add") || !strcmp(op, "sub") ||
+                                 !strcmp(op, "and") || !strcmp(op, "or") || !strcmp(op, "xor") ||
+                                 !strcmp(op, "imul"))) {
+                                // Fold and eliminate identity ops
+                                if (((!strcmp(op, "add") || !strcmp(op, "sub") || !strcmp(op, "or") || !strcmp(op, "xor")) && imm_val == 0) ||
+                                    (!strcmp(op, "imul") && imm_val == 1)) {
+                                    lines[lj] = "";
+                                } else {
+                                    char newline[160];
+                                    snprintf(newline, sizeof(newline), "  %s %s, %d", op, od, imm_val);
+                                    lines[lj] = strdup(newline);
+                                }
+                                if (rd_pid >= 0 && !reg_live_after(lines, nlines, lj, rd_pid))
+                                    lines[li] = "";
+                                continue;
+                            }
+                        }
+                    }
+
+                    // Pattern 5: 3-line chain: mov R, [mem]; OP R, IMM; mov dst, R → mov dst, [mem]; OP dst, IMM
+                    {
+                        int lk = lj + 1;
+                        while (lk < nlines && (!lines[lk] || !lines[lk][0])) lk++;
+                        if (lk < nlines) {
+                            char r1[32], mem1[128], op2[16], r2[32], imm2[32], d3[32], r3[32];
+                            if (sscanf(lines[li], "  mov %[^,], %[^\n]", r1, mem1) == 2 &&
+                                sscanf(lines[lj], "  %s %[^,], %s", op2, r2, imm2) == 3 &&
+                                sscanf(lines[lk], "  mov %[^,], %s", d3, r3) == 2 &&
+                                strcmp(r1, r2) == 0 && strcmp(r2, r3) == 0 &&
+                                is_reg(d3) && !is_reg(mem1) &&
+                                (!strcmp(op2, "add") || !strcmp(op2, "sub"))) {
+                                char nl1[200], nl2[100];
+                                snprintf(nl1, sizeof(nl1), "  mov %s, %s", d3, mem1);
+                                snprintf(nl2, sizeof(nl2), "  %s %s, %s", op2, d3, imm2);
+                                lines[li] = strdup(nl1);
+                                lines[lj] = strdup(nl2);
+                                lines[lk] = "";
+                                continue;
+                            }
                         }
                     }
                 }
             }
-        }
 
     skip_peep:
         // Emit optimized lines
@@ -1657,7 +1711,10 @@ void codegen(Program *prog) {
         // Emit __cleanup__ calls (LIFO: locals list is in reverse declaration order)
         bool has_cleanup = false;
         for (LVar *var = fn->locals; var; var = var->next)
-            if (var_has_cleanup(var)) { has_cleanup = true; break; }
+            if (var_has_cleanup(var)) {
+                has_cleanup = true;
+                break;
+            }
         if (has_cleanup)
             printf("  mov [rbp-%d], rax\n", SPILL_R10);
         for (LVar *var = fn->locals; var; var = var->next) {

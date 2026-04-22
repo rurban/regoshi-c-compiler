@@ -132,7 +132,7 @@ static Node *new_num(int64_t val, Token *tok) {
     if (val >= -2147483648LL && val <= 2147483647LL)
         node->ty = ty_int;
     else if (val >= 0 && val <= 0xFFFFFFFFLL)
-        node->ty = ty_llong;  // On LLP64, values > INT_MAX go to llong
+        node->ty = ty_llong; // On LLP64, values > INT_MAX go to llong
     else
         node->ty = ty_llong;
     return node;
@@ -263,13 +263,13 @@ void add_typedef(char *name, Type *ty) {
 }
 
 void init_builtins(void) {
-    add_typedef("wchar_t", 
+    add_typedef("wchar_t",
 #ifdef _WIN32
                 ty_ushort
 #else
                 ty_uint
 #endif
-                );
+    );
 }
 
 static Type *typedef_find_name(const char *name) {
@@ -360,9 +360,9 @@ static Node *append_cleanup_range(Node *body, LVar *begin, LVar *end, Token *tok
 
 static bool is_storage_class(Token *tok) {
     return equal(tok, "typedef") || equal(tok, "extern") || equal(tok, "static") ||
-           equal(tok, "inline") || equal(tok, "__inline") || equal(tok, "__inline__") ||
-           equal(tok, "const") || equal(tok, "volatile") || equal(tok, "restrict") || equal(tok, "signed") ||
-           equal(tok, "unsigned") || equal(tok, "short") || equal(tok, "long");
+        equal(tok, "inline") || equal(tok, "__inline") || equal(tok, "__inline__") ||
+        equal(tok, "const") || equal(tok, "volatile") || equal(tok, "restrict") || equal(tok, "signed") ||
+        equal(tok, "unsigned") || equal(tok, "short") || equal(tok, "long");
 }
 
 static Token *skip_balanced(Token *tok) {
@@ -793,9 +793,9 @@ static Type *struct_or_union_specifier(Token **rest, Token *tok, bool is_union) 
     int offset = 0;
     int max_size = 0;
     int max_align = 1;
-    int bit_pos = 0;        // current bit position within the struct (for bitfield packing)
-    int bf_unit_size = 0;   // size of current bitfield storage unit (0 = none active)
-    int struct_pack = pack_align;  // capture #pragma pack value at struct start
+    int bit_pos = 0; // current bit position within the struct (for bitfield packing)
+    int bf_unit_size = 0; // size of current bitfield storage unit (0 = none active)
+    int struct_pack = pack_align; // capture #pragma pack value at struct start
 
     while (!equal(tok, "}")) {
         VarAttr attr = {};
@@ -1379,21 +1379,21 @@ static Node *declaration(Token **rest, Token *tok) {
             if (equal(tok, "=")) {
                 Token *start = tok;
                 tok = tok->next;
-            if (var->ty->kind == TY_ARRAY) {
-                if (equal(tok, "{")) {
-                    cur->next = local_array_initializer(&tok, tok, var);
-                    while (cur->next)
-                        cur = cur->next;
-                } else if (tok->kind == TK_STR) {
-                    Node *lhs = new_var_node(var, start);
-                    Node *rhs = assign(&tok, tok);
-                    cur = cur->next = new_unary(ND_EXPR_STMT, new_binary(ND_ASSIGN, lhs, rhs, start), start);
+                if (var->ty->kind == TY_ARRAY) {
+                    if (equal(tok, "{")) {
+                        cur->next = local_array_initializer(&tok, tok, var);
+                        while (cur->next)
+                            cur = cur->next;
+                    } else if (tok->kind == TK_STR) {
+                        Node *lhs = new_var_node(var, start);
+                        Node *rhs = assign(&tok, tok);
+                        cur = cur->next = new_unary(ND_EXPR_STMT, new_binary(ND_ASSIGN, lhs, rhs, start), start);
+                    } else {
+                        Node *lhs = new_var_node(var, start);
+                        Node *rhs = assign(&tok, tok);
+                        cur = cur->next = new_unary(ND_EXPR_STMT, new_binary(ND_ASSIGN, lhs, rhs, start), start);
+                    }
                 } else {
-                    Node *lhs = new_var_node(var, start);
-                    Node *rhs = assign(&tok, tok);
-                    cur = cur->next = new_unary(ND_EXPR_STMT, new_binary(ND_ASSIGN, lhs, rhs, start), start);
-                }
-            } else {
                     // Handle struct/union initializer: { val1, val2, ... }
                     if (var->ty->kind == TY_STRUCT || var->ty->kind == TY_UNION) {
                         Node *lhs = new_var_node(var, start);
@@ -1403,14 +1403,14 @@ static Node *declaration(Token **rest, Token *tok) {
                             Member *m = var->ty->members;
                             while (!equal(tok, "}") && m) {
                                 // Handle nested struct initializers: { {a,b}, {c,d} }
-                                if (equal(tok, "{") && m->ty && 
+                                if (equal(tok, "{") && m->ty &&
                                     (m->ty->kind == TY_STRUCT || m->ty->kind == TY_UNION)) {
                                     // Create a temporary lvar for the member
                                     LVar *mem_var = arena_alloc(sizeof(LVar));
                                     mem_var->name = "";
                                     mem_var->ty = m->ty;
                                     mem_var->is_local = true;
-                                    
+
                                     // Recursively initialize the nested struct
                                     Node *mem_lhs = new_var_node(mem_var, tok);
                                     tok = tok->next;
@@ -1421,8 +1421,8 @@ static Node *declaration(Token **rest, Token *tok) {
                                             Node *mem = new_node(ND_MEMBER, tok);
                                             mem->lhs = mem_lhs;
                                             mem->member = nm;
-                                            cur = cur->next = new_unary(ND_EXPR_STMT, 
-                                                new_binary(ND_ASSIGN, mem, rhs, tok), tok);
+                                            cur = cur->next = new_unary(ND_EXPR_STMT,
+                                                                        new_binary(ND_ASSIGN, mem, rhs, tok), tok);
                                         }
                                         if (equal(tok, ","))
                                             tok = tok->next;
@@ -1434,8 +1434,8 @@ static Node *declaration(Token **rest, Token *tok) {
                                     Node *mem = new_node(ND_MEMBER, tok);
                                     mem->lhs = lhs;
                                     mem->member = m;
-                                    cur = cur->next = new_unary(ND_EXPR_STMT, 
-                                        new_binary(ND_ASSIGN, mem, rhs, tok), tok);
+                                    cur = cur->next = new_unary(ND_EXPR_STMT,
+                                                                new_binary(ND_ASSIGN, mem, rhs, tok), tok);
                                 }
                                 if (equal(tok, ","))
                                     tok = tok->next;
@@ -1444,8 +1444,8 @@ static Node *declaration(Token **rest, Token *tok) {
                             tok = skip(tok, "}");
                         } else {
                             Node *rhs = assign(&tok, tok);
-                            cur = cur->next = new_unary(ND_EXPR_STMT, 
-                                new_binary(ND_ASSIGN, lhs, rhs, start), start);
+                            cur = cur->next = new_unary(ND_EXPR_STMT,
+                                                        new_binary(ND_ASSIGN, lhs, rhs, start), start);
                         }
                     } else {
                         Node *lhs = new_var_node(var, start);
@@ -1794,39 +1794,37 @@ static Node *primary(Token **rest, Token *tok) {
         node->str = tok->str;
         // Set the type based on the string literal prefix
         switch (tok->string_literal_prefix) {
-            case 0:  // Regular string
-                node->ty = pointer_to(ty_char);
-                break;
-            case 'L':  // Wide string
+        case 0: // Regular string
+            node->ty = pointer_to(ty_char);
+            break;
+        case 'L': // Wide string
 #ifdef _WIN32
-                node->ty = pointer_to(ty_ushort);
+            node->ty = pointer_to(ty_ushort);
 #else
-                node->ty = pointer_to(ty_uint);
+            node->ty = pointer_to(ty_uint);
 #endif
-                break;
-            case 'u':  // char16_t string
-                {
-                    Type *char16_t_type = typedef_find_name("char16_t");
-                    if (!char16_t_type) {
-                        // Fallback to unsigned short if not defined
-                        char16_t_type = ty_ushort;
-                    }
-                    node->ty = pointer_to(char16_t_type);
-                }
-                break;
-            case 'U':  // char32_t string
-                {
-                    Type *char32_t_type = typedef_find_name("char32_t");
-                    if (!char32_t_type) {
-                        // Fallback to unsigned int if not defined
-                        char32_t_type = ty_uint;
-                    }
-                    node->ty = pointer_to(char32_t_type);
-                }
-                break;
-            default:  // Fallback to regular string
-                node->ty = pointer_to(ty_char);
-                break;
+            break;
+        case 'u': // char16_t string
+        {
+            Type *char16_t_type = typedef_find_name("char16_t");
+            if (!char16_t_type) {
+                // Fallback to unsigned short if not defined
+                char16_t_type = ty_ushort;
+            }
+            node->ty = pointer_to(char16_t_type);
+        } break;
+        case 'U': // char32_t string
+        {
+            Type *char32_t_type = typedef_find_name("char32_t");
+            if (!char32_t_type) {
+                // Fallback to unsigned int if not defined
+                char32_t_type = ty_uint;
+            }
+            node->ty = pointer_to(char32_t_type);
+        } break;
+        default: // Fallback to regular string
+            node->ty = pointer_to(ty_char);
+            break;
         }
         StrLit *s = new_str_lit(tok->str, tok->string_literal_prefix, node->ty->base->size);
         node->str_id = s->id;
@@ -2036,8 +2034,10 @@ static Node *unary(Token **rest, Token *tok) {
                 depth = 0;
                 while (!(depth == 0 && equal(tmp, "}"))) {
                     if (equal(tmp, "{")) depth++;
-                    else if (equal(tmp, "}")) depth--;
-                    else if (depth == 0 && equal(tmp, ",")) count++;
+                    else if (equal(tmp, "}"))
+                        depth--;
+                    else if (depth == 0 && equal(tmp, ","))
+                        count++;
                     tmp = tmp->next;
                 }
                 // Handle trailing comma
