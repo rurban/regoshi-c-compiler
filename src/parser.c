@@ -1194,6 +1194,31 @@ static bool read_global_label_initializer(Token **rest, Token *tok, char **label
 }
 
 static Token *skip_initializer(Token *tok) {
+    // Skip designated initializer: .name = value
+    if (equal(tok, ".") && tok->next && tok->next->kind == TK_IDENT) {
+        tok = tok->next->next;
+        if (equal(tok, "="))
+            tok = tok->next;
+        return skip_initializer(tok);
+    }
+    // Skip array index designator: [N] = value or [N ... M] = value
+    if (equal(tok, "[")) {
+        int depth = 1;
+        tok = tok->next;
+        while (depth > 0 && tok->kind != TK_EOF) {
+            if (equal(tok, "[")) depth++;
+            else if (equal(tok, "]"))
+                depth--;
+            tok = tok->next;
+        }
+        if (equal(tok, "...")) {
+            tok = tok->next;
+            while (!equal(tok, "]") && tok->kind != TK_EOF) tok = tok->next;
+            tok = tok->next;
+        }
+        if (equal(tok, "=")) tok = tok->next;
+        return skip_initializer(tok);
+    }
     if (!equal(tok, "{")) {
         assign(&tok, tok);
         return tok;
@@ -1256,14 +1281,38 @@ static Node *local_array_initializer(Token **rest, Token *tok, LVar *var) {
     int idx = 0;
     tok = skip(tok, "{");
     while (!equal(tok, "}")) {
+        long long aidx = idx, aeidx = idx;
+        if (equal(tok, "[")) {
+            tok = tok->next;
+            Node *ni = assign(&tok, tok);
+            add_type(ni);
+            eval_const_expr(ni, &aidx);
+            aeidx = aidx;
+            if (equal(tok, "...")) {
+                tok = tok->next;
+                Node *ni2 = assign(&tok, tok);
+                add_type(ni2);
+                eval_const_expr(ni2, &aeidx);
+            }
+            tok = skip(tok, "]");
+            tok = skip(tok, "=");
+            idx = (int)aidx;
+        }
         if (equal(tok, "{")) {
             tok = skip_initializer(tok);
-            idx++;
+            idx = (int)aeidx + 1;
         } else {
-            Token *start = tok;
-            Node *lhs = new_array_elem_lvalue(var, idx++, tok);
-            Node *rhs = assign(&tok, tok);
-            cur = cur->next = new_unary(ND_EXPR_STMT, new_binary(ND_ASSIGN, lhs, rhs, start), start);
+            Token *val_start = tok;
+            Token *after_val = tok;
+            assign(&after_val, after_val); // advance past value without building node
+            for (long long ai = aidx; ai <= aeidx; ai++) {
+                Token *tmp = val_start;
+                Node *rhs = assign(&tmp, tmp);
+                Node *lhs = new_array_elem_lvalue(var, (int)ai, val_start);
+                cur = cur->next = new_unary(ND_EXPR_STMT, new_binary(ND_ASSIGN, lhs, rhs, val_start), val_start);
+            }
+            tok = after_val;
+            idx = (int)aeidx + 1;
         }
         if (equal(tok, ",")) {
             tok = tok->next;
@@ -1277,10 +1326,34 @@ static Node *local_array_initializer(Token **rest, Token *tok, LVar *var) {
     return head.next;
 }
 
+// Detect compound literal like (type){...} or ((type){...}) and return
+// a pointer to the { token, or NULL if not a compound literal.
+static Token *find_compound_literal_start(Token *tok) {
+    Token *t = tok;
+    while (equal(t, "("))
+        t = t->next;
+    if (!is_typename(t))
+        return NULL;
+    Type *ty = type_name(&t, t);
+    if (!ty)
+        return NULL;
+    while (equal(t, ")"))
+        t = t->next;
+    if (equal(t, "{"))
+        return t;
+    return NULL;
+}
+
 static int64_t read_const_initializer(Token **rest, Token *tok) {
     // Skip empty nested initializer (e.g., for flexible array members)
     if (equal(tok, "{")) {
         *rest = skip_initializer(tok);
+        return 0;
+    }
+    // Skip compound literals in global initializers (e.g., (empty_s){})
+    Token *compound_start = find_compound_literal_start(tok);
+    if (compound_start) {
+        *rest = skip_initializer(compound_start);
         return 0;
     }
     Node *node = assign(&tok, tok);
@@ -1312,6 +1385,200 @@ static void write_scalar_bytes(char *buf, int offset, int size, int64_t val) {
     }
     int64_t v = val;
     memcpy(buf + offset, &v, 8);
+}
+
+// Forward declaration
+static Token *global_init_one(Token *tok, LVar *var, Type *ty, int offset);
+
+// Initialize one object of type `ty` at `base + offset` in global init data.
+// Handles scalars, arrays, structs, compound literals, and flattened init.
+static Token *global_init_one(Token *tok, LVar *var, Type *ty, int offset) {
+    // String literal for char array
+    if (ty->kind == TY_ARRAY && ty->base->kind == TY_CHAR && tok->kind == TK_STR) {
+        int len = strlen(tok->str) + 1;
+        if (len > ty->size) len = ty->size;
+        memcpy(var->init_data + offset, tok->str, len);
+        return tok->next;
+    }
+
+    // Array with braces: { elem1, elem2, ... } with optional [N]=val or [N...M]=val designators
+    if (ty->kind == TY_ARRAY && equal(tok, "{")) {
+        int elem_size = ty->base->size;
+        int len = array_len(ty);
+        tok = skip(tok, "{");
+        int idx = 0;
+        while (!equal(tok, "}")) {
+            int sidx = idx, eidx = idx;
+            if (equal(tok, "[")) {
+                tok = tok->next;
+                Node *n = assign(&tok, tok);
+                long long sv = 0;
+                eval_const_expr(n, &sv);
+                sidx = (int)sv;
+                eidx = sidx;
+                if (equal(tok, "...")) {
+                    tok = tok->next;
+                    Node *n2 = assign(&tok, tok);
+                    long long ev = sidx;
+                    eval_const_expr(n2, &ev);
+                    eidx = (int)ev;
+                }
+                tok = skip(tok, "]");
+                tok = skip(tok, "=");
+                idx = sidx;
+            }
+            Token *val_start = tok;
+            for (int i = sidx; i <= eidx; i++) {
+                if (len == 0 || i < len)
+                    tok = global_init_one(val_start, var, ty->base, offset + i * elem_size);
+                else
+                    tok = skip_initializer(val_start);
+            }
+            idx = eidx + 1;
+            if (equal(tok, ",")) {
+                tok = tok->next;
+                if (equal(tok, "}"))
+                    break;
+                continue;
+            }
+            break;
+        }
+        return skip(tok, "}");
+    }
+
+    // Struct/union with braces: { mem1, mem2, ... }
+    if ((ty->kind == TY_STRUCT || ty->kind == TY_UNION) && equal(tok, "{")) {
+        tok = skip(tok, "{");
+        Member *mem = ty->members;
+        while (!equal(tok, "}")) {
+            // Designated initializer: .member = value
+            if (equal(tok, ".") && tok->next && tok->next->kind == TK_IDENT) {
+                char *name = tok->next->name;
+                tok = tok->next->next;
+                tok = skip(tok, "=");
+                Member *m = ty->members;
+                while (m && (!m->name || strcmp(m->name, name) != 0))
+                    m = m->next;
+                if (m) {
+                    tok = global_init_one(tok, var, m->ty, offset + m->offset);
+                    mem = m->next;
+                } else {
+                    tok = skip_initializer(tok);
+                }
+            } else if (mem) {
+                tok = global_init_one(tok, var, mem->ty, offset + mem->offset);
+                mem = mem->next;
+            } else {
+                tok = skip_initializer(tok);
+            }
+            if (equal(tok, ",")) {
+                tok = tok->next;
+                if (equal(tok, "}"))
+                    break;
+                continue;
+            }
+            break;
+        }
+        return skip(tok, "}");
+    }
+
+    // Compound literal for aggregate type
+    if ((ty->kind == TY_STRUCT || ty->kind == TY_UNION || ty->kind == TY_ARRAY) && find_compound_literal_start(tok)) {
+        Token *compound_start = find_compound_literal_start(tok);
+        tok = skip(compound_start, "{");
+        if (ty->kind == TY_STRUCT || ty->kind == TY_UNION) {
+            Member *mem = ty->members;
+            while (!equal(tok, "}")) {
+                if (mem) {
+                    tok = global_init_one(tok, var, mem->ty, offset + mem->offset);
+                    mem = mem->next;
+                } else {
+                    tok = skip_initializer(tok);
+                }
+                if (equal(tok, ",")) {
+                    tok = tok->next;
+                    if (equal(tok, "}"))
+                        break;
+                    continue;
+                }
+                break;
+            }
+        } else { // array
+            int elem_size = ty->base->size;
+            int len = array_len(ty);
+            int idx = 0;
+            while (!equal(tok, "}")) {
+                if (len == 0 || idx < len)
+                    tok = global_init_one(tok, var, ty->base, offset + idx * elem_size);
+                else
+                    tok = skip_initializer(tok);
+                idx++;
+                if (equal(tok, ",")) {
+                    tok = tok->next;
+                    if (equal(tok, "}"))
+                        break;
+                    continue;
+                }
+                break;
+            }
+        }
+        if (equal(tok, "}"))
+            tok = tok->next;
+        while (equal(tok, ")"))
+            tok = tok->next;
+        return tok;
+    }
+
+    // Struct/union without braces: flatten into members.
+    // For unions, only the first member is initialized.
+    if (ty->kind == TY_STRUCT || ty->kind == TY_UNION) {
+        Member *mem = ty->members;
+        if (mem) {
+            tok = global_init_one(tok, var, mem->ty, offset + mem->offset);
+            mem = mem->next;
+            if (ty->kind == TY_STRUCT) {
+                while (mem && !equal(tok, "}") && !equal(tok, ",")) {
+                    tok = global_init_one(tok, var, mem->ty, offset + mem->offset);
+                    mem = mem->next;
+                }
+            }
+        }
+        return tok;
+    }
+
+    // Array without braces: single element
+    if (ty->kind == TY_ARRAY) {
+        return global_init_one(tok, var, ty->base, offset);
+    }
+
+    // Superfluous braces around scalar: { expr }
+    if (equal(tok, "{")) {
+        tok = skip(tok, "{");
+        tok = global_init_one(tok, var, ty, offset);
+        tok = skip(tok, "}");
+        return tok;
+    }
+
+    // Pointer to label/function
+    if (ty->kind == TY_PTR) {
+        char *label = NULL;
+        Token *next = tok;
+        if (read_global_label_initializer(&next, tok, &label)) {
+            append_reloc(var, offset, label, 0);
+            return next;
+        }
+    }
+
+    // Scalar
+    Node *node = assign(&tok, tok);
+    add_type(node);
+    long long val = 0;
+    if (eval_const_expr(node, &val)) {
+        write_scalar_bytes(var->init_data, offset, ty->size, (int64_t)val);
+        return tok;
+    }
+    error_tok(tok, "expected constant expression in initializer");
+    return tok;
 }
 
 static Node *declaration(Token **rest, Token *tok) {
@@ -1411,34 +1678,193 @@ static Node *declaration(Token **rest, Token *tok) {
                             // Struct initializer - create member assignments
                             tok = tok->next;
                             Member *m = var->ty->members;
-                            while (!equal(tok, "}") && m) {
-                                // Handle nested struct initializers: { {a,b}, {c,d} }
-                                if (equal(tok, "{") && m->ty &&
-                                    (m->ty->kind == TY_STRUCT || m->ty->kind == TY_UNION)) {
-                                    // Create a temporary lvar for the member
-                                    LVar *mem_var = arena_alloc(sizeof(LVar));
-                                    mem_var->name = "";
-                                    mem_var->ty = m->ty;
-                                    mem_var->is_local = true;
-
-                                    // Recursively initialize the nested struct
-                                    Node *mem_lhs = new_var_node(mem_var, tok);
-                                    tok = tok->next;
-                                    Member *nm = m->ty->members;
-                                    while (!equal(tok, "}") && nm) {
-                                        if (!equal(tok, ",")) {
+                            while (!equal(tok, "}")) {
+                                // Designated initializer: .member = value
+                                if (equal(tok, ".") && tok->next && tok->next->kind == TK_IDENT) {
+                                    char *dname = tok->next->name;
+                                    tok = tok->next->next;
+                                    tok = skip(tok, "=");
+                                    Member *dm = var->ty->members;
+                                    while (dm && (!dm->name || strcmp(dm->name, dname) != 0))
+                                        dm = dm->next;
+                                    if (dm) m = dm;
+                                    if (!m) {
+                                        tok = skip_initializer(tok);
+                                        goto next_member_local;
+                                    }
+                                }
+                                // GNU-style designated init: member: value
+                                if (tok->kind == TK_IDENT && tok->next && equal(tok->next, ":")) {
+                                    char *dname = tok->name;
+                                    tok = tok->next->next; // skip ident and ':'
+                                    Member *dm = var->ty->members;
+                                    while (dm && (!dm->name || strcmp(dm->name, dname) != 0))
+                                        dm = dm->next;
+                                    if (dm) m = dm;
+                                    if (!m) {
+                                        tok = skip_initializer(tok);
+                                        goto next_member_local;
+                                    }
+                                }
+                                if (!m) {
+                                    // Skip excess initializer values (e.g. for anonymous members not in list)
+                                    while (!equal(tok, "}") && tok->kind != TK_EOF) {
+                                        tok = skip_initializer(tok);
+                                        if (equal(tok, ",")) tok = tok->next;
+                                    }
+                                    break;
+                                }
+                                if (m->ty && m->ty->kind == TY_ARRAY) {
+                                    // Array member: initialize elements
+                                    int len = array_len(m->ty);
+                                    int idx = 0;
+                                    if (equal(tok, "{")) {
+                                        tok = tok->next;
+                                        while (!equal(tok, "}")) {
+                                            long long aidx = idx, aeidx = idx;
+                                            if (equal(tok, "[")) {
+                                                tok = tok->next;
+                                                Node *nidx = assign(&tok, tok);
+                                                add_type(nidx);
+                                                eval_const_expr(nidx, &aidx);
+                                                aeidx = aidx;
+                                                if (equal(tok, "...")) {
+                                                    tok = tok->next;
+                                                    Node *nidx2 = assign(&tok, tok);
+                                                    add_type(nidx2);
+                                                    eval_const_expr(nidx2, &aeidx);
+                                                }
+                                                tok = skip(tok, "]");
+                                                tok = skip(tok, "=");
+                                            }
                                             Node *rhs = assign(&tok, tok);
+                                            for (long long ai = aidx; ai <= aeidx; ai++) {
+                                                if (ai < len) {
+                                                    Node *member = new_node(ND_MEMBER, tok);
+                                                    member->lhs = lhs;
+                                                    member->member = m;
+                                                    Node *member_addr = new_unary(ND_ADDR, member, tok);
+                                                    Node *ao = new_num(ai, tok);
+                                                    Node *elem_ptr = new_binary(ND_ADD, member_addr, ao, tok);
+                                                    Node *elem_lhs = new_unary(ND_DEREF, elem_ptr, tok);
+                                                    cur = cur->next = new_unary(ND_EXPR_STMT,
+                                                                                new_binary(ND_ASSIGN, elem_lhs, rhs, tok), tok);
+                                                }
+                                            }
+                                            idx = (int)aeidx + 1;
+                                            if (equal(tok, ",")) {
+                                                tok = tok->next;
+                                                if (equal(tok, "}"))
+                                                    break;
+                                                continue;
+                                            }
+                                            break;
+                                        }
+                                        tok = skip(tok, "}");
+                                    } else {
+                                        while (idx < len && !equal(tok, "}") && !equal(tok, ",")) {
+                                            Node *member = new_node(ND_MEMBER, tok);
+                                            member->lhs = lhs;
+                                            member->member = m;
+                                            Node *member_addr = new_unary(ND_ADDR, member, tok);
+                                            Node *offset = new_num(idx, tok);
+                                            Node *elem_ptr = new_binary(ND_ADD, member_addr, offset, tok);
+                                            Node *elem_lhs = new_unary(ND_DEREF, elem_ptr, tok);
+                                            Node *rhs = assign(&tok, tok);
+                                            cur = cur->next = new_unary(ND_EXPR_STMT,
+                                                                        new_binary(ND_ASSIGN, elem_lhs, rhs, tok), tok);
+                                            idx++;
+                                            if (equal(tok, ","))
+                                                tok = tok->next;
+                                        }
+                                    }
+                                } else if (m->ty && (m->ty->kind == TY_STRUCT || m->ty->kind == TY_UNION)) {
+                                    bool whole_struct = false;
+                                    if (!equal(tok, "{")) {
+                                        Token *saved = tok;
+                                        Node *rhs = assign(&tok, tok);
+                                        add_type(rhs);
+                                        if (rhs->ty && (rhs->ty->kind == TY_STRUCT || rhs->ty->kind == TY_UNION) &&
+                                            rhs->ty->size == m->ty->size && rhs->ty->members == m->ty->members) {
                                             Node *mem = new_node(ND_MEMBER, tok);
-                                            mem->lhs = mem_lhs;
-                                            mem->member = nm;
+                                            mem->lhs = lhs;
+                                            mem->member = m;
                                             cur = cur->next = new_unary(ND_EXPR_STMT,
                                                                         new_binary(ND_ASSIGN, mem, rhs, tok), tok);
+                                            whole_struct = true;
+                                        } else {
+                                            tok = saved;
                                         }
-                                        if (equal(tok, ","))
-                                            tok = tok->next;
-                                        nm = nm->next;
                                     }
-                                    tok = skip(tok, "}");
+                                    if (!whole_struct) {
+                                        bool had_brace = equal(tok, "{");
+                                        if (had_brace)
+                                            tok = tok->next;
+                                        Member *sm = m->ty->members;
+                                        while (sm && !equal(tok, "}") && !equal(tok, ",")) {
+                                            if (sm->ty->kind == TY_ARRAY) {
+                                                int len = array_len(sm->ty);
+                                                int idx = 0;
+                                                if (equal(tok, "{")) {
+                                                    tok = tok->next;
+                                                    while (idx < len && !equal(tok, "}")) {
+                                                        Node *member = new_node(ND_MEMBER, tok);
+                                                        member->lhs = new_node(ND_MEMBER, tok);
+                                                        member->lhs->lhs = lhs;
+                                                        member->lhs->member = m;
+                                                        member->member = sm;
+                                                        Node *member_addr = new_unary(ND_ADDR, member, tok);
+                                                        Node *offset = new_num(idx, tok);
+                                                        Node *elem_ptr = new_binary(ND_ADD, member_addr, offset, tok);
+                                                        Node *elem_lhs = new_unary(ND_DEREF, elem_ptr, tok);
+                                                        Node *elem_rhs = assign(&tok, tok);
+                                                        cur = cur->next = new_unary(ND_EXPR_STMT,
+                                                                                    new_binary(ND_ASSIGN, elem_lhs, elem_rhs, tok), tok);
+                                                        idx++;
+                                                        if (equal(tok, ",")) {
+                                                            tok = tok->next;
+                                                            if (equal(tok, "}")) break;
+                                                            continue;
+                                                        }
+                                                        break;
+                                                    }
+                                                    tok = skip(tok, "}");
+                                                } else {
+                                                    while (idx < len && !equal(tok, "}") && !equal(tok, ",")) {
+                                                        Node *member = new_node(ND_MEMBER, tok);
+                                                        member->lhs = new_node(ND_MEMBER, tok);
+                                                        member->lhs->lhs = lhs;
+                                                        member->lhs->member = m;
+                                                        member->member = sm;
+                                                        Node *member_addr = new_unary(ND_ADDR, member, tok);
+                                                        Node *offset = new_num(idx, tok);
+                                                        Node *elem_ptr = new_binary(ND_ADD, member_addr, offset, tok);
+                                                        Node *elem_lhs = new_unary(ND_DEREF, elem_ptr, tok);
+                                                        Node *elem_rhs = assign(&tok, tok);
+                                                        cur = cur->next = new_unary(ND_EXPR_STMT,
+                                                                                    new_binary(ND_ASSIGN, elem_lhs, elem_rhs, tok), tok);
+                                                        idx++;
+                                                        if (equal(tok, ","))
+                                                            tok = tok->next;
+                                                    }
+                                                }
+                                            } else {
+                                                Node *elem_rhs = assign(&tok, tok);
+                                                Node *mem = new_node(ND_MEMBER, tok);
+                                                mem->lhs = new_node(ND_MEMBER, tok);
+                                                mem->lhs->lhs = lhs;
+                                                mem->lhs->member = m;
+                                                mem->member = sm;
+                                                cur = cur->next = new_unary(ND_EXPR_STMT,
+                                                                            new_binary(ND_ASSIGN, mem, elem_rhs, tok), tok);
+                                                if (equal(tok, ","))
+                                                    tok = tok->next;
+                                            }
+                                            sm = sm->next;
+                                        }
+                                        if (had_brace)
+                                            tok = skip(tok, "}");
+                                    }
                                 } else if (!equal(tok, ",")) {
                                     Node *rhs = assign(&tok, tok);
                                     Node *mem = new_node(ND_MEMBER, tok);
@@ -1450,6 +1876,7 @@ static Node *declaration(Token **rest, Token *tok) {
                                 if (equal(tok, ","))
                                     tok = tok->next;
                                 m = m->next;
+                            next_member_local:;
                             }
                             tok = skip(tok, "}");
                         } else {
@@ -2112,18 +2539,60 @@ static Node *unary(Token **rest, Token *tok) {
                 // Struct compound literal: assign each member
                 Member *mem = ty->members;
                 while (!equal(tok, "}") && mem) {
-                    Node *var_node = new_var_node(var, start);
-                    Node *member_access = new_node(ND_MEMBER, start);
-                    member_access->lhs = var_node;
-                    member_access->member = mem;
-                    member_access->ty = mem->ty;
-                    Node *val = assign(&tok, tok);
-                    add_type(val);
-                    Node *asgn = new_binary(ND_ASSIGN, member_access, val, start);
-                    asgn->ty = mem->ty;
-                    result = new_binary(ND_COMMA, result, asgn, start);
-                    result->ty = ty;
+                    if (mem->ty->kind == TY_ARRAY) {
+                        // Array member: assign elements, handle optional braces
+                        int len = array_len(mem->ty);
+                        int idx = 0;
+                        bool arr_brace = equal(tok, "{");
+                        if (arr_brace) tok = tok->next;
+                        while (idx < len && !equal(tok, "}") && !equal(tok, ",")) {
+                            Node *var_node = new_var_node(var, start);
+                            Node *member_access = new_node(ND_MEMBER, start);
+                            member_access->lhs = var_node;
+                            member_access->member = mem;
+                            member_access->ty = mem->ty;
+                            Node *member_addr = new_unary(ND_ADDR, member_access, start);
+                            Node *offset = new_num(idx, start);
+                            Node *elem_ptr = new_binary(ND_ADD, member_addr, offset, start);
+                            Node *elem_lhs = new_unary(ND_DEREF, elem_ptr, start);
+                            Node *val = assign(&tok, tok);
+                            add_type(val);
+                            Node *asgn = new_binary(ND_ASSIGN, elem_lhs, val, start);
+                            result = new_binary(ND_COMMA, result, asgn, start);
+                            result->ty = ty;
+                            idx++;
+                            if (equal(tok, ",")) {
+                                tok = tok->next;
+                                if (equal(tok, "}")) break;
+                                continue;
+                            }
+                            break;
+                        }
+                        if (arr_brace) tok = skip(tok, "}");
+                    } else {
+                        Node *var_node = new_var_node(var, start);
+                        Node *member_access = new_node(ND_MEMBER, start);
+                        member_access->lhs = var_node;
+                        member_access->member = mem;
+                        member_access->ty = mem->ty;
+                        Node *val = assign(&tok, tok);
+                        add_type(val);
+                        Node *asgn = new_binary(ND_ASSIGN, member_access, val, start);
+                        asgn->ty = mem->ty;
+                        result = new_binary(ND_COMMA, result, asgn, start);
+                        result->ty = ty;
+                    }
                     mem = mem->next;
+                    if (!equal(tok, "}"))
+                        tok = skip(tok, ",");
+                }
+                while (!equal(tok, "}")) {
+                    // Skip extra initializers
+                    if (equal(tok, ",")) {
+                        tok = tok->next;
+                        continue;
+                    }
+                    assign(&tok, tok);
                     if (!equal(tok, "}"))
                         tok = skip(tok, ",");
                 }
@@ -2410,78 +2879,7 @@ static void global_initializer(Token **rest, Token *tok, LVar *var) {
         }
     }
 
-    if (var->ty->kind == TY_ARRAY && var->ty->base->kind == TY_PTR && equal(tok, "{")) {
-        int len = array_len(var->ty);
-        if (len == 0) {
-            Token *tmp = tok;
-            len = count_array_initializer(&tmp, tmp);
-            var->ty = array_of(var->ty->base, len);
-        }
-
-        int elem_size = var->ty->base->size;
-        var->init_data = arena_alloc(var->ty->size ? var->ty->size : 1);
-        var->init_size = var->ty->size;
-
-        tok = skip(tok, "{");
-        int idx = 0;
-        while (!equal(tok, "}")) {
-            char *label = NULL;
-            Token *next = tok;
-            if (read_global_label_initializer(&next, tok, &label)) {
-                if (idx < len)
-                    append_reloc(var, idx * elem_size, label, 0);
-                tok = next;
-            } else {
-                int val = read_const_initializer(&tok, tok);
-                if (idx < len)
-                    write_scalar_bytes(var->init_data, idx * elem_size, elem_size, val);
-            }
-            idx++;
-            if (equal(tok, ",")) {
-                tok = tok->next;
-                if (equal(tok, "}"))
-                    break;
-                continue;
-            }
-            break;
-        }
-        *rest = skip(tok, "}");
-        return;
-    }
-
-    if (var->ty->kind == TY_ARRAY && equal(tok, "{") && is_integer(var->ty->base)) {
-        int len = array_len(var->ty);
-        if (len == 0) {
-            Token *tmp = tok;
-            len = count_array_initializer(&tmp, tmp);
-            var->ty = array_of(var->ty->base, len);
-        }
-
-        int elem_size = var->ty->base->size;
-        var->init_data = arena_alloc(var->ty->size ? var->ty->size : 1);
-        var->init_size = var->ty->size;
-
-        tok = skip(tok, "{");
-        int idx = 0;
-        while (!equal(tok, "}")) {
-            int val = read_const_initializer(&tok, tok);
-            if (idx < len)
-                write_scalar_bytes(var->init_data, idx * elem_size, elem_size, val);
-            idx++;
-            if (equal(tok, ",")) {
-                tok = tok->next;
-                if (equal(tok, "}"))
-                    break;
-                continue;
-            }
-            break;
-        }
-        *rest = skip(tok, "}");
-        return;
-    }
-
-    if (var->ty->kind == TY_ARRAY && (var->ty->base->kind == TY_STRUCT || var->ty->base->kind == TY_UNION) && equal(tok, "{")) {
-        int elem_size = var->ty->base->size;
+    if (var->ty->kind == TY_ARRAY && equal(tok, "{")) {
         int len = array_len(var->ty);
         if (len == 0) {
             Token *tmp = tok;
@@ -2490,70 +2888,24 @@ static void global_initializer(Token **rest, Token *tok, LVar *var) {
         }
         var->init_data = arena_alloc(var->ty->size ? var->ty->size : 1);
         var->init_size = var->ty->size;
-        tok = skip(tok, "{");
-        int idx = 0;
-        while (!equal(tok, "}")) {
-            if (equal(tok, "{")) {
-                tok = skip(tok, "{");
-                Member *mem = var->ty->base->members;
-                while (!equal(tok, "}")) {
-                    if (mem) {
-                        int64_t val = read_const_initializer(&tok, tok);
-                        if (idx < len)
-                            write_scalar_bytes(var->init_data, idx * elem_size + mem->offset, mem->ty->size, val);
-                        mem = mem->next;
-                    } else {
-                        read_const_initializer(&tok, tok);
-                    }
-                    if (equal(tok, ",")) {
-                        tok = tok->next;
-                        if (equal(tok, "}"))
-                            break;
-                        continue;
-                    }
-                    break;
-                }
-                tok = skip(tok, "}");
-            } else {
-                int val = read_const_initializer(&tok, tok);
-                if (idx < len)
-                    write_scalar_bytes(var->init_data, idx * elem_size, elem_size, val);
-            }
-            idx++;
-            if (equal(tok, ",")) {
-                tok = tok->next;
-                if (equal(tok, "}"))
-                    break;
-                continue;
-            }
-            break;
-        }
-        *rest = skip(tok, "}");
+        *rest = global_init_one(tok, var, var->ty, 0);
         return;
     }
 
     if ((var->ty->kind == TY_STRUCT || var->ty->kind == TY_UNION) && equal(tok, "{")) {
         var->init_data = arena_alloc(var->ty->size ? var->ty->size : 1);
         var->init_size = var->ty->size;
-        tok = skip(tok, "{");
-        Member *mem = var->ty->members;
-        while (!equal(tok, "}")) {
-            if (mem) {
-                int64_t val = read_const_initializer(&tok, tok);
-                write_scalar_bytes(var->init_data, mem->offset, mem->ty->size, val);
-                mem = mem->next;
-            } else {
-                read_const_initializer(&tok, tok);
-            }
-            if (equal(tok, ",")) {
-                tok = tok->next;
-                if (equal(tok, "}"))
-                    break;
-                continue;
-            }
-            break;
-        }
-        *rest = skip(tok, "}");
+        tok = global_init_one(tok, var, var->ty, 0);
+        *rest = tok;
+        return;
+    }
+
+    // Struct/union initialized with a compound literal: (Type){...} or ((Type){...})
+    if ((var->ty->kind == TY_STRUCT || var->ty->kind == TY_UNION) && find_compound_literal_start(tok)) {
+        var->init_data = arena_alloc(var->ty->size ? var->ty->size : 1);
+        var->init_size = var->ty->size;
+        tok = global_init_one(tok, var, var->ty, 0);
+        *rest = tok;
         return;
     }
 
