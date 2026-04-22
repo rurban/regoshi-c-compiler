@@ -1378,30 +1378,6 @@ static Token *find_compound_literal_start(Token *tok) {
     return NULL;
 }
 
-static int64_t read_const_initializer(Token **rest, Token *tok) {
-    // Skip empty nested initializer (e.g., for flexible array members)
-    if (equal(tok, "{")) {
-        *rest = skip_initializer(tok);
-        return 0;
-    }
-    // Skip compound literals in global initializers (e.g., (empty_s){})
-    Token *compound_start = find_compound_literal_start(tok);
-    if (compound_start) {
-        *rest = skip_initializer(compound_start);
-        return 0;
-    }
-    Node *node = assign(&tok, tok);
-    add_type(node);
-    long long val = 0;
-    if (eval_const_expr(node, &val)) {
-        *rest = tok;
-        return (int64_t)val;
-    }
-    // Fallback for simple cases
-    error_tok(tok, "expected constant expression in initializer");
-    return 0;
-}
-
 static void write_scalar_bytes(char *buf, int offset, int size, int64_t val) {
     if (size == 1) {
         buf[offset] = (char)val;
