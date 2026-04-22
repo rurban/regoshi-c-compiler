@@ -43,6 +43,7 @@ static char *reg(int r, int size);
 static int alloc_reg(void);
 static void free_reg(int i);
 static int gen(Node *node);
+static int gen_addr(Node *node);
 
 static char *func_asm_name(char *name) {
     for (Function *fn = all_funcs; fn; fn = fn->next) {
@@ -165,11 +166,11 @@ static int gen_funcall(Node *node, int hidden_ret_reg) {
 #endif
 
     int saved_scratch = used_regs & 3;
-    if (saved_scratch & 1) {
+    if ((saved_scratch & 1) && hidden_ret_reg != 0) {
         printf("  mov [rbp-%d], r10\n", SPILL_R10);
         used_regs &= ~1;
     }
-    if (saved_scratch & 2) {
+    if ((saved_scratch & 2) && hidden_ret_reg != 1) {
         printf("  mov [rbp-%d], r11\n", SPILL_R11);
         used_regs &= ~2;
     }
@@ -202,7 +203,10 @@ static int gen_funcall(Node *node, int hidden_ret_reg) {
     for (int i = 0; i < nargs; i++) {
         if (arg_stack_idx[i] >= 0)
             continue;
-        arg_regs[i] = gen(argv[i]);
+        if ((argv[i]->ty->kind == TY_STRUCT || argv[i]->ty->kind == TY_UNION) && argv[i]->ty->size > 8)
+            arg_regs[i] = gen_addr(argv[i]);
+        else
+            arg_regs[i] = gen(argv[i]);
     }
 
     if (stack_reserve > 0)
@@ -211,7 +215,11 @@ static int gen_funcall(Node *node, int hidden_ret_reg) {
     for (int i = nargs - 1; i >= 0; i--) {
         if (arg_stack_idx[i] < 0)
             continue;
-        int r = gen(argv[i]);
+        int r;
+        if ((argv[i]->ty->kind == TY_STRUCT || argv[i]->ty->kind == TY_UNION) && argv[i]->ty->size > 8)
+            r = gen_addr(argv[i]);
+        else
+            r = gen(argv[i]);
         if (is_flonum(argv[i]->ty)) {
             printf("  mov qword ptr [rsp+%d], %s\n", shadow_space + arg_stack_idx[i] * 8, reg64[r]);
         } else {
@@ -295,11 +303,11 @@ static int gen_funcall(Node *node, int hidden_ret_reg) {
     if (stack_reserve > 0)
         printf("  add rsp, %d\n", stack_reserve);
 
-    if (saved_scratch & 2) {
+    if ((saved_scratch & 2) && hidden_ret_reg != 1) {
         used_regs |= 2;
         printf("  mov r11, [rbp-%d]\n", SPILL_R11);
     }
-    if (saved_scratch & 1) {
+    if ((saved_scratch & 1) && hidden_ret_reg != 0) {
         used_regs |= 1;
         printf("  mov r10, [rbp-%d]\n", SPILL_R10);
     }
@@ -1469,7 +1477,20 @@ void codegen(Program *prog) {
                     : var->ty->size == 2        ? param_regs16[param_index]
                     : var->ty->size <= 4        ? param_regs32[param_index]
                                                 : param_regs64[param_index];
-                printf("  mov [rbp-%d], %s\n", var->offset, preg);
+                if ((var->ty->kind == TY_STRUCT || var->ty->kind == TY_UNION) && var->ty->size > 8) {
+                    int c = ++rcc_label_count;
+                    printf("  mov rcx, %d\n", var->ty->size);
+                    printf(".L.pcopy.%d:\n", c);
+                    printf("  cmp rcx, 0\n");
+                    printf("  je .L.pcopy_end.%d\n", c);
+                    printf("  mov al, byte ptr [%s + rcx - 1]\n", preg);
+                    printf("  mov byte ptr [rbp-%d + rcx - 1], al\n", var->offset);
+                    printf("  sub rcx, 1\n");
+                    printf("  jmp .L.pcopy.%d\n", c);
+                    printf(".L.pcopy_end.%d:\n", c);
+                } else {
+                    printf("  mov [rbp-%d], %s\n", var->offset, preg);
+                }
                 param_index++;
             }
 #endif
