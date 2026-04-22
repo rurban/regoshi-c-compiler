@@ -2061,15 +2061,13 @@ static Node *unary(Token **rest, Token *tok) {
                 while (!equal(tok, "}")) {
                     Node *idx = new_num(i, start);
                     Node *elem_ptr = new_binary(ND_ADD, new_var_node(var, start), idx, start);
-                    elem_ptr->ty = pointer_to(ty->base);
                     Node *deref = new_unary(ND_DEREF, elem_ptr, start);
-                    deref->ty = ty->base;
                     Node *val = assign(&tok, tok);
                     add_type(val);
                     Node *asgn = new_binary(ND_ASSIGN, deref, val, start);
-                    asgn->ty = ty->base;
+                    add_type(asgn);
                     result = new_binary(ND_COMMA, result, asgn, start);
-                    result->ty = ty;
+                    add_type(result);
                     i++;
                     if (!equal(tok, "}"))
                         tok = skip(tok, ",");

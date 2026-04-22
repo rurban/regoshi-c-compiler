@@ -1378,7 +1378,7 @@ void codegen(Program *prog) {
                     printf("  .long %lld\n", (long long)var->init_val);
                 else
                     printf("  .quad %lld\n", (long long)var->init_val);
-            } else {
+            } else if (var->ty->size > 0) {
                 printf("  .zero %d\n", var->ty->size);
             }
         }
