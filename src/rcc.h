@@ -209,7 +209,9 @@ typedef enum {
     ND_BREAK, // "break"
     ND_CONTINUE, // "continue"
     ND_GOTO, // "goto"
+    ND_GOTO_IND, // "goto *expr" (computed goto)
     ND_LABEL, // label:
+    ND_LABEL_VAL, // &&label (label address)
     ND_STMT_EXPR, // GNU statement expression
     ND_BLOCK, // { ... }
     ND_EXPR_STMT, // Expression statement

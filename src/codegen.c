@@ -471,6 +471,18 @@ static int gen_addr(Node *node) {
         printf("  add %s, %d\n", reg64[r], node->member->offset);
         return r;
     }
+    case ND_CAST:
+        // Struct/union cast: treat as address of the inner expression
+        if (node->ty && (node->ty->kind == TY_STRUCT || node->ty->kind == TY_UNION || node->ty->kind == TY_ARRAY))
+            return gen_addr(node->lhs);
+        error_tok(node->tok, "lvalue required as left operand of assignment");
+        return -1;
+    case ND_COMMA: {
+        // Compound literal: evaluate LHS side effects, return address of RHS
+        int r1 = gen(node->lhs);
+        if (r1 != -1) free_reg(r1);
+        return gen_addr(node->rhs);
+    }
     default:
         error_tok(node->tok, "lvalue required as left operand of assignment");
         return -1;
@@ -1160,9 +1172,20 @@ static int gen(Node *node) {
         emit_cleanup_range(node->cleanup_begin, node->cleanup_end);
         printf("  jmp .L.label.%s.%s\n", current_fn, node->label_name);
         return -1;
+    case ND_GOTO_IND: {
+        int r = gen(node->lhs);
+        printf("  jmpq *%s\n", reg64[r]);
+        free_reg(r);
+        return -1;
+    }
     case ND_LABEL: {
         printf(".L.label.%s.%s:\n", current_fn, node->label_name);
         return gen(node->lhs);
+    }
+    case ND_LABEL_VAL: {
+        int r = alloc_reg();
+        printf("  leaq .L.label.%s.%s(%%rip), %s\n", current_fn, node->label_name, reg64[r]);
+        return r;
     }
     default:
         break;

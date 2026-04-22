@@ -39,6 +39,7 @@ static Node *current_switch;
 static Node *current_loop;
 static int static_local_counter;
 static LVar *current_fn_scope_locals;
+static char *parser_current_fn;
 static int current_block_depth;
 static bool suppress_fn_scope_update;
 
@@ -310,9 +311,24 @@ static TagScope *push_tag(char *name, Type *ty) {
 static Member *find_member(Type *ty, Token *tok) {
     if (ty->kind != TY_STRUCT && ty->kind != TY_UNION)
         error_tok(tok, "not a struct or union");
-    for (Member *mem = ty->members; mem; mem = mem->next)
+    for (Member *mem = ty->members; mem; mem = mem->next) {
+        if (!mem->name) {
+            // Anonymous struct/union: search inside recursively
+            if (mem->ty && (mem->ty->kind == TY_STRUCT || mem->ty->kind == TY_UNION)) {
+                Member *found = find_member(mem->ty, tok);
+                if (found) {
+                    // Return synthetic member with combined offset
+                    Member *syn = arena_alloc(sizeof(Member));
+                    *syn = *found;
+                    syn->offset += mem->offset;
+                    return syn;
+                }
+            }
+            continue;
+        }
         if (equal(tok, mem->name))
             return mem;
+    }
     return NULL;
 }
 
@@ -824,6 +840,28 @@ static Type *struct_or_union_specifier(Token **rest, Token *tok, bool is_union) 
         if (!base)
             error_tok(tok, "expected member type");
         if (equal(tok, ";")) {
+            // Anonymous struct/union member: struct { ... }; or union { ... };
+            if (base->kind == TY_STRUCT || base->kind == TY_UNION) {
+                bf_unit_size = 0;
+                Member *mem = arena_alloc(sizeof(Member));
+                mem->name = NULL;
+                mem->bit_offset = 0;
+                mem->bit_width = 0;
+                mem->ty = base;
+                if (is_union) {
+                    mem->offset = 0;
+                    if (max_size < base->size) max_size = base->size;
+                } else {
+                    int a = base->align;
+                    if (struct_pack > 0 && (struct_pack < a || a == 0)) a = struct_pack;
+                    offset = align_to(offset, a);
+                    mem->offset = offset;
+                    offset += base->size;
+                    bit_pos = offset * 8;
+                    if (max_align < a) max_align = a;
+                }
+                cur = cur->next = mem;
+            }
             tok = tok->next;
             continue;
         }
@@ -844,6 +882,33 @@ static Type *struct_or_union_specifier(Token **rest, Token *tok, bool is_union) 
                 bit_width = (int)w;
                 if (bit_width < 0 || bit_width > mem_ty->size * 8)
                     error_tok(tok, "bitfield width out of range");
+            }
+
+            // Anonymous struct/union member (no name, no bitfield width, aggregate type)
+            // e.g. "struct { u8 a, b; };" inside another struct/union
+            if (!name && bit_width == 0 && (mem_ty->kind == TY_STRUCT || mem_ty->kind == TY_UNION)) {
+                bf_unit_size = 0;
+                Member *mem = arena_alloc(sizeof(Member));
+                mem->name = NULL;
+                mem->bit_offset = 0;
+                mem->bit_width = 0;
+                mem->ty = mem_ty;
+                if (is_union) {
+                    mem->offset = 0;
+                    if (max_size < mem_ty->size) max_size = mem_ty->size;
+                } else {
+                    int a = mem_ty->align;
+                    if (struct_pack > 0 && (struct_pack < a || a == 0)) a = struct_pack;
+                    offset = align_to(offset, a);
+                    mem->offset = offset;
+                    offset += mem_ty->size;
+                    bit_pos = offset * 8;
+                    if (max_align < a) max_align = a;
+                }
+                cur = cur->next = mem;
+                if (!equal(tok, ",")) break;
+                tok = tok->next;
+                continue;
             }
 
             // Handle anonymous bitfield: "int : N" or "int : 0"
@@ -1187,6 +1252,16 @@ static bool read_global_label_initializer(Token **rest, Token *tok, char **label
         StrLit *s = new_str_lit(tok->str, tok->string_literal_prefix, 1);
         *label = format(".LC%d", s->id);
         *rest = tok->next;
+        return true;
+    }
+
+    // GCC label address: &&label
+    if (equal(tok, "&&") && tok->next && tok->next->kind == TK_IDENT) {
+        if (parser_current_fn)
+            *label = format(".L.label.%s.%s", parser_current_fn, tok->next->name);
+        else
+            *label = tok->next->name;
+        *rest = tok->next->next;
         return true;
     }
 
@@ -1777,17 +1852,52 @@ static Node *declaration(Token **rest, Token *tok) {
                             tok = tok->next;
                             Member *m = var->ty->members;
                             while (!equal(tok, "}")) {
-                                // Designated initializer: .member = value
+                                // Designated initializer: .member[.member]* = value
                                 if (equal(tok, ".") && tok->next && tok->next->kind == TK_IDENT) {
-                                    char *dname = tok->next->name;
-                                    tok = tok->next->next;
+                                    // Parse the chain of .member designators
+                                    Node *chain_lhs = lhs;
+                                    Type *chain_ty = var->ty;
+                                    Member *first_dm = NULL;
+                                    Member *last_dm = NULL;
+                                    bool chain_ok = true;
+                                    while (equal(tok, ".") && tok->next && tok->next->kind == TK_IDENT) {
+                                        char *dname = tok->next->name;
+                                        tok = tok->next->next;
+                                        Member *dm = chain_ty->members;
+                                        while (dm && (!dm->name || strcmp(dm->name, dname) != 0))
+                                            dm = dm->next;
+                                        if (!dm) {
+                                            chain_ok = false;
+                                            break;
+                                        }
+                                        if (!first_dm) first_dm = dm;
+                                        Node *mem_node = new_node(ND_MEMBER, tok);
+                                        mem_node->lhs = chain_lhs;
+                                        mem_node->member = dm;
+                                        chain_lhs = mem_node;
+                                        last_dm = dm;
+                                        chain_ty = dm->ty;
+                                    }
                                     tok = skip(tok, "=");
-                                    Member *dm = var->ty->members;
-                                    while (dm && (!dm->name || strcmp(dm->name, dname) != 0))
-                                        dm = dm->next;
-                                    if (dm) m = dm;
+                                    if (!chain_ok || !last_dm) {
+                                        tok = skip_initializer(tok);
+                                        if (equal(tok, ",")) tok = tok->next;
+                                        goto next_member_local;
+                                    }
+                                    // Deep chain: emit assignment directly and set m to next outer member
+                                    if (first_dm != last_dm) {
+                                        Node *rhs = assign(&tok, tok);
+                                        cur = cur->next = new_unary(ND_EXPR_STMT,
+                                                                    new_binary(ND_ASSIGN, chain_lhs, rhs, tok), tok);
+                                        m = first_dm ? first_dm->next : NULL;
+                                        if (equal(tok, ",")) tok = tok->next;
+                                        goto next_member_local;
+                                    }
+                                    // Single-level: fall through with m set
+                                    m = last_dm;
                                     if (!m) {
                                         tok = skip_initializer(tok);
+                                        if (equal(tok, ",")) tok = tok->next;
                                         goto next_member_local;
                                     }
                                 }
@@ -1801,16 +1911,19 @@ static Node *declaration(Token **rest, Token *tok) {
                                     if (dm) m = dm;
                                     if (!m) {
                                         tok = skip_initializer(tok);
+                                        if (equal(tok, ",")) tok = tok->next;
                                         goto next_member_local;
                                     }
                                 }
                                 if (!m) {
-                                    // Skip excess initializer values (e.g. for anonymous members not in list)
-                                    while (!equal(tok, "}") && tok->kind != TK_EOF) {
-                                        tok = skip_initializer(tok);
+                                    // Skip one excess value (non-designated), or let designator re-anchor
+                                    if (!equal(tok, ".") && !(tok->kind == TK_IDENT && tok->next && equal(tok->next, ":"))) {
+                                        if (!equal(tok, "}"))
+                                            tok = skip_initializer(tok);
                                         if (equal(tok, ",")) tok = tok->next;
                                     }
-                                    break;
+                                    if (equal(tok, "}")) break;
+                                    goto next_member_local;
                                 }
                                 if (m->ty && m->ty->kind == TY_ARRAY) {
                                     // Array member: initialize elements
@@ -2219,8 +2332,16 @@ static Node *stmt(Token **rest, Token *tok) {
     }
 
     if (equal(tok, "goto")) {
-        Node *node = new_node(ND_GOTO, tok);
         tok = tok->next;
+        if (equal(tok, "*")) {
+            // Computed goto: goto *expr;
+            Node *node = new_node(ND_GOTO_IND, tok);
+            tok = tok->next;
+            node->lhs = expr(&tok, tok);
+            *rest = skip(tok, ";");
+            return node;
+        }
+        Node *node = new_node(ND_GOTO, tok);
         if (tok->kind != TK_IDENT)
             error_tok(tok, "expected label name");
         node->label_name = tok->name;
@@ -2316,6 +2437,12 @@ static Node *primary(Token **rest, Token *tok) {
                 tok = tok->next;
             }
         }
+    } else if (equal(tok, "&&") && tok->next && tok->next->kind == TK_IDENT) {
+        // GCC label address: &&label
+        node = new_node(ND_LABEL_VAL, tok);
+        node->label_name = tok->next->name;
+        node->ty = pointer_to(ty_void);
+        tok = tok->next->next;
     } else if (tok->kind == TK_NUM) {
         node = new_num(tok->val, tok);
         tok = tok->next;
@@ -3105,6 +3232,7 @@ Program *parse(Token *tok) {
             pending_gotos = NULL;
             current_switch = NULL;
             current_loop = NULL;
+            parser_current_fn = name;
 
             tok = tok->next;
             LVar *params = parse_params(&tok, tok, &is_variadic);

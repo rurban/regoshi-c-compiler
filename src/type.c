@@ -308,8 +308,12 @@ static void add_type_internal(Node *node) {
     case ND_BREAK:
     case ND_CONTINUE:
     case ND_GOTO:
+    case ND_GOTO_IND:
     case ND_LABEL:
     case ND_NULL:
+        return;
+    case ND_LABEL_VAL:
+        // type is already set to void* in parser
         return;
     default:
         return;
