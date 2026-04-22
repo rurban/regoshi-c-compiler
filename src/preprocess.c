@@ -2,6 +2,12 @@
 #include <ctype.h>
 #include <stdlib.h>
 
+#ifdef _WIN32
+#define PATHSEP "\\"
+#else
+#define PATHSEP "/"
+#endif
+
 typedef struct Macro Macro;
 typedef struct OnceFile OnceFile;
 typedef struct CondIncl CondIncl;
@@ -120,7 +126,11 @@ static char *splice_lines(char *input) {
 static char *path_dirname(char *path) {
     char *last = path;
     for (char *p = path; *p; p++) {
+#ifdef _WIN32
         if (*p == '/' || *p == '\\')
+#else
+        if (*p == '/')
+#endif
             last = p + 1;
     }
     return pp_strndup(path, last - path);
@@ -129,7 +139,11 @@ static char *path_dirname(char *path) {
 static char *path_basename(char *path) {
     char *last = path;
     for (char *p = path; *p; p++) {
+#ifdef _WIN32
         if (*p == '/' || *p == '\\')
+#else
+        if (*p == '/')
+#endif
             last = p + 1;
     }
     return last;
@@ -138,7 +152,11 @@ static char *path_basename(char *path) {
 static char *path_join(char *dir, char *file) {
     if (!*dir)
         return str_intern(file, strlen(file));
-    return format("%s%s%s", dir, (dir[strlen(dir) - 1] == '/' || dir[strlen(dir) - 1] == '\\') ? "" : "\\", file);
+#ifdef _WIN32
+    return format("%s%s%s", dir, (dir[strlen(dir) - 1] == '/' || dir[strlen(dir) - 1] == '\\') ? "" : PATHSEP, file);
+#else
+    return format("%s%s%s", dir, (dir[strlen(dir) - 1] == '/') ? "" : PATHSEP, file);
+#endif
 }
 
 static bool file_exists(char *path) {
