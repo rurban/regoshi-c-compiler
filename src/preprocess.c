@@ -976,6 +976,8 @@ char *preprocess(char *filename, char *p) {
         define_macro("__has_include_next", false, NULL, 0, "1");
     if (!find_macro("__SIZE_TYPE__"))
         define_macro("__SIZE_TYPE__", false, NULL, 0, "unsigned long long");
+    if (!find_macro("__PTRDIFF_TYPE__"))
+        define_macro("__PTRDIFF_TYPE__", false, NULL, 0, "long long");
     if (!find_macro("__WCHAR_TYPE__"))
         define_macro("__WCHAR_TYPE__", false, NULL, 0,
 #ifdef _WIN32
