@@ -1470,6 +1470,7 @@ void codegen(Program *prog) {
         int param_xmm_index = 0;
 #endif
         int param_index = fn->ty->return_ty && (fn->ty->return_ty->kind == TY_STRUCT || fn->ty->return_ty->kind == TY_UNION) ? 1 : 0;
+        int stack_param_index = 0;
         for (LVar *var = fn->params; var; var = var->param_next) {
 #ifdef _WIN32
             if (param_index < max_param_regs) {
@@ -1490,6 +1491,15 @@ void codegen(Program *prog) {
                         printf("  movsd qword ptr [rbp-%d], %s\n", var->offset, param_xmm[param_xmm_index]);
                     }
                     param_xmm_index++;
+                } else {
+                    if (var->ty->size == 4) {
+                        printf("  movss xmm0, dword ptr [rbp+%d]\n", 16 + stack_param_index * 8);
+                        printf("  movss dword ptr [rbp-%d], xmm0\n", var->offset);
+                    } else {
+                        printf("  movsd xmm0, qword ptr [rbp+%d]\n", 16 + stack_param_index * 8);
+                        printf("  movsd qword ptr [rbp-%d], xmm0\n", var->offset);
+                    }
+                    stack_param_index++;
                 }
             } else if (param_index < max_param_regs) {
                 char *preg = var->ty->size == 1 ? param_regs8[param_index]
@@ -1511,6 +1521,27 @@ void codegen(Program *prog) {
                     printf("  mov [rbp-%d], %s\n", var->offset, preg);
                 }
                 param_index++;
+            } else {
+                if ((var->ty->kind == TY_STRUCT || var->ty->kind == TY_UNION) && var->ty->size > 8) {
+                    int c = ++rcc_label_count;
+                    printf("  mov rcx, %d\n", var->ty->size);
+                    printf(".L.pcopy.%d:\n", c);
+                    printf("  cmp rcx, 0\n");
+                    printf("  je .L.pcopy_end.%d\n", c);
+                    printf("  mov al, byte ptr [rbp+%d + rcx - 1]\n", 16 + stack_param_index * 8);
+                    printf("  mov byte ptr [rbp-%d + rcx - 1], al\n", var->offset);
+                    printf("  sub rcx, 1\n");
+                    printf("  jmp .L.pcopy.%d\n", c);
+                    printf(".L.pcopy_end.%d:\n", c);
+                } else {
+                    char *tmpreg = var->ty->size == 1 ? "al"
+                        : var->ty->size == 2 ? "ax"
+                        : var->ty->size <= 4 ? "eax"
+                        : "rax";
+                    printf("  mov %s, [rbp+%d]\n", tmpreg, 16 + stack_param_index * 8);
+                    printf("  mov [rbp-%d], %s\n", var->offset, tmpreg);
+                }
+                stack_param_index++;
             }
 #endif
         }
