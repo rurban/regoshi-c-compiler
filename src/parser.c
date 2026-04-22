@@ -1342,11 +1342,7 @@ static Node *declaration(Token **rest, Token *tok) {
         }
 
         if (attr.is_typedef) {
-            Typedef *td = arena_alloc(sizeof(Typedef));
-            td->name = name;
-            td->ty = ty;
-            td->next = typedefs;
-            typedefs = td;
+            add_typedef(name, ty);
         } else if (attr.is_static) {
             // Static local variable: create global storage with unique name
             char *asm_label = format(".Lstatic.%d", static_local_counter++);
@@ -2639,6 +2635,16 @@ Program *parse(Token *tok) {
             }
             fty->param_types = param_head.param_next;
 
+            // For typedefs like 'typedef int functype(int);', register the type
+            if (attr.is_typedef) {
+                add_typedef(name, fty);
+                if (equal(tok, ";")) {
+                    tok = tok->next;
+                    continue;
+                }
+                error_tok(tok, "expected ';' after typedef");
+            }
+
             // Register function symbol
             LVar *existing = find_global_name(name);
             if (!existing) {
@@ -2689,11 +2695,7 @@ Program *parse(Token *tok) {
 
         for (;;) {
             if (attr.is_typedef) {
-                Typedef *td = arena_alloc(sizeof(Typedef));
-                td->name = name;
-                td->ty = ty;
-                td->next = typedefs;
-                typedefs = td;
+                add_typedef(name, ty);
             } else {
                 if (equal(tok, "="))
                     ty = infer_array_type(ty, tok->next);
