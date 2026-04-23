@@ -27,6 +27,7 @@ KEFIR_EXE="$BENCHDIR/bench_kefir"
 SLIMCC_EXE="$BENCHDIR/bench_slimcc"
 
 RUNS=3
+REPORT="$BENCHDIR/bench_report.md"
 
 cleanup() {
 	rm -f "$RCC_EXE" "$TCC_EXE" "$GCC_EXE" "$GCC_O2_EXE" "$CLANG_EXE" "$CLANG_O2_EXE"
@@ -135,6 +136,23 @@ for _c in $list_c; do
 	# shellcheck disable=SC2154
 	printf "%-25s %8s ms %8s ms %8s ms\n" "$_c" "$_cm" "$_em" "$_tm"
 done
+
+# Write markdown report
+{
+	printf "# RCC Benchmark Results\n\n"
+	printf "_Generated: %s_\n\n" "$(date '+%B %Y')"
+	printf "| %-8s | %12s | %12s | %10s |\n" \
+		"Compiler" "Compile (ms)" "Execute (ms)" "Total (ms)"
+	printf "| :------- | -----------: | -----------: | ---------: |\n"
+	for _c in $list_c; do
+		eval "_cm=\${${_c}_COMPILE:-}"
+		eval "_em=\${${_c}_EXEC:-}"
+		eval "_tm=\${${_c}_TOTAL:-}"
+		[ -z "$_cm" ] && continue
+		printf "| %-8s | %12s | %12s | %10s |\n" "$_c" "$_cm" "$_em" "$_tm"
+	done
+} > "$REPORT"
+printf "Report: %s\n" "$REPORT"
 
 echo ""
 echo "ALL DONE"

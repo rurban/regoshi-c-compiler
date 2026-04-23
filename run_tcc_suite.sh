@@ -7,11 +7,11 @@
 # pass as long as the program exits successfully.
 
 set -u
-
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+cd "$(dirname "$0")" || exit
+SCRIPT_DIR=.
 RCC="${1:-}"
 TEST_DIR="${2:-$SCRIPT_DIR/tinycc/tests/tests2}"
-REPORT_FILE="$SCRIPT_DIR/tcc_test_report.md"
+REPORT_FILE=tcc_test_linux.md
 
 # Locate rcc binary
 if [ -z "$RCC" ]; then
@@ -62,6 +62,10 @@ total=0
 passed=0
 failed=0
 report_rows=""
+
+add_row() {
+	report_rows="${report_rows}$(printf '| %-40s | %-12s | %-36s |' "$1" "$2" "$3")\n"
+}
 
 # Helper: tests with special runtime arguments
 test_args() {
@@ -156,13 +160,16 @@ while IFS= read -r src; do
 		continue
 	fi
 
+	fixed_up=
 	# Apply local fixups for tinycc tests2 expect files.
 	# If test/tinycc-<base>.expect exists and differs from the upstream
 	# expect, overwrite the upstream copy. We fixed these cases; tcc hasn't.
 	fixup="$SCRIPT_DIR/test/tinycc-$base.expect"
 	upstream_expect="$TEST_DIR/$base.expect"
 	if [ -f "$fixup" ] && ! cmp -s "$fixup" "$upstream_expect" 2>/dev/null; then
+		cp "$upstream_expect" "$upstream_expect".orig
 		cp "$fixup" "$upstream_expect"
+		fixed_up=1
 	fi
 
 	total=$((total + 1))
@@ -174,7 +181,7 @@ while IFS= read -r src; do
 		# shellcheck disable=SC2059
 		printf "${RED}COMPILE FAIL${RESET}\n"
 		failed=$((failed + 1))
-		report_rows="${report_rows}| $base | COMPILE_FAIL | rcc returned non-zero |\n"
+		add_row "$base" "COMPILE_FAIL" "rcc returned non-zero"
 		print_change "$base" "COMPILE_FAIL"
 		continue
 	fi
@@ -182,7 +189,7 @@ while IFS= read -r src; do
 		# shellcheck disable=SC2059
 		printf "${RED}NO EXE PRODUCED${RESET}\n"
 		failed=$((failed + 1))
-		report_rows="${report_rows}| $base | COMPILE_FAIL | executable missing |\n"
+		add_row "$base" "COMPILE_FAIL" "executable missing"
 		print_change "$base" "COMPILE_FAIL"
 		continue
 	fi
@@ -195,7 +202,7 @@ while IFS= read -r src; do
 			# shellcheck disable=SC2059
 			printf "${RED}EXEC FAIL${RESET}\n"
 			failed=$((failed + 1))
-			report_rows="${report_rows}| $base | EXEC_FAIL | non-zero exit |\n"
+			add_row "$base" "EXEC_FAIL" "non-zero exit"
 			print_change "$base" "EXEC_FAIL"
 			rm -f "$TMP_EXE"
 			continue
@@ -205,7 +212,7 @@ while IFS= read -r src; do
 			# shellcheck disable=SC2059
 			printf "${RED}EXEC FAIL${RESET}\n"
 			failed=$((failed + 1))
-			report_rows="${report_rows}| $base | EXEC_FAIL | non-zero exit |\n"
+			add_row "$base" "EXEC_FAIL" "non-zero exit"
 			print_change "$base" "EXEC_FAIL"
 			rm -f "$TMP_EXE"
 			continue
@@ -220,17 +227,17 @@ while IFS= read -r src; do
 		expect_file="$fixup_expect"
 	fi
 	if [ -f "$expect_file" ]; then
-		if diff -Nbu "$TMP_OUT" "$expect_file"; then
+		if diff -Nbu "$expect_file" "$TMP_OUT"; then
 			# shellcheck disable=SC2059
 			printf "${GREEN}PASS${RESET}\n"
 			passed=$((passed + 1))
-			report_rows="${report_rows}| $base | PASS | Output matches |\n"
+			add_row "$base" "PASS" "Output matches"
 			print_change "$base" "PASS"
 		else
 			# shellcheck disable=SC2059
 			printf "${YELLOW}MISMATCH${RESET}\n"
 			failed=$((failed + 1))
-			report_rows="${report_rows}| $base | MISMATCH | Output does not match .expect |\n"
+			add_row "$base" "MISMATCH" "Output does not match .expect"
 			print_change "$base" "MISMATCH"
 			cp "$TMP_OUT" "test/$base.out"
 		fi
@@ -238,9 +245,12 @@ while IFS= read -r src; do
 		# shellcheck disable=SC2059
 		printf "${GRAY}PASS (no expect)${RESET}\n"
 		passed=$((passed + 1))
-		report_rows="${report_rows}| $base | PASS | Executed successfully (no .expect) |\n"
+		add_row "$base" "PASS" "Executed successfully (no .expect)"
 		print_change "$base" "PASS"
 	fi
+        if [ -n "$fixed_up" ]; then
+	    mv "$upstream_expect".orig "$upstream_expect"
+        fi
 done <<EOF
 $(printf '%s\n' "$TEST_DIR"/*.c | sort -V)
 EOF
@@ -270,14 +280,14 @@ if [ -d "$UNIT_TEST_DIR" ]; then
 				# shellcheck disable=SC2059
 				printf "${RED}SHOULD FAIL (compiled ok)${RESET}\n"
 				failed=$((failed + 1))
-				report_rows="${report_rows}| $base | FAIL | expected compile error but succeeded |\n"
+				add_row "$base" "FAIL" "expected compile error but succeeded"
 				print_change "$base" "FAIL"
 				rm -f "$TMP_EXE"
 			else
 				# shellcheck disable=SC2059
 				printf "${GREEN}PASS (expected compile error)${RESET}\n"
 				passed=$((passed + 1))
-				report_rows="${report_rows}| $base | PASS | compile error as expected |\n"
+				add_row "$base" "PASS" "compile error as expected"
 				print_change "$base" "PASS"
 			fi
 			continue
@@ -287,7 +297,7 @@ if [ -d "$UNIT_TEST_DIR" ]; then
 			# shellcheck disable=SC2059
 			printf "${RED}COMPILE FAIL${RESET}\n"
 			failed=$((failed + 1))
-			report_rows="${report_rows}| $base | COMPILE_FAIL | rcc returned non-zero |\n"
+			add_row "$base" "COMPILE_FAIL" "rcc returned non-zero"
 			print_change "$base" "COMPILE_FAIL"
 			continue
 		fi
@@ -295,7 +305,7 @@ if [ -d "$UNIT_TEST_DIR" ]; then
 			# shellcheck disable=SC2059
 			printf "${RED}NO EXE PRODUCED${RESET}\n"
 			failed=$((failed + 1))
-			report_rows="${report_rows}| $base | COMPILE_FAIL | executable missing |\n"
+			add_row "$base" "COMPILE_FAIL" "executable missing"
 			print_change "$base" "COMPILE_FAIL"
 			continue
 		fi
@@ -307,7 +317,7 @@ if [ -d "$UNIT_TEST_DIR" ]; then
 		# shellcheck disable=SC2059
 		printf "${GREEN}PASS${RESET}\n"
 		passed=$((passed + 1))
-		report_rows="${report_rows}| $base | PASS | exit=$exit_code |\n"
+		add_row "$base" "PASS" "exit=$exit_code"
 		print_change "$base" "PASS"
 	done <<EOF
 $(printf '%s\n' "$UNIT_TEST_DIR"/test_*.c | sort -V)
@@ -341,15 +351,15 @@ fi
 # Markdown report
 {
 	printf '# TCC Test Suite Report for RCC\n'
-	printf 'Generated: %s\n\n' "$(date)"
+	printf 'Generated: %s\n\n' "$(date '+%B %Y')"
 	printf '## Summary\n'
-	printf -- ' - **Total**: %d\n' "$total"
-	printf -- ' - **Passed**: %d\n' "$passed"
-	printf -- ' - **Failed**: %d\n' "$failed"
+	printf -- ' - **Total**:     %d\n' "$total"
+	printf -- ' - **Passed**:    %d\n' "$passed"
+	printf -- ' - **Failed**:    %d\n' "$failed"
 	printf -- ' - **Pass Rate**: %d%%\n\n' "$pct"
 	printf '## Detailed Results\n'
-	printf '| Test | Status | Message |\n'
-	printf '| --- | --- | --- |\n'
+	printf '| %-40s | %-12s | %-36s |\n' "Test" "Status" "Message"
+	printf '|:-----------------------------------------|:-------------|:-------------------------------------|\n'
 	printf '%b' "$report_rows"
 } >"$REPORT_FILE"
 

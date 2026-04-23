@@ -56,3 +56,12 @@ jobs:
       - name: Run benchmarks
         if: matrix.os != 'macos-latest'
         run: make bench
+
+      - name: Upload Windows reports
+        if: matrix.os == 'windows-latest'
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-reports
+          path: |
+            bench/bench_report.md
+            tcc_test_mingw.md

@@ -8,7 +8,7 @@ $TestDir = if (Test-Path (Join-Path $ScriptDir "tinycc\tests\tests2")) {
 } else {
     Join-Path $ScriptDir "tinycc\tests\tests2"
 }
-$ReportFile = Join-Path $ScriptDir "tcc_test_report.md"
+$ReportFile = Join-Path $ScriptDir "tcc_test_mingw.md"
 
 $RCC = $null
 @("rcc.exe", "rcc.exe", "rcc") | ForEach-Object {
@@ -183,7 +183,7 @@ $report | Out-File $ReportFile -Encoding utf8
 Write-Host "`nTest complete. Summary: $Passed Passed, $Failed Failed." -ForegroundColor Cyan
 Write-Host "Full report saved to $ReportFile"
 
-if ($Passed -ge 70) {
+if ($Passed -ge 77) {
     exit 0
 } else {
     exit 1
