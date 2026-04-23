@@ -3,9 +3,9 @@ Generated: April 2026
 
 ## Summary
  - **Total**:     139
- - **Passed**:    116
- - **Failed**:    23
- - **Pass Rate**: 83%
+ - **Passed**:    115
+ - **Failed**:    24
+ - **Pass Rate**: 82%
 
 ## Detailed Results
 | Test                                     | Status       | Message                              |
@@ -85,13 +85,13 @@ Generated: April 2026
 | 87_dead_code                             | PASS         | Output matches                       |
 | 88_codeopt                               | PASS         | Output matches                       |
 | 89_nocode_wanted                         | PASS         | Output matches                       |
-| 90_struct-init                           | EXEC_FAIL    | non-zero exit                        |
+| 90_struct-init                           | PASS         | Output matches                       |
 | 91_ptr_longlong_arith32                  | PASS         | Output matches                       |
-| 92_enum_bitfield                         | PASS         | Output matches                       |
+| 92_enum_bitfield                         | COMPILE_FAIL | rcc returned non-zero                |
 | 93_integer_promotion                     | PASS         | Output matches                       |
 | 94_generic                               | COMPILE_FAIL | rcc returned non-zero                |
 | 95_bitfields                             | PASS         | Output matches                       |
-| 97_utf8_string_literal                   | PASS         | Output matches                       |
+| 97_utf8_string_literal                   | MISMATCH     | Output does not match .expect        |
 | 98_al_ax_extend                          | COMPILE_FAIL | rcc returned non-zero                |
 | 99_fastcall                              | COMPILE_FAIL | rcc returned non-zero                |
 | 100_c99array-decls                       | PASS         | Output matches                       |
@@ -113,7 +113,7 @@ Generated: April 2026
 | 125_atomic_misc                          | COMPILE_FAIL | executable missing                   |
 | 127_asm_goto                             | COMPILE_FAIL | rcc returned non-zero                |
 | 128_run_atexit                           | COMPILE_FAIL | executable missing                   |
-| 129_scopes                               | COMPILE_FAIL | rcc returned non-zero                |
+| 129_scopes                               | MISMATCH     | Output does not match .expect        |
 | 130_large_argument                       | PASS         | Output matches                       |
 | 131_return_struct_in_reg                 | PASS         | Output matches                       |
 | 132_bound_test                           | PASS         | Output matches                       |

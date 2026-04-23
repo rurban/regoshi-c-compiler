@@ -4,6 +4,7 @@
 static FILE *cg_stream;
 static Function *current_fn_def;
 static Function *all_funcs;
+static StrLit *all_strs;
 static void cg_emit(const char *fmt, ...) {
     va_list ap;
     va_start(ap, fmt);
@@ -606,6 +607,41 @@ static int gen(Node *node) {
                 gen_funcall(node->rhs, dst);
                 return dst;
             }
+            // String literal → char array: limit copy to actual string size, zero-fill rest
+            if (node->rhs->kind == ND_STR && node->lhs->ty->kind == TY_ARRAY) {
+                src = gen(node->rhs);  // loads address of string
+                int str_len = 0;
+                for (StrLit *s = all_strs; s; s = s->next)
+                    if (s->id == node->rhs->str_id) { str_len = s->len + s->elem_size; break; }
+                int lhs_size = node->lhs->ty->size;
+                int copy_len = str_len < lhs_size ? str_len : lhs_size;
+                if (copy_len > 0) {
+                    printf("  mov rcx, %d\n", copy_len);
+                    printf(".L.copy.%d:\n", c);
+                    printf("  cmp rcx, 0\n");
+                    printf("  je .L.copy_end.%d\n", c);
+                    printf("  mov al, byte ptr [%s + rcx - 1]\n", reg64[src]);
+                    printf("  mov byte ptr [%s + rcx - 1], al\n", reg64[dst]);
+                    printf("  sub rcx, 1\n");
+                    printf("  jmp .L.copy.%d\n", c);
+                    printf(".L.copy_end.%d:\n", c);
+                }
+                if (copy_len < lhs_size) {
+                    // zero-fill the rest
+                    printf("  mov rcx, %d\n", lhs_size - copy_len);
+                    int c2 = ++rcc_label_count;
+                    printf(".L.copy.%d:\n", c2);
+                    printf("  cmp rcx, 0\n");
+                    printf("  je .L.copy_end.%d\n", c2);
+                    printf("  mov byte ptr [%s + %d + rcx - 1], 0\n", reg64[dst], copy_len);
+                    printf("  sub rcx, 1\n");
+                    printf("  jmp .L.copy.%d\n", c2);
+                    printf(".L.copy_end.%d:\n", c2);
+                }
+                free_reg(src);
+                return dst;
+            }
+
             if (node->rhs->ty && (node->rhs->ty->kind == TY_STRUCT || node->rhs->ty->kind == TY_UNION || node->rhs->ty->kind == TY_ARRAY))
                 src = gen_addr(node->rhs);
             else
@@ -787,6 +823,21 @@ static int gen(Node *node) {
         printf("  sete al\n");
         printf("  movzx %s, al\n", reg(r, 4));
         return r;
+    }
+    case ND_ZERO_INIT: {
+        // Zero-fill a local variable's stack memory
+        LVar *var = node->lhs->var;
+        if (!var || !var->is_local || var->ty->size <= 0) return -1;
+        int c = ++rcc_label_count;
+        printf("  mov rcx, %d\n", var->ty->size);
+        printf(".L.zero.%d:\n", c);
+        printf("  cmp rcx, 0\n");
+        printf("  je .L.zero_end.%d\n", c);
+        printf("  mov byte ptr [rbp - %d + rcx - 1], 0\n", var->offset);
+        printf("  sub rcx, 1\n");
+        printf("  jmp .L.zero.%d\n", c);
+        printf(".L.zero_end.%d:\n", c);
+        return -1;
     }
     case ND_POST_INC:
     case ND_POST_DEC: {
@@ -1432,6 +1483,7 @@ static int reg_live_after(char **lines, int nlines, int after, int pid) {
 void codegen(Program *prog) {
     cg_stream = stdout;
     all_funcs = prog->funcs;
+    all_strs = prog->strs;
     // Assembly header
     printf(".intel_syntax noprefix\n");
 #ifndef _WIN32

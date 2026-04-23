@@ -311,6 +311,7 @@ static void add_type_internal(Node *node) {
     case ND_GOTO_IND:
     case ND_LABEL:
     case ND_NULL:
+    case ND_ZERO_INIT:
         return;
     case ND_LABEL_VAL:
         // type is already set to void* in parser

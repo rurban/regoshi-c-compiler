@@ -226,6 +226,7 @@ typedef enum {
     ND_FNUM, // Float literal
     ND_NEG, // Unary minus
     ND_NOT, // Logical not
+    ND_ZERO_INIT, // Zero-fill a local variable (lhs=ND_LVAR)
 } NodeKind;
 
 typedef struct Node Node;

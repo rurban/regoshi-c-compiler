@@ -1257,6 +1257,13 @@ static void append_reloc(LVar *var, int offset, char *label, int addend) {
         return;
     }
 
+    // Replace head if offset matches
+    if (var->relocs->offset == offset) {
+        rel->next = var->relocs->next;
+        var->relocs = rel;
+        return;
+    }
+
     Reloc *cur = var->relocs;
     while (cur->next && cur->next->offset < offset)
         cur = cur->next;
@@ -1392,7 +1399,7 @@ static int count_array_initializer(Token **rest, Token *tok, Type *elem_ty) {
     int idx = 0;
     tok = skip(tok, "{");
     while (!equal(tok, "}")) {
-        int sidx = idx, eidx = idx;
+        int eidx = idx;
         if (equal(tok, "[")) {
             tok = tok->next; // skip [
             long long aidx = peek_const_expr(tok);
@@ -1407,7 +1414,6 @@ static int count_array_initializer(Token **rest, Token *tok, Type *elem_ty) {
             if (eidx > max_idx) max_idx = eidx;
             tok = skip(tok, "]");
             tok = skip(tok, "=");
-            sidx = (int)aidx;
         }
         if (elem_ty && (elem_ty->kind == TY_STRUCT || elem_ty->kind == TY_UNION) && !equal(tok, "{")) {
             // Heuristic: if the first token is an identifier of struct/union type,
@@ -1461,63 +1467,6 @@ static Type *infer_array_type(Type *ty, Token *tok) {
     return ty;
 }
 
-static Node *new_array_elem_lvalue(LVar *var, int idx, Token *tok) {
-    Node *base = new_var_node(var, tok);
-    Node *offset = new_num(idx, tok);
-    return new_unary(ND_DEREF, new_binary(ND_ADD, base, offset, tok), tok);
-}
-
-static Node *local_array_initializer(Token **rest, Token *tok, LVar *var) {
-    Node head = {};
-    Node *cur = &head;
-    int idx = 0;
-    tok = skip(tok, "{");
-    while (!equal(tok, "}")) {
-        long long aidx = idx, aeidx = idx;
-        if (equal(tok, "[")) {
-            tok = tok->next;
-            Node *ni = assign(&tok, tok);
-            add_type(ni);
-            eval_const_expr(ni, &aidx);
-            aeidx = aidx;
-            if (equal(tok, "...")) {
-                tok = tok->next;
-                Node *ni2 = assign(&tok, tok);
-                add_type(ni2);
-                eval_const_expr(ni2, &aeidx);
-            }
-            tok = skip(tok, "]");
-            tok = skip(tok, "=");
-            idx = (int)aidx;
-        }
-        if (equal(tok, "{")) {
-            tok = skip_initializer(tok);
-            idx = (int)aeidx + 1;
-        } else {
-            Token *val_start = tok;
-            Token *after_val = tok;
-            assign(&after_val, after_val); // advance past value without building node
-            for (long long ai = aidx; ai <= aeidx; ai++) {
-                Token *tmp = val_start;
-                Node *rhs = assign(&tmp, tmp);
-                Node *lhs = new_array_elem_lvalue(var, (int)ai, val_start);
-                cur = cur->next = new_unary(ND_EXPR_STMT, new_binary(ND_ASSIGN, lhs, rhs, val_start), val_start);
-            }
-            tok = after_val;
-            idx = (int)aeidx + 1;
-        }
-        if (equal(tok, ",")) {
-            tok = tok->next;
-            if (equal(tok, "}"))
-                break;
-            continue;
-        }
-        break;
-    }
-    *rest = skip(tok, "}");
-    return head.next;
-}
-
 // Detect compound literal like (type){...} or ((type){...}) and return
 // a pointer to the { token, or NULL if not a compound literal.
 static Token *find_compound_literal_start(Token *tok) {
@@ -1536,8 +1485,24 @@ static Token *find_compound_literal_start(Token *tok) {
     return NULL;
 }
 
+static void remove_reloc(LVar *var, int offset) {
+    if (!var->relocs) return;
+    if (var->relocs->offset == offset) {
+        var->relocs = var->relocs->next;
+        return;
+    }
+    for (Reloc *cur = var->relocs; cur->next; cur = cur->next) {
+        if (cur->next->offset == offset) {
+            cur->next = cur->next->next;
+            return;
+        }
+    }
+}
+
 static void write_scalar_bytes(LVar *var, int offset, int size, int64_t val) {
     if (offset < 0 || offset + size > var->init_size) return;
+    // Remove any reloc at this offset (scalar value overrides pointer reloc)
+    remove_reloc(var, offset);
     if (size == 1) {
         var->init_data[offset] = (char)val;
         return;
@@ -1875,7 +1840,6 @@ static Token *local_init_one(Token *tok, Node *lhs, Type *ty, Node **cur) {
 
     // Array with braces
     if (ty->kind == TY_ARRAY && equal(tok, "{")) {
-        int elem_size = ty->base->size;
         int len = array_len(ty);
         tok = skip(tok, "{");
         int idx = 0;
@@ -1900,12 +1864,33 @@ static Token *local_init_one(Token *tok, Node *lhs, Type *ty, Node **cur) {
                 idx = sidx;
             }
             Token *val_start = tok;
-            for (int i = sidx; i <= eidx; i++) {
-                if (len == 0 || i < len) {
-                    Node *elem_lhs = new_array_elem_lvalue_node(lhs, i, tok);
-                    tok = local_init_one(val_start, elem_lhs, ty->base, cur);
-                } else {
-                    tok = skip_initializer(val_start);
+            if (sidx != eidx && !equal(tok, "{")) {
+                // Range with scalar/non-brace value: evaluate once into a temp
+                Token *after_val = tok;
+                Node *rhs = assign(&after_val, after_val);
+                add_type(rhs);
+                LVar *tmp = new_var("", rhs->ty, true);
+                Node *tmp_assign = new_binary(ND_ASSIGN, new_var_node(tmp, tok), rhs, tok);
+                add_type(tmp_assign);
+                *cur = (*cur)->next = new_unary(ND_EXPR_STMT, tmp_assign, tok);
+                for (int i = sidx; i <= eidx; i++) {
+                    if (len == 0 || i < len) {
+                        Node *elem_lhs = new_array_elem_lvalue_node(lhs, i, tok);
+                        Node *assign_node = new_binary(ND_ASSIGN, elem_lhs,
+                                                        new_var_node(tmp, tok), tok);
+                        add_type(assign_node);
+                        *cur = (*cur)->next = new_unary(ND_EXPR_STMT, assign_node, tok);
+                    }
+                }
+                tok = after_val;
+            } else {
+                for (int i = sidx; i <= eidx; i++) {
+                    if (len == 0 || i < len) {
+                        Node *elem_lhs = new_array_elem_lvalue_node(lhs, i, tok);
+                        tok = local_init_one(val_start, elem_lhs, ty->base, cur);
+                    } else {
+                        tok = skip_initializer(val_start);
+                    }
                 }
             }
             idx = eidx + 1;
@@ -2123,6 +2108,14 @@ static Node *declaration(Token **rest, Token *tok) {
                 Token *start = tok;
                 tok = tok->next;
                 Node *lhs = new_var_node(var, start);
+                // Zero-initialize aggregate locals before specific initializers
+                // so unspecified elements are 0 as required by C.
+                if ((var->ty->kind == TY_STRUCT || var->ty->kind == TY_UNION ||
+                     var->ty->kind == TY_ARRAY) && var->ty->size > 0) {
+                    Node *zinit = new_node(ND_ZERO_INIT, start);
+                    zinit->lhs = new_var_node(var, start);
+                    cur = cur->next = new_unary(ND_EXPR_STMT, zinit, start);
+                }
                 tok = local_init_one(tok, lhs, var->ty, &cur);
             }
         }
@@ -2422,6 +2415,16 @@ static Node *primary(Token **rest, Token *tok) {
             tok = skip(tok, ")");
         }
     } else if (tok->kind == TK_IDENT) {
+        // __FUNCTION__, __func__, __PRETTY_FUNCTION__ → current function name string
+        if (equal(tok, "__FUNCTION__") || equal(tok, "__func__") || equal(tok, "__PRETTY_FUNCTION__")) {
+            const char *fn = parser_current_fn ? parser_current_fn : "";
+            node = new_node(ND_STR, tok);
+            node->ty = array_of(ty_char, strlen(fn) + 1);
+            StrLit *s = new_str_lit((char*)fn, strlen(fn), 0, 1);
+            node->str_id = s->id;
+            *rest = tok->next;
+            return node;
+        }
         if (equal(tok->next, "(")) {
             node = new_node(ND_FUNCALL, tok);
             LVar *var = find_var(tok);

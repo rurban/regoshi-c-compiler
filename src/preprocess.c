@@ -609,8 +609,10 @@ static char *expand_text(char *text, char *filename, unsigned line_no, int depth
             sb_puts(&sb, format("%d", pp_counter++));
             continue;
         }
-        if (strcmp(name, "__FUNCTION__") == 0 || strcmp(name, "__func__") == 0) {
-            sb_puts(&sb, quote_string("function"));
+        if (strcmp(name, "__FUNCTION__") == 0 || strcmp(name, "__func__") == 0 ||
+            strcmp(name, "__PRETTY_FUNCTION__") == 0) {
+            // Leave these as identifiers; the parser resolves them to the function name
+            sb_puts(&sb, name);
             continue;
         }
         if (strcmp(name, "__has_include") == 0 || strcmp(name, "__has_include_next") == 0) {
