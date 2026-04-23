@@ -371,8 +371,23 @@ static int add_float_literal(double val, int size) {
     return fl->id;
 }
 
+// Names that GAS treats as keywords in Intel syntax (segment registers and
+// expression operators).  Global symbols with these names need a safe alias.
+static bool is_asm_reserved(const char *name) {
+    static const char *kw[] = {
+        "cs", "ds", "es", "fs", "gs", "ss",
+        "and", "or", "not", "xor", "shl", "shr", "mod",
+        "eq", "ne", "lt", "le", "ge", "gt",
+        NULL};
+    for (int i = 0; kw[i]; i++)
+        if (strcmp(name, kw[i]) == 0) return true;
+    return false;
+}
+
 static char *var_label(LVar *var) {
-    return var->asm_name ? var->asm_name : var->name;
+    if (var->asm_name) return var->asm_name;
+    if (is_asm_reserved(var->name)) return format(".L_rcc_%s", var->name);
+    return var->name;
 }
 
 static char *reg(int r, int size) {
@@ -1174,7 +1189,7 @@ static int gen(Node *node) {
         return -1;
     case ND_GOTO_IND: {
         int r = gen(node->lhs);
-        printf("  jmpq *%s\n", reg64[r]);
+        printf("  jmp %s\n", reg64[r]);
         free_reg(r);
         return -1;
     }
@@ -1421,11 +1436,15 @@ void codegen(Program *prog) {
             if (var->is_extern)
                 continue;
             char *label = var->asm_name ? var->asm_name : var->name;
+            bool reserved = !var->asm_name && is_asm_reserved(var->name);
+            char *safe_label = reserved ? format(".L_rcc_%s", var->name) : label;
             if (var->ty->align > 1)
                 printf("  .balign %d\n", var->ty->align);
             if (!var->is_static)
                 printf(".globl %s\n", label);
-            printf("%s:\n", label);
+            printf("%s:\n", safe_label);
+            if (reserved)
+                printf(".set %s, %s\n", label, safe_label);
             if (var->init_data || var->relocs) {
                 int pos = 0;
                 for (Reloc *rel = var->relocs; rel; rel = rel->next) {

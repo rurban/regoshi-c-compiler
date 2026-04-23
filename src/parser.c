@@ -1955,9 +1955,8 @@ static Node *declaration(Token **rest, Token *tok) {
                                                     Node *member = new_node(ND_MEMBER, tok);
                                                     member->lhs = lhs;
                                                     member->member = m;
-                                                    Node *member_addr = new_unary(ND_ADDR, member, tok);
                                                     Node *ao = new_num(ai, tok);
-                                                    Node *elem_ptr = new_binary(ND_ADD, member_addr, ao, tok);
+                                                    Node *elem_ptr = new_binary(ND_ADD, member, ao, tok);
                                                     Node *elem_lhs = new_unary(ND_DEREF, elem_ptr, tok);
                                                     cur = cur->next = new_unary(ND_EXPR_STMT,
                                                                                 new_binary(ND_ASSIGN, elem_lhs, rhs, tok), tok);
@@ -1978,9 +1977,8 @@ static Node *declaration(Token **rest, Token *tok) {
                                             Node *member = new_node(ND_MEMBER, tok);
                                             member->lhs = lhs;
                                             member->member = m;
-                                            Node *member_addr = new_unary(ND_ADDR, member, tok);
                                             Node *offset = new_num(idx, tok);
-                                            Node *elem_ptr = new_binary(ND_ADD, member_addr, offset, tok);
+                                            Node *elem_ptr = new_binary(ND_ADD, member, offset, tok);
                                             Node *elem_lhs = new_unary(ND_DEREF, elem_ptr, tok);
                                             Node *rhs = assign(&tok, tok);
                                             cur = cur->next = new_unary(ND_EXPR_STMT,
@@ -2025,9 +2023,8 @@ static Node *declaration(Token **rest, Token *tok) {
                                                         member->lhs->lhs = lhs;
                                                         member->lhs->member = m;
                                                         member->member = sm;
-                                                        Node *member_addr = new_unary(ND_ADDR, member, tok);
                                                         Node *offset = new_num(idx, tok);
-                                                        Node *elem_ptr = new_binary(ND_ADD, member_addr, offset, tok);
+                                                        Node *elem_ptr = new_binary(ND_ADD, member, offset, tok);
                                                         Node *elem_lhs = new_unary(ND_DEREF, elem_ptr, tok);
                                                         Node *elem_rhs = assign(&tok, tok);
                                                         cur = cur->next = new_unary(ND_EXPR_STMT,
@@ -2048,9 +2045,8 @@ static Node *declaration(Token **rest, Token *tok) {
                                                         member->lhs->lhs = lhs;
                                                         member->lhs->member = m;
                                                         member->member = sm;
-                                                        Node *member_addr = new_unary(ND_ADDR, member, tok);
                                                         Node *offset = new_num(idx, tok);
-                                                        Node *elem_ptr = new_binary(ND_ADD, member_addr, offset, tok);
+                                                        Node *elem_ptr = new_binary(ND_ADD, member, offset, tok);
                                                         Node *elem_lhs = new_unary(ND_DEREF, elem_ptr, tok);
                                                         Node *elem_rhs = assign(&tok, tok);
                                                         cur = cur->next = new_unary(ND_EXPR_STMT,

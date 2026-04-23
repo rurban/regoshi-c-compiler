@@ -85,7 +85,7 @@ Generated: April 2026
 | 87_dead_code                             | PASS         | Output matches                       |
 | 88_codeopt                               | PASS         | Output matches                       |
 | 89_nocode_wanted                         | PASS         | Output matches                       |
-| 90_struct-init                           | COMPILE_FAIL | executable missing                   |
+| 90_struct-init                           | EXEC_FAIL    | non-zero exit                        |
 | 91_ptr_longlong_arith32                  | PASS         | Output matches                       |
 | 92_enum_bitfield                         | MISMATCH     | Output does not match .expect        |
 | 93_integer_promotion                     | PASS         | Output matches                       |
