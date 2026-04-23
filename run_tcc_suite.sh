@@ -201,7 +201,7 @@ while IFS= read -r src; do
 			failed=$((failed + 1))
 			report_rows="${report_rows}| $base | MISMATCH | Output does not match .expect |\n"
 			print_change "$base" "MISMATCH"
-			cp "$TMP_OUT" "$TEST_DIR/$base.out"
+			cp "$TMP_OUT" "test/$base.out"
 		fi
 	else
 		# shellcheck disable=SC2059

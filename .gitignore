@@ -1,3 +1,5 @@
+TAGS
+.gdbinit
 *.exe
 a.out
 *.o
@@ -15,7 +17,8 @@ fred.txt
 err.log
 tmp*.c
 101_cleanup.md
-tcc_tests
+/tcc_tests
 tcc_test_report.md
 amazon_bug_bounty/
-tinycc/tests/tests2/03_struct.expect
+tcc_test_*.md
+test/*.out
