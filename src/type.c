@@ -104,6 +104,19 @@ static Type *usual_arith_type(Type *lhs, Type *rhs) {
     return get_integer_type(size, lhs->is_unsigned || rhs->is_unsigned);
 }
 
+static void add_type_internal(Node *node);
+
+static void insert_arith_cast(Node **operand, Type *to) {
+    Node *cast = arena_alloc(sizeof(Node));
+    cast->kind = ND_CAST;
+    cast->lhs = *operand;
+    cast->ty = to;
+    cast->tok = (*operand)->tok;
+    *operand = cast;
+    add_type_internal(cast->lhs);
+    add_type_internal(cast);
+}
+
 static void add_type_internal(Node *node) {
     if (!node || node->ty) return;
 
@@ -129,6 +142,12 @@ static void add_type_internal(Node *node) {
         Type *rty = node->rhs->ty;
         if (is_number(lty) && is_number(rty)) {
             node->ty = usual_arith_type(lty, rty);
+            if (is_flonum(node->ty)) {
+                if (is_integer(lty))
+                    insert_arith_cast(&node->lhs, node->ty);
+                if (is_integer(rty))
+                    insert_arith_cast(&node->rhs, node->ty);
+            }
             return;
         }
         if (lty->base && is_integer(rty)) {
@@ -166,6 +185,12 @@ static void add_type_internal(Node *node) {
     case ND_BITXOR:
     case ND_BITOR:
         node->ty = usual_arith_type(node->lhs->ty, node->rhs->ty);
+        if (is_flonum(node->ty)) {
+            if (is_integer(node->lhs->ty))
+                insert_arith_cast(&node->lhs, node->ty);
+            if (is_integer(node->rhs->ty))
+                insert_arith_cast(&node->rhs, node->ty);
+        }
         return;
     case ND_NEG:
         node->ty = is_flonum(node->lhs->ty) ? node->lhs->ty : integer_promotion(node->lhs->ty);
