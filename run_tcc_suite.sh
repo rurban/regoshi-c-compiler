@@ -189,7 +189,7 @@ while IFS= read -r src; do
 		# Normalise line endings before diff
 		actual="$(tr -d '\r' <"$TMP_OUT")"
 		expected="$(tr -d '\r' <"$expect_file")"
-		if [ "$actual" = "$expected" ]; then
+		if diff -Nbu "$TMP_OUT" "$expect_file"; then
 			# shellcheck disable=SC2059
 			printf "${GREEN}PASS${RESET}\n"
 			passed=$((passed + 1))
