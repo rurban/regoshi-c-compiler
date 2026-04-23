@@ -146,6 +146,11 @@ static Node *new_fnum(double fval, Token *tok) {
 }
 
 static Type *copy_type(Type *ty) {
+    // For struct/union types, return the original. These are identity types
+    // that can be completed later via tag declarations. Creating a shallow
+    // copy would leave the copy incomplete forever.
+    if (ty->kind == TY_STRUCT || ty->kind == TY_UNION)
+        return ty;
     Type *ret = arena_alloc(sizeof(Type));
     *ret = *ty;
     return ret;
