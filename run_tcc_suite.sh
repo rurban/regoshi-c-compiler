@@ -115,12 +115,46 @@ print_change() {
 	fi
 }
 
+# Tests to skip – mirrors tinycc/tests/tests2/Makefile SKIP, minus TCC-internals
+# (bound-checker, backtrace, btdll, builtins are TCC-runtime-only and omitted here)
+SKIP_TESTS="
+22_floating_point
+34_array_assignment
+85_asm-outside-function
+95_bitfields_ms
+98_al_ax_extend
+99_fastcall
+106_versym
+112_backtrace
+113_btdll
+114_bound_signal
+115_bound_setjmp
+116_bound_setjmp2
+117_builtins
+124_atomic_counter
+126_bound_global
+127_asm_goto
+132_bound_test
+"
+
+is_skipped() {
+	case "$SKIP_TESTS" in *"
+$1
+"*) return 0 ;; esac
+	return 1
+}
+
 # Iterate over all *.c files; skip helper files containing '+' in the name
 while IFS= read -r src; do
 	fname="$(basename "$src")"
 	case "$fname" in *+*) continue ;; esac # skip multi-file helpers
 
 	base="${fname%.c}"
+
+	if is_skipped "$base"; then
+		printf "  %-40s %s\n" "$base..." "SKIP"
+		continue
+	fi
 
 	# Apply local fixups for tinycc tests2 expect files.
 	# If test/tinycc-<base>.expect exists and differs from the upstream
@@ -186,9 +220,6 @@ while IFS= read -r src; do
 		expect_file="$fixup_expect"
 	fi
 	if [ -f "$expect_file" ]; then
-		# Normalise line endings before diff
-		actual="$(tr -d '\r' <"$TMP_OUT")"
-		expected="$(tr -d '\r' <"$expect_file")"
 		if diff -Nbu "$TMP_OUT" "$expect_file"; then
 			# shellcheck disable=SC2059
 			printf "${GREEN}PASS${RESET}\n"

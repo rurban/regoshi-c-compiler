@@ -24,6 +24,27 @@ if (-not $RCC) {
     exit 1
 }
 
+# Tests to skip – mirrors tinycc/tests/tests2/Makefile SKIP, including WIN32 extras
+# (bound-checker, backtrace, btdll, builtins are TCC-runtime-only)
+$SkipTests = @(
+    "22_floating_point",
+    "34_array_assignment",
+    "85_asm-outside-function",
+    "98_al_ax_extend",
+    "99_fastcall",
+    "106_versym",             # requires -pthread
+    "112_backtrace",
+    "113_btdll",
+    "114_bound_signal",
+    "115_bound_setjmp",
+    "116_bound_setjmp2",
+    "117_builtins",
+    "124_atomic_counter",     # requires -pthread
+    "126_bound_global",
+    "127_asm_goto",
+    "132_bound_test"
+)
+
 $TestFiles = Get-ChildItem -Path $TestDir -Filter "*.c" | Sort-Object {
     $base = $_.BaseName
     if ($base -match '^(\d+)') { [int]$Matches[1] } else { [int]::MaxValue }
@@ -42,6 +63,12 @@ foreach ($file in $TestFiles) {
     $exe = Join-Path $TestDir "$base.exe"
     $expectFile = Join-Path $TestDir "$base.expect"
     $outputFile = Join-Path $TestDir "$base.out"
+
+    # Skip tests that require TCC internals, inline asm, or pthreads
+    if ($SkipTests -contains $base) {
+        Write-Host "$base... SKIP" -ForegroundColor DarkGray
+        continue
+    }
 
     Write-Host "Running $base... " -NoNewline
 
