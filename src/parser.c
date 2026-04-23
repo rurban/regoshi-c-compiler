@@ -1382,23 +1382,24 @@ static Token *find_compound_literal_start(Token *tok) {
     return NULL;
 }
 
-static void write_scalar_bytes(char *buf, int offset, int size, int64_t val) {
+static void write_scalar_bytes(LVar *var, int offset, int size, int64_t val) {
+    if (offset < 0 || offset + size > var->init_size) return;
     if (size == 1) {
-        buf[offset] = (char)val;
+        var->init_data[offset] = (char)val;
         return;
     }
     if (size == 2) {
         int16_t v = (int16_t)val;
-        memcpy(buf + offset, &v, 2);
+        memcpy(var->init_data + offset, &v, 2);
         return;
     }
     if (size == 4) {
         int32_t v = (int32_t)val;
-        memcpy(buf + offset, &v, 4);
+        memcpy(var->init_data + offset, &v, 4);
         return;
     }
     int64_t v = val;
-    memcpy(buf + offset, &v, 8);
+    memcpy(var->init_data + offset, &v, 8);
 }
 
 // Forward declaration
@@ -1666,7 +1667,7 @@ static Token *global_init_one(Token *tok, LVar *var, Type *ty, int offset) {
     }
     long long val = 0;
     if (eval_const_expr(node, &val)) {
-        write_scalar_bytes(var->init_data, offset, ty->size, (int64_t)val);
+        write_scalar_bytes(var, offset, ty->size, (int64_t)val);
         return tok;
     }
     error_tok(tok, "expected constant expression in initializer");
