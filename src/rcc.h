@@ -66,6 +66,10 @@ void init_builtins(void);
 //
 
 // Type System
+typedef enum { QUAL_CONST = 1,
+               QUAL_VOLATILE = 2,
+               QUAL_RESTRICT = 4 } TypeQual;
+
 typedef enum {
     TY_VOID,
     TY_BOOL,
@@ -102,6 +106,7 @@ struct Type {
     int align; // alignment
     bool is_unsigned;
     bool is_enum; // enum type — treated as unsigned for bitfield extraction
+    unsigned char qual; // TypeQual flags: const/volatile/restrict
     Type *base; // for pointer/array
     Member *members; // for struct
     Type *return_ty; // for function
@@ -111,6 +116,10 @@ struct Type {
     int pack_align; // #pragma pack(n) alignment, 0 = default
     char *cleanup_func; // __attribute__((__cleanup__(func))) on the type
 };
+
+static inline bool ty_const(const Type *t) { return t->qual & QUAL_CONST; }
+static inline bool ty_volatile(const Type *t) { return t->qual & QUAL_VOLATILE; }
+static inline bool ty_restrict(const Type *t) { return t->qual & QUAL_RESTRICT; }
 
 typedef struct Typedef Typedef;
 struct Typedef {

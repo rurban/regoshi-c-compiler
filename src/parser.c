@@ -414,12 +414,23 @@ static Token *skip_attributes(Token *tok) {
     return read_type_attrs(tok, NULL);
 }
 
-static Token *skip_type_quals(Token *tok) {
-    while (equal(tok, "const") || equal(tok, "volatile") || equal(tok, "restrict") ||
-           equal(tok, "__restrict") || equal(tok, "__restrict__"))
+static unsigned char collect_type_quals(Token **rest, Token *tok) {
+    unsigned char q = 0;
+    while (true) {
+        if (equal(tok, "const"))
+            q |= QUAL_CONST;
+        else if (equal(tok, "volatile"))
+            q |= QUAL_VOLATILE;
+        else if (equal(tok, "restrict") || equal(tok, "__restrict") || equal(tok, "__restrict__"))
+            q |= QUAL_RESTRICT;
+        else
+            break;
         tok = tok->next;
-    return tok;
+    }
+    *rest = tok;
+    return q;
 }
+
 
 static bool is_typename(Token *tok) {
     if (equal(tok, "__attribute__") || equal(tok, "__attribute") ||
@@ -698,7 +709,11 @@ static Type *declarator(Token **rest, Token *tok, Type *ty, char **name) {
         ty = pointer_to(ty);
         tok = tok->next;
         tok = read_type_attrs(tok, &decl_align);
-        tok = skip_type_quals(tok);
+        unsigned char pq = collect_type_quals(&tok, tok);
+        if (pq) {
+            ty = copy_type(ty);
+            ty->qual |= pq;
+        }
     }
 
     Token *inner = skip_attributes(tok->next);
@@ -1082,6 +1097,7 @@ static Type *declspec(Token **rest, Token *tok, VarAttr *attr) {
     bool is_bool = false;
     bool is_void = false;
     int attr_align = 0;
+    unsigned char quals = 0;
     memset(attr, 0, sizeof(*attr));
 
     for (;;) {
@@ -1106,8 +1122,22 @@ static Type *declspec(Token **rest, Token *tok, VarAttr *attr) {
             tok = tok->next;
             continue;
         }
-        if (equal(tok, "inline") || equal(tok, "__inline") || equal(tok, "__inline__") ||
-            equal(tok, "const") || equal(tok, "volatile") || equal(tok, "restrict")) {
+        if (equal(tok, "inline") || equal(tok, "__inline") || equal(tok, "__inline__")) {
+            tok = tok->next;
+            continue;
+        }
+        if (equal(tok, "const")) {
+            quals |= QUAL_CONST;
+            tok = tok->next;
+            continue;
+        }
+        if (equal(tok, "volatile")) {
+            quals |= QUAL_VOLATILE;
+            tok = tok->next;
+            continue;
+        }
+        if (equal(tok, "restrict") || equal(tok, "__restrict") || equal(tok, "__restrict__")) {
+            quals |= QUAL_RESTRICT;
             tok = tok->next;
             continue;
         }
@@ -1176,6 +1206,11 @@ static Type *declspec(Token **rest, Token *tok, VarAttr *attr) {
                 Node *node = expr(&tok, tok);
                 add_type(node);
                 ty = node->ty;
+                // Lvalue conversion: strip top-level qualifiers from expression type
+                if (ty && ty->qual) {
+                    ty = copy_type(ty);
+                    ty->qual = 0;
+                }
             }
             tok = skip(tok, ")");
             continue;
@@ -1234,7 +1269,11 @@ static Type *declspec(Token **rest, Token *tok, VarAttr *attr) {
 
     ty = apply_type_align(ty, attr_align);
     tok = skip_attributes(tok);
-    tok = skip_type_quals(tok);
+    quals |= collect_type_quals(&tok, tok);
+    if (quals) {
+        ty = copy_type(ty);
+        ty->qual |= quals;
+    }
     *rest = tok;
     return ty;
 }
@@ -2433,6 +2472,8 @@ static bool type_equal(Type *a, Type *b) {
         return false;
     if (a->kind != b->kind)
         return false;
+    if (a->qual != b->qual)
+        return false;
     if (a->is_unsigned != b->is_unsigned)
         return false;
     if (a->is_variadic != b->is_variadic)
@@ -2485,6 +2526,11 @@ static Node *primary(Token **rest, Token *tok) {
             ctrl_ty = pointer_to(ctrl_ty->base);
         else if (ctrl_ty->kind == TY_FUNC)
             ctrl_ty = pointer_to(ctrl_ty);
+        // Lvalue conversion strips top-level qualifiers
+        if (ctrl_ty->qual) {
+            ctrl_ty = copy_type(ctrl_ty);
+            ctrl_ty->qual = 0;
+        }
 
         tok = skip(tok, ",");
 

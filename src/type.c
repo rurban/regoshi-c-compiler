@@ -243,9 +243,22 @@ static void add_type_internal(Node *node) {
             node->ty = ty_void;
             return;
         }
-        // Null pointer constant with pointer: result is pointer type
+        // Null pointer constant: integer 0, or cast of integer 0 to unqualified void*
         bool then_null = tty && is_integer(tty) && node->then->kind == ND_NUM && node->then->val == 0;
         bool els_null = ety && is_integer(ety) && node->els->kind == ND_NUM && node->els->val == 0;
+        // Extend: (void*)0 cast is also a null pointer constant
+        if (!then_null && node->then->kind == ND_CAST && tty && tty->kind == TY_PTR &&
+            tty->base && tty->base->kind == TY_VOID && tty->base->qual == 0) {
+            Node *inner = node->then->lhs;
+            then_null = inner && inner->ty && is_integer(inner->ty) &&
+                inner->kind == ND_NUM && inner->val == 0;
+        }
+        if (!els_null && node->els->kind == ND_CAST && ety && ety->kind == TY_PTR &&
+            ety->base && ety->base->kind == TY_VOID && ety->base->qual == 0) {
+            Node *inner = node->els->lhs;
+            els_null = inner && inner->ty && is_integer(inner->ty) &&
+                inner->kind == ND_NUM && inner->val == 0;
+        }
         if (then_null && ety && (ety->kind == TY_PTR || ety->kind == TY_ARRAY)) {
             node->ty = ety->kind == TY_ARRAY ? pointer_to(ety->base) : ety;
             return;
@@ -254,18 +267,49 @@ static void add_type_internal(Node *node) {
             node->ty = tty->kind == TY_ARRAY ? pointer_to(tty->base) : tty;
             return;
         }
-        // Both pointers: try to find common type
+        // Both pointers: find composite type
         if (tty && ety && (tty->kind == TY_PTR || tty->kind == TY_ARRAY) &&
             (ety->kind == TY_PTR || ety->kind == TY_ARRAY)) {
             Type *tbase = tty->kind == TY_ARRAY ? tty->base : tty->base;
             Type *ebase = ety->kind == TY_ARRAY ? ety->base : ety->base;
-            // void* combines with any pointer: prefer the concrete type
-            if (tbase->kind == TY_VOID && ebase->kind != TY_VOID)
-                node->ty = ety->kind == TY_ARRAY ? pointer_to(ety->base) : ety;
-            else if (ebase->kind == TY_VOID && tbase->kind != TY_VOID)
-                node->ty = tty->kind == TY_ARRAY ? pointer_to(tty->base) : tty;
-            else
-                node->ty = tty->kind == TY_ARRAY ? pointer_to(tty->base) : tty;
+            // void* combines with any pointer; qualifiers merge from both sides
+            if (tbase->kind == TY_VOID || ebase->kind == TY_VOID) {
+                // Pick the void* side; if both void*, pick then-side
+                Type *vptr = (ebase->kind != TY_VOID) ? tty : ety;
+                unsigned char combined = tbase->qual | ebase->qual;
+                if (vptr->base->qual != combined) {
+                    Type *vbase = arena_alloc(sizeof(Type));
+                    *vbase = *vptr->base;
+                    vbase->qual = combined;
+                    Type *result = arena_alloc(sizeof(Type));
+                    *result = *vptr;
+                    result->base = vbase;
+                    node->ty = result;
+                } else {
+                    node->ty = vptr;
+                }
+            } else {
+                // Same base kind: prefer the complete side (for incomplete arrays),
+                // then combine qualifiers
+                Type *chosen_ptr = (tty->kind == TY_ARRAY) ? pointer_to(tty->base) : tty;
+                Type *other_ptr = (ety->kind == TY_ARRAY) ? pointer_to(ety->base) : ety;
+                // If then-base is an incomplete array and els-base is complete, use els
+                if (tbase->kind == TY_ARRAY && tbase->size == 0 &&
+                    ebase->kind == TY_ARRAY && ebase->size > 0)
+                    chosen_ptr = other_ptr;
+                unsigned char combined = chosen_ptr->base->qual | (chosen_ptr == other_ptr ? tbase->qual : ebase->qual);
+                if (chosen_ptr->base->qual != combined) {
+                    Type *rbase = arena_alloc(sizeof(Type));
+                    *rbase = *chosen_ptr->base;
+                    rbase->qual = combined;
+                    Type *rptr = arena_alloc(sizeof(Type));
+                    *rptr = *chosen_ptr;
+                    rptr->base = rbase;
+                    node->ty = rptr;
+                } else {
+                    node->ty = chosen_ptr;
+                }
+            }
             return;
         }
         // Both arithmetic: usual arithmetic conversions

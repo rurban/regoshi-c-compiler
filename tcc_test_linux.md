@@ -89,7 +89,7 @@ Generated: April 2026
 | 91_ptr_longlong_arith32                  | PASS         | Output matches                       |
 | 92_enum_bitfield                         | PASS         | Output matches                       |
 | 93_integer_promotion                     | PASS         | Output matches                       |
-| 94_generic                               | COMPILE_FAIL | rcc returned non-zero                |
+| 94_generic                               | MISMATCH     | Output does not match .expect        |
 | 95_bitfields                             | MISMATCH     | Output does not match .expect        |
 | 97_utf8_string_literal                   | PASS         | Output matches                       |
 | 98_al_ax_extend                          | COMPILE_FAIL | rcc returned non-zero                |
