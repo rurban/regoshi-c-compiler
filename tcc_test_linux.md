@@ -3,9 +3,9 @@ Generated: April 2026
 
 ## Summary
  - **Total**:     139
- - **Passed**:    116
- - **Failed**:    23
- - **Pass Rate**: 83%
+ - **Passed**:    117
+ - **Failed**:    22
+ - **Pass Rate**: 84%
 
 ## Detailed Results
 | Test                                     | Status       | Message                              |
@@ -76,7 +76,7 @@ Generated: April 2026
 | 78_vla_label                             | COMPILE_FAIL | rcc returned non-zero                |
 | 79_vla_continue                          | COMPILE_FAIL | rcc returned non-zero                |
 | 80_flexarray                             | PASS         | Output matches                       |
-| 81_types                                 | COMPILE_FAIL | rcc returned non-zero                |
+| 81_types                                 | PASS         | Output matches                       |
 | 82_attribs_position                      | COMPILE_FAIL | rcc returned non-zero                |
 | 83_utf8_in_identifiers                   | PASS         | Output matches                       |
 | 84_hex-float                             | PASS         | Output matches                       |

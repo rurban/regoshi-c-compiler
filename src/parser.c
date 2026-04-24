@@ -701,7 +701,7 @@ static Type *declarator(Token **rest, Token *tok, Type *ty, char **name) {
         tok = skip_type_quals(tok);
     }
 
-    if (equal(tok, "(") && equal(tok->next, "*")) {
+    if (equal(tok, "(") && (equal(tok->next, "*") || equal(tok->next, "["))) {
         Token *start = tok->next;
         Type dummy = {};
         char *dummy_name = NULL;
@@ -3218,9 +3218,17 @@ static LVar *parse_params(Token **rest, Token *tok, bool *is_variadic) {
 
         if (equal(tok, "(")) {
             tok = tok->next;
+            // Handle extra grouping parens: int ((int)) - outer ( consumed, tok = (int))
+            bool stripped_extra = false;
+            if (equal(tok, "(") && (is_typename(tok->next) || equal(tok->next, ")") || equal(tok->next, "..."))) {
+                stripped_extra = true;
+                tok = tok->next;
+            }
             bool dummy_variadic = false;
             LVar *nested_params = parse_params(&tok, tok, &dummy_variadic);
             tok = skip(tok, ")");
+            if (stripped_extra)
+                tok = skip(tok, ")");
             ty = func_type(ty);
             Type param_head = {};
             Type *pcur = &param_head;
