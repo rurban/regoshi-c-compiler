@@ -702,45 +702,60 @@ static Type *declarator(Token **rest, Token *tok, Type *ty, char **name) {
     }
 
     if (equal(tok, "(") && equal(tok->next, "*")) {
-        int ptr_count = 0;
-        tok = tok->next;
-        while (equal(tok, "*")) {
-            ptr_count++;
-            tok = tok->next;
-            tok = read_type_attrs(tok, &decl_align);
-            tok = skip_type_quals(tok);
-        }
-        tok = skip_type_quals(tok);
+        Token *start = tok->next;
+        Type dummy = {};
+        char *dummy_name = NULL;
+        // Dummy parse to skip past inner declarator
+        Token *after_inner;
+        declarator(&after_inner, start, &dummy, &dummy_name);
+        if (!equal(after_inner, ")"))
+            error_tok(after_inner, "expected ')'");
+        tok = after_inner->next;
 
-        if (tok->kind == TK_IDENT) {
-            if (name)
-                *name = tok->name;
-            tok = tok->next;
-        } else if (name) {
-            *name = NULL;
-        }
-
-        tok = read_type_attrs(tok, &decl_align);
-        tok = skip_type_quals(tok);
-        ty = type_suffix(&tok, tok, ty);
-
-        tok = skip(tok, ")");
+        // Parse suffixes after the closing paren
+        Type *suffixed = ty;
         if (equal(tok, "(")) {
-            int depth = 0;
-            do {
-                if (equal(tok, "("))
-                    depth++;
-                else if (equal(tok, ")"))
-                    depth--;
-                tok = tok->next;
-            } while (depth > 0 && tok->kind != TK_EOF);
-            ty = func_type(ty);
+            tok = tok->next;
+            Type param_head = {};
+            Type *pcur = &param_head;
+            bool is_variadic = false;
+            if (equal(tok, "void") && equal(tok->next, ")")) {
+                tok = tok->next->next;
+            } else {
+                while (!equal(tok, ")")) {
+                    if (pcur != &param_head)
+                        tok = skip(tok, ",");
+                    if (equal(tok, "...")) {
+                        is_variadic = true;
+                        tok = tok->next;
+                        break;
+                    }
+                    VarAttr attr = {};
+                    Type *base = declspec(&tok, tok, &attr);
+                    Type *pty = declarator(&tok, tok, copy_type(base), NULL);
+                    if (pty->kind == TY_ARRAY)
+                        pty = pointer_to(pty->base);
+                    else if (pty->kind == TY_FUNC)
+                        pty = pointer_to(pty);
+                    Type *pt = arena_alloc(sizeof(Type));
+                    *pt = *pty;
+                    pt->param_next = NULL;
+                    pcur = pcur->param_next = pt;
+                }
+                tok = skip(tok, ")");
+            }
+            suffixed = func_type(ty);
+            suffixed->param_types = param_head.param_next;
+            suffixed->is_variadic = is_variadic;
+        } else {
+            suffixed = type_suffix(&tok, tok, ty);
         }
 
-        while (ptr_count-- > 0)
-            ty = pointer_to(ty);
-        ty = type_suffix(rest, tok, ty);
-        return apply_type_align(ty, decl_align);
+        // Set rest now before re-parsing; the re-parse starts from the
+        // inner declarator and does not advance past the suffixes.
+        *rest = tok;
+        // Re-parse inner declarator with the suffixed type
+        return declarator(&tok, start, suffixed, name);
     }
 
     if (tok->kind != TK_IDENT) {
