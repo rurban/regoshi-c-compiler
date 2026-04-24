@@ -1285,11 +1285,21 @@ char *preprocess(char *filename, char *p) {
         define_macro("__DragonFly__", false, NULL, 0, "1");
 #endif
 #if !defined(_WIN32)
+    if (!find_macro("__unix"))
+        define_macro("__unix", false, NULL, 0, "1");
+    if (!find_macro("__unix__"))
+        define_macro("__unix__", false, NULL, 0, "1");
     if (!find_macro("__LP64__"))
         define_macro("__LP64__", false, NULL, 0, "1");
 #endif
     if (!find_macro("__x86_64__"))
         define_macro("__x86_64__", false, NULL, 0, "1");
+    if (!find_macro("__x86_64"))
+        define_macro("__x86_64", false, NULL, 0, "1");
+    if (!find_macro("__amd64__"))
+        define_macro("_amd64__", false, NULL, 0, "1");
+    if (!find_macro("__amd64"))
+        define_macro("_amd64", false, NULL, 0, "1");
     if (!find_macro("__builtin_expect"))
         define_macro("__builtin_expect", true, builtin_expect_params, 2, "x");
     if (!find_macro("__builtin_abort"))
@@ -1346,6 +1356,10 @@ char *preprocess(char *filename, char *p) {
         define_macro("__asm__", false, NULL, 0, "__asm");
     if (!find_macro("__volatile__"))
         define_macro("__volatile__", false, NULL, 0, "volatile");
+    if (!find_macro("__BYTE_ORDER__"))
+        define_macro("__BYTE_ORDER__", false, NULL, 0, "1234");
+    if (!find_macro("__CHAR_BIT__"))
+        define_macro("__CHAR_BIT__", false, NULL, 0, "8");
     if (!find_macro("__INT_MAX__"))
         define_macro("__INT_MAX__", false, NULL, 0, "2147483647");
     if (!find_macro("__LONG_MAX__"))
