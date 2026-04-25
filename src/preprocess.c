@@ -966,6 +966,16 @@ static long eval_pp_expr(char **rest, char *p, char *filename) {
         long rhs = eval_land(&p, p + 2, filename);
         val = val || rhs;
     }
+    p = skip_spaces(p);
+    if (*p == '?') {
+        p++;
+        long true_val = eval_pp_expr(&p, p, filename);
+        p = skip_spaces(p);
+        if (*p == ':')
+            p++;
+        long false_val = eval_pp_expr(&p, p, filename);
+        val = val ? true_val : false_val;
+    }
     *rest = p;
     return val;
 }

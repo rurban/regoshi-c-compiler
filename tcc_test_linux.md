@@ -2,10 +2,10 @@
 Generated: April 2026
 
 ## Summary
- - **Total**:     128
- - **Passed**:    126
- - **Failed**:    2
- - **Pass Rate**: 98%
+ - **Total**:     130
+ - **Passed**:    127
+ - **Failed**:    3
+ - **Pass Rate**: 97%
 
 ## Detailed Results
 | Test                                     | Status       | Message                              |
@@ -101,9 +101,11 @@ Generated: April 2026
 | 109_float_struct_calling                 | PASS         | Output matches                       |
 | 110_average                              | PASS         | Output matches                       |
 | 111_conversion                           | PASS         | Output matches                       |
+| 117_builtins                             | COMPILE_FAIL | executable missing                   |
 | 118_switch                               | PASS         | Output matches                       |
+| 119_random_stuff                         | COMPILE_FAIL | rcc returned non-zero                |
 | 121_struct_return                        | PASS         | Output matches                       |
-| 129_scopes                               | MISMATCH     | Output does not match .expect        |
+| 129_scopes                               | PASS         | Output matches                       |
 | 130_large_argument                       | PASS         | Output matches                       |
 | 131_return_struct_in_reg                 | PASS         | Output matches                       |
 | 132_bound_test                           | PASS         | Output matches                       |

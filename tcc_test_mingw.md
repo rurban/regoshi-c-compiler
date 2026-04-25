@@ -1,5 +1,5 @@
 # TCC Test Suite Report for RCC
-Generated on: 04/26/2026 05:00:15
+Generated on: 04/26/2026 06:53:14
 
 ## Summary
 - **Total Tests**: 100
@@ -103,7 +103,7 @@ Generated on: 04/26/2026 05:00:15
 | 111_conversion | PASS | Output matches |
 | 118_switch | PASS | Output matches |
 | 121_struct_return | PASS | Output matches |
-| 129_scopes | MISMATCH | Output does not match .expect |
+| 129_scopes | COMPILE_FAIL | rcc exited with 1 |
 | 130_large_argument | MISMATCH | Output does not match .expect |
 | 131_return_struct_in_reg | PASS | Output matches |
 | 132_bound_test | PASS | Output matches |

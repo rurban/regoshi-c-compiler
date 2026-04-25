@@ -144,7 +144,6 @@ SKIP_TESTS="
 114_bound_signal
 115_bound_setjmp
 116_bound_setjmp2
-117_builtins
 120_alias
 122_vla_reuse
 126_bound_global
@@ -152,7 +151,6 @@ SKIP_TESTS="
 79_vla_continue
 98_al_ax_extend
 99_fastcall
-119_random_stuff
 123_vla_bug
 124_atomic_counter
 125_atomic_misc

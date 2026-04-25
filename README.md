@@ -55,11 +55,13 @@ Linux:
 
 ## Supported C Features
 
-Structs, unions, enums, typedefs, arrays (multi-dimensional), pointers (including function pointers), `for`/`while`/`do-while`/`switch`/`goto`, `sizeof`, `_Bool`, `static`, `extern`, variadic `printf`, string literals, compound assignment operators, pre/post increment, ternary operator, comma operator, designated initializers, \_Generic, attribute `__cleanup__`, `__aligned__`, `__packed__`, Windows and SystemV long doubles (internally all using SSE), unicode identifiers and strings, minimal `"wchar.h"`.
+Structs, unions, enums, typedefs, arrays (multi-dimensional), pointers (including function pointers), `for`/`while`/`do-while`/`switch`/`goto`, `sizeof`, `_Bool`, `static`, `extern`, variadic `printf`, string literals, compound assignment operators, pre/post increment, ternary operator, comma operator, designated initializers, \_Generic, attribute `__cleanup__`, `__aligned__`, `__packed__`, `__constructor__`, `__destructor__`, Windows and SystemV long doubles (internally all using SSE), unicode identifiers and strings, minimal `"wchar.h"`, enum bitfields.
 
-Not yet: constructor/destructor, vla_label, vla_continue, enum_bitfield, ms bitfields, al_ax_extend, fastcall, inline, alias, vla_reuse, atomics.
+Not yet: VLA's, ms bitfields, inline, GNU alias, atomics, asm goto,old K&R function definitions.
 
 Top-level `__asm__("...")` statements are supported and emitted in source order. Unlike GCC (which hoists all file-scope `asm` blocks to the top of the output at `-O2`/`-O3` unless `-fno-toplevel-reorder` is used), rcc always preserves their original position relative to functions.
+
+The tcc suite has 126/128 passed (98%), 2 failed.
 
 ## Build
 
@@ -83,6 +85,7 @@ make bench
 
 ## Options
 
+    -I path       add include path
     -Lpath        add linker path
     -lname        add lib
     -E            preprocessor-only
@@ -115,7 +118,7 @@ make bench
 The original windows repo is at https://github.com/DocDamage/realtime-c-compiler with
 [those](tcc_test_report_mingw1.1.md) test results (61/139 passed tcc tests), and [those](bench/bench_report_mingw.md) benchmarks. Tested in the `old-mingw` branch via github actions.
 
-This fork passes now [121/139 tests](tcc_test_linux.md) on linux and [82/129 tests](tcc_test_mingw.md) on windows. macOS linking still in work.
+This fork passes now [126/128 tests](tcc_test_linux.md) on linux and [83/100 tests](tcc_test_mingw.md) on windows. macOS linking still in work.
 
 ## License
 

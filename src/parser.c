@@ -33,6 +33,7 @@ static char *pending_cleanup_func;
 static Token *pending_cleanup_tok;
 static bool pending_constructor;
 static bool pending_destructor;
+static char *pending_asm_name;
 
 static StrLit *str_lits;
 static int str_lit_counter;
@@ -511,10 +512,20 @@ static Token *read_type_attrs(Token *tok, int *align) {
         if (equal(tok, "__asm__") || equal(tok, "__asm")) {
             tok = tok->next;
             tok = skip(tok, "(");
+            char asm_buf[256];
+            asm_buf[0] = '\0';
+            int asm_len = 0;
             while (tok->kind == TK_STR || (tok->kind == TK_IDENT && equal(tok, "_"))) {
+                if (tok->kind == TK_STR && asm_len + tok->len < (int)sizeof(asm_buf) - 1) {
+                    memcpy(asm_buf + asm_len, tok->str, tok->len);
+                    asm_len += tok->len;
+                    asm_buf[asm_len] = '\0';
+                }
                 tok = tok->next;
             }
             tok = skip(tok, ")");
+            if (asm_len > 0)
+                pending_asm_name = str_intern(asm_buf, asm_len);
             continue;
         }
 
@@ -946,6 +957,7 @@ static Type *struct_or_union_specifier(Token **rest, Token *tok, bool is_union) 
         VarAttr attr = {};
         pending_constructor = false;
         pending_destructor = false;
+        pending_asm_name = NULL;
         Type *base = declspec(&tok, tok, &attr);
         if (attr.is_typedef || attr.is_extern || attr.is_static)
             error_tok(tok, "invalid storage class in member declaration");
@@ -2161,6 +2173,7 @@ static Node *declaration(Token **rest, Token *tok) {
     pending_cleanup_func = NULL;
     pending_constructor = false;
     pending_destructor = false;
+    pending_asm_name = NULL;
     Type *base = declspec(&tok, tok, &attr);
     char *type_level_cleanup = pending_cleanup_func;
     Node head = {};
@@ -2184,11 +2197,26 @@ static Node *declaration(Token **rest, Token *tok) {
 
         if (equal(tok, "(")) {
             tok = skip_balanced(tok);
-            if (!find_global_name(name)) {
-                LVar *fn_sym = new_var(name, pointer_to(func_type(ty)), false);
+            Type *fty = func_type(ty);
+            LVar *fn_sym = find_global_name(name);
+            if (!fn_sym) {
+                fn_sym = new_var(name, pointer_to(fty), false);
                 fn_sym->is_extern = true;
                 fn_sym->is_function = true;
             }
+            // Create local entry so this function declaration shadows any local variable
+            LVar *lvar = arena_alloc(sizeof(LVar));
+            lvar->name = name;
+            lvar->ty = pointer_to(fty);
+            lvar->is_local = false;
+            lvar->is_extern = true;
+            lvar->is_function = true;
+            if (pending_asm_name)
+                lvar->asm_name = pending_asm_name;
+            lvar->next = locals;
+            locals = lvar;
+            if (current_block_depth == 1)
+                current_fn_scope_locals = locals;
             if (!equal(tok, ","))
                 break;
             tok = tok->next;
@@ -2213,7 +2241,7 @@ static Node *declaration(Token **rest, Token *tok) {
             // Local entry for name lookup
             LVar *lvar = arena_alloc(sizeof(LVar));
             lvar->name = name;
-            lvar->asm_name = asm_label;
+            lvar->asm_name = pending_asm_name ? pending_asm_name : asm_label;
             lvar->ty = ty;
             lvar->is_local = false;
             lvar->is_static = true;
@@ -2224,11 +2252,36 @@ static Node *declaration(Token **rest, Token *tok) {
                 global_initializer(&tok, tok, gvar);
                 lvar->ty = gvar->ty;
             }
+        } else if (attr.is_extern) {
+            // Block-scope extern declaration: refers to global storage
+            LVar *gvar = find_global_name(name);
+            if (!gvar) {
+                gvar = new_var(name, ty, false);
+                gvar->is_extern = true;
+            } else if (gvar->ty->kind == TY_ARRAY && ty->kind == TY_ARRAY && ty->size > 0 && gvar->ty->size == 0) {
+                gvar->ty = ty;
+            }
+            if (pending_asm_name)
+                gvar->asm_name = pending_asm_name;
+            // Create local entry that references the global
+            LVar *lvar = arena_alloc(sizeof(LVar));
+            lvar->name = name;
+            lvar->ty = gvar->ty;
+            lvar->is_local = false;
+            lvar->is_extern = true;
+            if (pending_asm_name)
+                lvar->asm_name = pending_asm_name;
+            lvar->next = locals;
+            locals = lvar;
+            if (current_block_depth == 1)
+                current_fn_scope_locals = locals;
         } else {
             if (equal(tok, "=")) {
                 ty = infer_array_type(ty, tok->next);
             }
             LVar *var = new_var(name, ty, true);
+            if (pending_asm_name)
+                var->asm_name = pending_asm_name;
             var->cleanup_func = cleanup ? cleanup : ty->cleanup_func;
             if (current_block_depth == 1)
                 current_fn_scope_locals = locals;
@@ -2254,6 +2307,7 @@ static Node *declaration(Token **rest, Token *tok) {
         tok = tok->next;
     }
 
+    pending_asm_name = NULL;
     *rest = skip(tok, ";");
     return head.next ? head.next : new_node(ND_NULL, tok);
 }
@@ -3614,7 +3668,7 @@ Program *parse(Token *tok) {
             }
             Function *fn = arena_alloc(sizeof(Function));
             fn->name = name;
-            fn->asm_name = format(".Lfn.%s", name);
+            fn->asm_name = pending_asm_name ? pending_asm_name : format(".Lfn.%s", name);
             fn->ty = fty;
             fn->params = params;
             fn->locals = fn_locals;
@@ -3625,6 +3679,7 @@ Program *parse(Token *tok) {
             fn->is_destructor = pending_destructor;
             pending_constructor = false;
             pending_destructor = false;
+            pending_asm_name = NULL;
             TLItem *item = arena_alloc(sizeof(TLItem));
             item->kind = TL_FUNC;
             item->fn = fn;
@@ -3651,6 +3706,9 @@ Program *parse(Token *tok) {
                     var = new_var(name, ty, false);
                 }
                 var->is_extern = attr.is_extern;
+                if (pending_asm_name)
+                    var->asm_name = pending_asm_name;
+                pending_asm_name = NULL;
                 if (equal(tok, "=")) {
                     tok = tok->next;
                     global_initializer(&tok, tok, var);

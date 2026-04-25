@@ -33,6 +33,22 @@ static char *read_file(char *path) {
     return buf;
 }
 
+void help(void) {
+    printf("rcc v1.2-dev - Copyright 2026 Hamagoto-Y and Reini Urban\n");
+    printf("rcc [options...] [-o outfile] [-c] infile(s)...\n");
+    printf("Options:\n"
+           "-I path       add include path\n"
+           "-Lpath        add linker path\n"
+           "-lname        add lib\n"
+           "-E            preprocessor-only\n"
+           "-S            assemble-only\n"
+           "-c            compile-only\n"
+           "-o file       set output filename\n"
+           "-O0           skip peephole optimizer\n"
+           "-Dname[=val]  define a macro value\n"
+           "-Uname        undefine a macro value\n");
+}
+
 bool opt_O0 = false;
 
 int main(int argc, char **argv) {
@@ -63,6 +79,10 @@ int main(int argc, char **argv) {
     int libs_len = strlen(libs);
 
     for (int i = 1; i < argc; i++) {
+        if (!strcmp(argv[i], "--help")) {
+            help();
+            return 0;
+        }
         if (!strcmp(argv[i], "-S")) {
             opt_S = true;
         } else if (!strcmp(argv[i], "-c")) {
