@@ -1,21 +1,36 @@
 # RCC — Regoshi C Compiler
 
 A fast, self-contained C compiler targeting x86-64 Windows and Unix. Written from scratch in C11.
-**RCC generates faster code than TCC** while keeping compilation speed competitive.
+**RCC equally fast code as TCC** while keeping compilation speed competitive.
 
 ## Benchmark Results
 
 Six workloads: Fibonacci(38), Ackermann(3,10), Sieve of Eratosthenes (1M), 128×128 matrix multiply, floating-point math loop (500K), and bubble sort (5K).
 
+Windows:
+
 | Compiler   | Execute (ms) | Compile (ms) | Total (ms) |
 | ---------- | -----------: | -----------: | ---------: |
-| **RCC**    |      **349** |         1042 |   **1391** |
-| TCC 0.9.27 |          400 |         1013 |       1413 |
-| GCC -O0    |          298 |         1021 |       1319 |
-| GCC -O2    |          132 |         1020 |       1152 |
+| RCC        |         1009 |         514 |       1523  |
+| TCC 0.9.27 |         1005 |         431 |       1436  |
+| GCC -O0    |         3012 |         417 |       3429  |
+| GCC -O2    |         1002 |         115 |       1117  |
 
-- **RCC vs TCC execution: 0.87× (13% faster)**
-- All outputs verified correct against GCC -O2 reference.
+Linux:
+
+| Compiler | Compile (ms) | Execute (ms) | Total (ms) |
+| :------- | -----------: | -----------: | ---------: |
+| RCC      |           74 |          783 |        857 |
+| TCC      |       **16** |          609 |        625 |
+| SLIMCC   |           56 |          653 |        709 |
+| KEFIR    |          271 |          804 |       1075 |
+| GCC0     |           80 |          613 |        693 |
+| GCCO2    |          183 |      **227** |    **410** |
+| CLANG0   |          135 |          617 |        752 |
+| CLANGO2  |          201 |          239 |        440 |
+
+- RCC vs TCC vs GCC -O2 execution: same speed on windows, much slower on linux.
+- All outputs verified correct against TCC and GCC -O2 and CLANG -O2 references.
 
 ## Key Features
 
@@ -40,14 +55,14 @@ Six workloads: Fibonacci(38), Ackermann(3,10), Sieve of Eratosthenes (1M), 128×
 
 ## Supported C Features
 
-Structs, unions, enums, typedefs, arrays (multi-dimensional), pointers (including function pointers), `for`/`while`/`do-while`/`switch`/`goto`, `sizeof`, `_Bool`, `static`, `extern`, variadic `printf`, string literals, compound assignment operators, pre/post increment, ternary operator, comma operator, designated initializers.
+Structs, unions, enums, typedefs, arrays (multi-dimensional), pointers (including function pointers), `for`/`while`/`do-while`/`switch`/`goto`, `sizeof`, `_Bool`, `static`, `extern`, variadic `printf`, string literals, compound assignment operators, pre/post increment, ternary operator, comma operator, designated initializers, \_Generic, attribute `__cleanup__`, `__aligned__`, `__packed__`, Windows and SystemV long doubles (internally all using SSE), unicode identifiers and strings, minimal `"wchar.h"`.
 
-Not yet: \_Generic, attribute `__cleanup__`, advanced struct init's and returns, long double, float casts, vla_label, vla_continue, \_\_asm, enum_bitfield, ms bitfields, al_ax_extend, fastcall, inline, float_struct_calling, bound_signal, bound_setjmp, bound_global, missing builtins, alias, vla_reuse, atomics, return_struct_in_reg, ...
+Not yet: constructor/destructor, vla\_label, vla\_continue, \_\_asm, enum_bitfield, ms bitfields, al_ax_extend, fastcall, inline, alias, vla\_reuse, atomics.
 
 ## Build
 
 ```bash
-gcc -std=c11 -O2 -o rcc.exe src/main.c src/lexer.c src/parser.c src/type.c src/codegen.c src/alloc.c src/preprocess.c src/opt.c
+gcc -std=c11 -O2 -o rcc src/main.c src/lexer.c src/parser.c src/type.c src/codegen.c src/alloc.c src/preprocess.c src/opt.c
 ```
 
 ## Usage
@@ -66,12 +81,15 @@ make bench
 
 ## Options
 
-    -Lpath   add linker path
-    -lname   add lib
-    -S       assemble-only
-    -c       compile-only
-    -o file  set output filename
-    -O0      skip peephole optimizer
+    -Lpath        add linker path
+    -lname        add lib
+    -E            preprocessor-only
+    -S            assemble-only
+    -c            compile-only
+    -o file       set output filename
+    -O0           skip peephole optimizer
+    -Dname[=val]  define a macro value
+    -Uname        undefine a macro value
 
 ## Project Structure
 
@@ -89,6 +107,13 @@ make bench
 | `include/`         | Minimal C standard library headers (`stdio.h`, `math.h`, etc.)       |
 | `bench/`           | Benchmark suite and runner script                                    |
 | `test/`            | Test programs                                                        |
+
+## Unix fork
+
+The original windows repo is at https://github.com/DocDamage/realtime-c-compiler with
+[those](tcc_test_report_mingw1.1.md) test results (61/139 passed tcc tests), and [those](bench/bench_report_mingw.md) benchmarks. Tested in the `old-mingw` branch via github actions.
+
+This fork passes now [121/139 tests](tcc_test_linux.md) on linux and [82/129 tests](tcc_test_mingw.md) on windows. macOS linking still in work.
 
 ## License
 
