@@ -2291,11 +2291,13 @@ static Node *stmt(Token **rest, Token *tok) {
     if (equal(tok, "if")) {
         Node *node = new_node(ND_IF, tok);
         tok = skip(tok->next, "(");
+        EnumConst *saved_enum = enum_consts;
         node->cond = expr(&tok, tok);
         tok = skip(tok, ")");
         node->then = stmt(&tok, tok);
         if (equal(tok, "else"))
             node->els = stmt(&tok, tok->next);
+        enum_consts = saved_enum;
         *rest = tok;
         return node;
     }
@@ -2303,6 +2305,7 @@ static Node *stmt(Token **rest, Token *tok) {
     if (equal(tok, "while")) {
         Node *node = new_node(ND_FOR, tok);
         tok = skip(tok->next, "(");
+        EnumConst *saved_enum = enum_consts;
         node->cond = expr(&tok, tok);
         tok = skip(tok, ")");
         Node *saved_loop = current_loop;
@@ -2311,6 +2314,7 @@ static Node *stmt(Token **rest, Token *tok) {
         current_loop = node;
         node->then = stmt(&tok, tok);
         current_loop = saved_loop;
+        enum_consts = saved_enum;
         *rest = tok;
         return node;
     }
@@ -2325,8 +2329,10 @@ static Node *stmt(Token **rest, Token *tok) {
         current_loop = saved_loop;
         tok = skip(tok, "while");
         tok = skip(tok, "(");
+        EnumConst *saved_enum = enum_consts;
         node->cond = expr(&tok, tok);
         tok = skip(tok, ")");
+        enum_consts = saved_enum;
         *rest = skip(tok, ";");
         return node;
     }
@@ -2336,6 +2342,7 @@ static Node *stmt(Token **rest, Token *tok) {
         Typedef *saved_typedefs = typedefs;
         Node *node = new_node(ND_FOR, tok);
         tok = skip(tok->next, "(");
+        EnumConst *saved_enum = enum_consts;
 
         if (!equal(tok, ";")) {
             if (is_typename(tok)) {
@@ -2363,6 +2370,7 @@ static Node *stmt(Token **rest, Token *tok) {
         current_loop = node;
         node->then = stmt(&tok, tok);
         current_loop = saved_loop;
+        enum_consts = saved_enum;
         node = append_cleanup_range(node, locals, saved_locals, tok);
         locals = saved_locals;
         typedefs = saved_typedefs;
@@ -2373,6 +2381,7 @@ static Node *stmt(Token **rest, Token *tok) {
     if (equal(tok, "switch")) {
         Node *node = new_node(ND_SWITCH, tok);
         tok = skip(tok->next, "(");
+        EnumConst *saved_enum = enum_consts;
         node->cond = expr(&tok, tok);
         tok = skip(tok, ")");
         Node *saved = current_switch;
@@ -2380,6 +2389,7 @@ static Node *stmt(Token **rest, Token *tok) {
         current_switch = node;
         node->then = stmt(&tok, tok);
         current_switch = saved;
+        enum_consts = saved_enum;
         *rest = tok;
         return node;
     }
