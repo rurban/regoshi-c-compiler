@@ -20,6 +20,7 @@ if [ -z "$RCC" ]; then
 			RCC="$candidate"
 			if [ "$RCC" = "$SCRIPT_DIR/rcc.exe" ]; then
 				RCC="$SCRIPT_DIR/mingw-cross.sh"
+                                REPORT_FILE="$SCRIPT_DIR/tcc_test_mingw.md"
 			fi
 			break
 		fi
@@ -196,6 +197,11 @@ while IFS= read -r src; do
 		failed=$((failed + 1))
 		add_row "$base" "COMPILE_FAIL" "rcc returned non-zero"
 		print_change "$base" "COMPILE_FAIL"
+		if [ "$src" = "129_scopes.c" ]; then
+			cd - || exit
+			src="$TEST_DIR/129_scopes.c"
+			RCC="$orig_RCC"
+		fi
 		continue
 	fi
 	if [ ! -x "$TMP_EXE" ]; then
@@ -204,6 +210,11 @@ while IFS= read -r src; do
 		failed=$((failed + 1))
 		add_row "$base" "COMPILE_FAIL" "executable missing"
 		print_change "$base" "COMPILE_FAIL"
+		if [ "$src" = "129_scopes.c" ]; then
+			cd - || exit
+			src="$TEST_DIR/129_scopes.c"
+			RCC="$orig_RCC"
+		fi
 		continue
 	fi
 	if [ "$src" = "129_scopes.c" ]; then

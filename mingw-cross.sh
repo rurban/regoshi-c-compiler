@@ -1,5 +1,6 @@
 #!/bin/sh
 # Usage: mingw-cross.sh file.c [-o output.exe]
+scriptdir="$(cd "$(dirname "$0")" && pwd)"
 input="$1"
 base="${input%.c}"
 shift
@@ -24,5 +25,5 @@ outbase="${output%.exe}"
 WINEDEBUG=fixme-all
 export WINEDEBUG
 
-wine rcc.exe -S "$input" -o "$outbase.s" &&
+wine "$scriptdir/rcc.exe" -S "$input" -o "$outbase.s" &&
 	x86_64-w64-mingw32-gcc "$outbase.s" -o "$output" && rm "$outbase.s"
