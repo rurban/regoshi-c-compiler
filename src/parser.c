@@ -130,10 +130,27 @@ static void cast_funcall_args(Node *call) {
 static Node *new_num(int64_t val, Token *tok) {
     Node *node = new_node(ND_NUM, tok);
     node->val = val;
-    if (val >= -2147483648LL && val <= 2147483647LL)
+    // Determine type from suffix encoded in token text
+    char *end = tok->loc + tok->len;
+    bool is_u = false;
+    int l_count = 0;
+    for (char *s = end - 1; s >= tok->loc; s--) {
+        char c = *s;
+        if (c == 'u' || c == 'U') {
+            is_u = true;
+        } else if (c == 'l' || c == 'L') {
+            l_count++;
+        } else
+            break;
+    }
+    if (l_count >= 2)
+        node->ty = is_u ? ty_ullong : ty_llong;
+    else if (l_count == 1)
+        node->ty = is_u ? ty_ulong : ty_long;
+    else if (is_u)
+        node->ty = (val >= 0 && val <= 0xFFFFFFFFLL) ? ty_uint : ty_ullong;
+    else if (val >= -2147483648LL && val <= 2147483647LL)
         node->ty = ty_int;
-    else if (val >= 0 && val <= 0xFFFFFFFFLL)
-        node->ty = ty_llong; // On LLP64, values > INT_MAX go to llong
     else
         node->ty = ty_llong;
     return node;
@@ -1250,6 +1267,10 @@ static Type *declspec(Token **rest, Token *tok, VarAttr *attr) {
             ty = ty_double;
         } else if (is_char) {
             ty = is_unsigned ? ty_uchar : ty_char;
+            if (is_char && is_signed && !is_unsigned) {
+                ty = copy_type(ty_char);
+                ty->is_signed_char = true;
+            }
         } else if (is_short) {
             ty = is_unsigned ? ty_ushort : ty_short;
         } else if (long_count >= 2) {
@@ -2475,6 +2496,8 @@ static bool type_equal(Type *a, Type *b) {
     if (a->qual != b->qual)
         return false;
     if (a->is_unsigned != b->is_unsigned)
+        return false;
+    if (a->kind == TY_CHAR && a->is_signed_char != b->is_signed_char)
         return false;
     if (a->is_variadic != b->is_variadic)
         return false;

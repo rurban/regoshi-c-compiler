@@ -106,6 +106,7 @@ struct Type {
     int align; // alignment
     bool is_unsigned;
     bool is_enum; // enum type — treated as unsigned for bitfield extraction
+    bool is_signed_char; // signed char vs plain char (both have is_unsigned=false)
     unsigned char qual; // TypeQual flags: const/volatile/restrict
     Type *base; // for pointer/array
     Member *members; // for struct

@@ -3,9 +3,9 @@ Generated: April 2026
 
 ## Summary
  - **Total**:     139
- - **Passed**:    118
- - **Failed**:    21
- - **Pass Rate**: 84%
+ - **Passed**:    119
+ - **Failed**:    20
+ - **Pass Rate**: 85%
 
 ## Detailed Results
 | Test                                     | Status       | Message                              |
@@ -89,7 +89,7 @@ Generated: April 2026
 | 91_ptr_longlong_arith32                  | PASS         | Output matches                       |
 | 92_enum_bitfield                         | PASS         | Output matches                       |
 | 93_integer_promotion                     | PASS         | Output matches                       |
-| 94_generic                               | MISMATCH     | Output does not match .expect        |
+| 94_generic                               | PASS         | Output matches                       |
 | 95_bitfields                             | MISMATCH     | Output does not match .expect        |
 | 97_utf8_string_literal                   | PASS         | Output matches                       |
 | 98_al_ax_extend                          | COMPILE_FAIL | rcc returned non-zero                |

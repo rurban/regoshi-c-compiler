@@ -93,15 +93,29 @@ static Type *get_float_type(Type *lhs, Type *rhs) {
     return ty_float;
 }
 
+static int int_rank(Type *ty) {
+    switch (ty->kind) {
+    case TY_BOOL: return 0;
+    case TY_CHAR: return 1;
+    case TY_SHORT: return 2;
+    case TY_INT: return 3;
+    case TY_LONG: return 4;
+    case TY_LLONG: return 5;
+    default: return 3;
+    }
+}
+
 static Type *usual_arith_type(Type *lhs, Type *rhs) {
     if (is_flonum(lhs) || is_flonum(rhs))
         return get_float_type(lhs, rhs);
     lhs = integer_promotion(lhs);
     rhs = integer_promotion(rhs);
-    int size = lhs->size > rhs->size ? lhs->size : rhs->size;
-    if (size < 4)
-        size = 4;
-    return get_integer_type(size, lhs->is_unsigned || rhs->is_unsigned);
+    bool is_unsigned = lhs->is_unsigned || rhs->is_unsigned;
+    // Pick the type with higher integer rank
+    Type *higher = int_rank(lhs) >= int_rank(rhs) ? lhs : rhs;
+    if (is_unsigned == higher->is_unsigned)
+        return higher;
+    return get_integer_type(higher->size, is_unsigned);
 }
 
 static void add_type_internal(Node *node);
