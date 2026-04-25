@@ -5,8 +5,21 @@ Set-Location $ScriptDir
 
 $SRC     = Join-Path $ScriptDir "bench.c"
 $RCC     = Join-Path $RootDir "rcc.exe"
-$TCC     = Join-Path $RootDir "tinycc\tcc.exe"
 $GCC     = "gcc"
+
+# Discover TCC: prefer installed copy, else submodule with include paths
+$TCC_INSTALL = "C:/Program Files/tcc/tcc.exe"
+$TCC_SUBMODULE = Join-Path $RootDir "tinycc\tcc.exe"
+$TCC = $null
+$TCC_ARGS = ""
+if (Test-Path $TCC_INSTALL) {
+    $TCC = $TCC_INSTALL
+} elseif (Test-Path $TCC_SUBMODULE) {
+    $TCC = $TCC_SUBMODULE
+    $win32inc = Join-Path $RootDir "tinycc\win32\include"
+    $tccinc = Join-Path $RootDir "tinycc\include"
+    $TCC_ARGS = "-I `"$win32inc`" -I `"$tccinc`""
+}
 
 $RCC_EXE = Join-Path $ScriptDir "bench_rcc.exe"
 $TCC_EXE = Join-Path $ScriptDir "bench_tcc.exe"
@@ -70,9 +83,14 @@ $r = Run-Bench "RCC (your compiler)" $RCC "$SRC -o $RCC_EXE" $RCC_EXE "Yellow"
 if ($r) { $results += $r }
 Write-Host ""
 
-$r = Run-Bench "TCC (Tiny C Compiler)" $TCC "$SRC -o $TCC_EXE" $TCC_EXE "Green"
-if ($r) { $results += $r }
-Write-Host ""
+if ($TCC) {
+    $r = Run-Bench "TCC (Tiny C Compiler)" $TCC "$SRC $TCC_ARGS -o $TCC_EXE" $TCC_EXE "Green"
+    if ($r) { $results += $r }
+    Write-Host ""
+} else {
+    Write-Host "TCC not found, skipping TCC benchmark" -ForegroundColor DarkGray
+    Write-Host ""
+}
 
 $r = Run-Bench "GCC -O0 (no opt)" $GCC "-O0 $SRC -o $GCC_EXE -lm" $GCC_EXE "Magenta"
 if ($r) { $results += $r }
