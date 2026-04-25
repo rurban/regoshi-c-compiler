@@ -1,11 +1,11 @@
 # TCC Test Suite Report for RCC
-Generated on: 04/25/2026 14:59:16
+Generated on: 04/25/2026 15:51:49
 
 ## Summary
-- **Total Tests**: 129
+- **Total Tests**: 112
 - **Passed**: 84
-- **Failed**: 30
-- **Pass Rate**: 65.12%
+- **Failed**: 28
+- **Pass Rate**: 75%
 
 ## Detailed Results
 | Test | Status | Message |
@@ -99,7 +99,6 @@ Generated on: 04/25/2026 14:59:16
 | 101_cleanup | MISMATCH | Output does not match .expect |
 | 102_alignas | MISMATCH | Output does not match .expect |
 | 103_implicit_memmove | PASS | Output matches |
-| 104+_inline | COMPILE_FAIL | rcc exited with 1 |
 | 105_local_extern | PASS | Output matches |
 | 107_stack_safe | PASS | Output matches |
 | 108_constructor | MISMATCH | Output does not match .expect |
@@ -108,7 +107,6 @@ Generated on: 04/25/2026 14:59:16
 | 111_conversion | PASS | Output matches |
 | 118_switch | PASS | Output matches |
 | 119_random_stuff | COMPILE_FAIL | rcc exited with 1 |
-| 120+_alias | COMPILE_FAIL | rcc exited with 1 |
 | 121_struct_return | PASS | Output matches |
 | 123_vla_bug | COMPILE_FAIL | rcc exited with 1 |
 | 124_atomic_counter | COMPILE_FAIL | rcc exited with 1 |

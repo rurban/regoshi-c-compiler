@@ -63,9 +63,16 @@ foreach ($file in $TestFiles) {
     $expectFile = Join-Path $TestDir "$base.expect"
     $outputFile = Join-Path $TestDir "$base.out"
 
+    # Skip multi-file helper files (e.g. 104+_inline.c, 120+_alias.c)
+    if ($base -match '\+') {
+        $Total--
+        continue
+    }
+
     # Skip tests that require TCC internals, inline asm, or pthreads
     if ($SkipTests -contains $base) {
         Write-Host "$base... SKIP" -ForegroundColor DarkGray
+        $Total--
         continue
     }
 
