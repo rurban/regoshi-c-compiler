@@ -1794,9 +1794,11 @@ void codegen(Program *prog) {
                     printf("  .zero %d\n", var->ty->size - var->init_size);
             } else if (var->has_init) {
                 if (var->ty->size == 1)
-                    printf("  .byte %lld\n", (long long)var->init_val);
+                    printf("  .byte %u\n", (unsigned char)var->init_val);
+                else if (var->ty->size == 2)
+                    printf("  .word %u\n", (unsigned short)var->init_val);
                 else if (var->ty->size == 4)
-                    printf("  .long %lld\n", (long long)var->init_val);
+                    printf("  .long %u\n", (unsigned)var->init_val);
                 else
                     printf("  .quad %lld\n", (long long)var->init_val);
             } else if (var->ty->size > 0) {

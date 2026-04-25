@@ -1,12 +1,12 @@
 # Windows RCC Benchmark Results
 
-_Generated: 04/25/2026 10:52:39_
+_Generated: 04/25/2026 10:59:39_
 
 | Compiler            | Compile (ms) | Execute (ms) | Total (ms) |
 | :------------------ | -----------: | -----------: | ---------: |
-| RCC (your compiler) |         1024 |          513 |       1537 |
-| GCC -O0 (no opt)    |         1004 |          415 |       1419 |
-| GCC -O2 (optimized) |         1004 |          115 |       1119 |
+| RCC (your compiler) |         1010 |          519 |       1529 |
+| GCC -O0 (no opt)    |         1003 |          426 |       1429 |
+| GCC -O2 (optimized) |         1015 |          119 |       1134 |
 
 ## Output Correctness
 
