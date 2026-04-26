@@ -207,6 +207,18 @@ static bool file_exists(const char *path) {
     return false;
 }
 
+static char *full_path(char *path) {
+    char full[4096];
+#ifdef _WIN32
+    if (_fullpath(full, path, sizeof(full)))
+        return str_intern(full, strlen(full));
+#else
+    if (realpath(path, full))
+        return str_intern(full, strlen(full));
+#endif
+    return str_intern(path, strlen(path));
+}
+
 static char *canonical_path(char *path) {
     if (!path || !*path)
         return str_intern(path, strlen(path));
@@ -482,14 +494,6 @@ static char *resolve_include(char *curr_file, char *spec) {
     //fprintf(stderr, "resolve_include: %s (curr_file=%s, spec=%s))\n", path, curr_file, spec);
     if (file_exists(path))
         return canonical_path(path);
-
-    char *base = path_basename(spec);
-    if (base != spec) {
-        path = path_join(dir, base);
-        //fprintf(stderr, "resolve_include: %s (base=%s)\n", path, base);
-        if (file_exists(path))
-            return canonical_path(path);
-    }
 
 #ifndef RCC_INCDIR
 #define RCC_INCDIR "include"
@@ -1001,7 +1005,8 @@ static long eval_condition(char *expr, char *filename) {
 }
 
 static char *preprocess_file(char *filename, char *input, int *line_counts) {
-    if (is_once_file(filename))
+    char *fpath = full_path(filename);
+    if (is_once_file(fpath))
         return "";
 
     strip_comments(input);
@@ -1035,7 +1040,7 @@ static char *preprocess_file(char *filename, char *input, int *line_counts) {
                 while (s < end && isspace((unsigned char)*s))
                     s++;
                 if (pp_startswith(s, "once"))
-                    mark_once_file(filename);
+                    mark_once_file(fpath);
                 else if (pp_startswith(s, "pack")) {
                     s += 4;
                     while (s < end && isspace((unsigned char)*s)) s++;
@@ -1173,7 +1178,7 @@ static char *preprocess_file(char *filename, char *input, int *line_counts) {
                     }
                 }
                 if (spec) {
-                    char *path = resolve_include(filename, spec);
+                    char *path = resolve_include(fpath, spec);
                     if (path) {
                         char *inc = read_pp_file(path);
                         if (inc) {
@@ -1183,9 +1188,9 @@ static char *preprocess_file(char *filename, char *input, int *line_counts) {
                             unsigned src_resume = line_no + 1; // source line after #include
                             sb_puts(&out, format("# %u \"%s\"\n", line_no + 1, spec));
                             SplicedInput spliced_inc = splice_lines_with_counts(inc);
-                            sb_puts(&out, preprocess_file(path, spliced_inc.text, spliced_inc.line_counts));
+                            sb_puts(&out, preprocess_file(full_path(path), spliced_inc.text, spliced_inc.line_counts));
                             line_no += incl_lines;
-                            sb_puts(&out, format("# %u \"%s\"\n", src_resume, filename));
+                            sb_puts(&out, format("# %u \"%s\"\n", src_resume, fpath));
                         }
                     }
                 }
