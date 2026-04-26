@@ -53,6 +53,7 @@ void warn_tok(Token *tok, char *fmt, ...);
 void *arena_alloc(size_t size);
 char *format(char *fmt, ...);
 char *str_intern(const char *start, int len);
+char *path_basename(char *path);
 
 // Lexer entry point
 char *preprocess(char *filename, char *p);

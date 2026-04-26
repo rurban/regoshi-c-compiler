@@ -138,19 +138,18 @@ SKIP_TESTS="
 96_nodata_wanted
 73_arm64
 95_bitfields_ms
-104_inline
 112_backtrace
 113_btdll
 114_bound_signal
 115_bound_setjmp
 116_bound_setjmp2
-120_alias
 122_vla_reuse
 126_bound_global
 78_vla_label
 79_vla_continue
 98_al_ax_extend
 99_fastcall
+120_alias
 123_vla_bug
 124_atomic_counter
 125_atomic_misc
@@ -167,15 +166,21 @@ $1
 	return 1
 }
 
-# Iterate over all *.c files; skip helper files containing '+' in the name
+# Iterate over all *.c files; for helper files containing '+' prepend them to the ones without
+p_src=
 while IFS= read -r src; do
 	fname="$(basename "$src")"
-	case "$fname" in *+*) continue ;; esac # skip multi-file helpers
+	case "$fname" in
+            *+*) p_src="$src" # use as first src arg
+                 continue
+                 ;;
+        esac
 
 	base="${fname%.c}"
 
 	if is_skipped "$base"; then
 		printf "  %-40s %s\n" "$base..." "SKIP"
+		p_src=
 		continue
 	fi
 
@@ -202,7 +207,8 @@ while IFS= read -r src; do
 		src=129_scopes.c
         fi
         # 1. Compile (capture warnings/notes to TMP_OUT; errors abort)
-	if ! "$RCC" "$src" -o "$TMP_EXE" 2>"$TMP_OUT"; then
+        # shellcheck disable=SC2086
+	if ! "$RCC" $p_src "$src" -o "$TMP_EXE" 2>"$TMP_OUT"; then
 		# shellcheck disable=SC2059
 		printf "${RED}COMPILE FAIL${RESET}\n"
 		failed=$((failed + 1))
@@ -215,6 +221,7 @@ while IFS= read -r src; do
 		fi
 		continue
 	fi
+        [ -n "$p_src" ] && p_src=
 	if [ ! -x "$TMP_EXE" ]; then
 		# shellcheck disable=SC2059
 		printf "${RED}NO EXE PRODUCED${RESET}\n"

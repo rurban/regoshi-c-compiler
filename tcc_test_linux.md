@@ -2,10 +2,10 @@
 Generated: April 2026
 
 ## Summary
- - **Total**:     130
+ - **Total**:     131
  - **Passed**:    127
- - **Failed**:    3
- - **Pass Rate**: 97%
+ - **Failed**:    4
+ - **Pass Rate**: 96%
 
 ## Detailed Results
 | Test                                     | Status       | Message                              |
@@ -94,6 +94,7 @@ Generated: April 2026
 | 101_cleanup                              | PASS         | Output matches                       |
 | 102_alignas                              | PASS         | Output matches                       |
 | 103_implicit_memmove                     | PASS         | Output matches                       |
+| 104_inline                               | COMPILE_FAIL | executable missing                   |
 | 105_local_extern                         | PASS         | Output matches                       |
 | 106_versym                               | PASS         | Output matches                       |
 | 107_stack_safe                           | PASS         | Output matches                       |

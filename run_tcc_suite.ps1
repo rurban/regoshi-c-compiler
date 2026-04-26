@@ -39,7 +39,7 @@ $SkipTests = @(
     "115_bound_setjmp",
     "116_bound_setjmp2",
     "117_builtins",
-    "120_alias",              # needs multi-file 120+_alias.c + GNU alias
+    "120_alias",              # TCC extension, GCC/CLANG fail. GNU alias
     "122_vla_reuse",          # VLA not supported
     "126_bound_global",
     "78_vla_label",           # VLA not supported

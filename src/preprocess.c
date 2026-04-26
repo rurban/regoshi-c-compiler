@@ -175,7 +175,7 @@ static char *path_dirname(char *path) {
     return pp_strndup(path, last - path);
 }
 
-static char *path_basename(char *path) {
+char *path_basename(char *path) {
     char *last = path;
     for (char *p = path; *p; p++) {
 #ifdef _WIN32

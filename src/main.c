@@ -12,6 +12,26 @@
 void add_define(char *def);
 void add_undef(char *name);
 
+typedef struct OutPath OutPath;
+struct OutPath {
+    OutPath *next;
+    char *path;
+};
+static OutPath *out_paths;
+
+OutPath *reverse(OutPath *head) {
+    OutPath *prev = NULL;
+    OutPath *curr = head;
+
+    while (curr) {
+        OutPath *next = curr->next;
+        curr->next = prev;
+        prev = curr;
+        curr = next;
+    }
+    return prev;
+}
+
 // Returns the contents of a given file.
 static char *read_file(char *path) {
     FILE *fp = fopen(path, "r");
@@ -136,6 +156,54 @@ int main(int argc, char **argv) {
             fprintf(stderr, "rcc: warning: ignored unknown option %s\n", argv[i]);
         } else {
             in_path = argv[i];
+
+            char *asm_path = opt_S
+                ? opt_o ? out_path : format("%s.s", path_basename(in_path))
+                : format("rcc_tmp_%d_%d_%s.s", _getpid(), i, path_basename(in_path));
+
+            // Tokenize and Parse
+            char *contents = read_file(in_path);
+
+            // Always preprocess - opt_E just outputs preprocessed result
+            char *preprocessed = preprocess(in_path, contents);
+
+            if (opt_E) {
+                printf("%s", preprocessed);
+                continue;
+            }
+
+            Token *tok = tokenize(in_path, preprocessed);
+            Program *prog = parse(tok);
+
+            // Type system / Semantic checks
+            for (TLItem *item = prog->items; item; item = item->next) {
+                if (item->kind != TL_FUNC)
+                    continue;
+                for (Node *n = item->fn->body; n; n = n->next) {
+                    add_type(n);
+                }
+            }
+
+            // CTFE is still incomplete and has caused miscompiles/crashes on parts
+            // of the TCC suite, so keep the compile path conservative for now.
+
+            // Redirect stdout to our assembly file
+            if (!freopen(asm_path, "w", stdout)) {
+                fprintf(stderr, "rcc: error: cannot open output file %s\n", asm_path);
+                return 1;
+            }
+            // Code generation (prints assembly to stdout, which is now asm_path)
+            codegen(prog);
+            fflush(stdout);
+            // Restore stdout to console if we want to print further, but we are done.
+            fclose(stdout);
+
+            if (!opt_S) {
+                OutPath *p = arena_alloc(sizeof(OutPath));
+                p->path = asm_path;
+                p->next = out_paths;
+                out_paths = p;
+            }
         }
     }
 
@@ -144,70 +212,33 @@ int main(int argc, char **argv) {
         return 1;
     }
 
-    char *asm_path = opt_S
-        ? opt_o ? out_path : format("%s.S", in_path)
-        : format("rcc_tmp_%d.S", _getpid());
-
-    // Tokenize and Parse
-    char *contents = read_file(in_path);
-
-    // Always preprocess - opt_E just outputs preprocessed result
-    char *preprocessed = preprocess(in_path, contents);
-
-    if (opt_E) {
-        printf("%s", preprocessed);
-        return 0;
-    }
-
-    Token *tok = tokenize(in_path, preprocessed);
-    Program *prog = parse(tok);
-
-    // Type system / Semantic checks
-    for (TLItem *item = prog->items; item; item = item->next) {
-        if (item->kind != TL_FUNC)
-            continue;
-        for (Node *n = item->fn->body; n; n = n->next) {
-            add_type(n);
-        }
-    }
-
-    // CTFE is still incomplete and has caused miscompiles/crashes on parts
-    // of the TCC suite, so keep the compile path conservative for now.
-
-    // Redirect stdout to our assembly file
-    if (!freopen(asm_path, "w", stdout)) {
-        fprintf(stderr, "rcc: error: cannot open output file %s\n", asm_path);
-        return 1;
-    }
-
-    // Code generation (prints assembly to stdout, which is now asm_path)
-    codegen(prog);
-    fflush(stdout);
-
-    // Restore stdout to console if we want to print further, but we are done.
-    fclose(stdout);
-
-    // Assemble / Link if not just compiling to assembly
-    if (!opt_S) {
+    // Assemble / Link if not just compiling to assembly or preprocessing
+    if (!opt_S && !opt_E) {
         char cmd[1024];
         if (opt_c) {
-            snprintf(cmd, sizeof(cmd), GCC " -c %s -o %s", asm_path, out_path);
+            snprintf(cmd, sizeof(cmd), GCC " -c -o %s", out_path);
         } else {
 #if defined(__APPLE__)
-            snprintf(cmd, sizeof(cmd), GCC " -Wl,-e,main %s -o %s%s", asm_path, out_path, libs);
+            snprintf(cmd, sizeof(cmd), GCC " -Wl,-e,main -o %s%s", out_path, libs);
 #else
-            snprintf(cmd, sizeof(cmd), GCC " -no-pie %s -o %s%s", asm_path, out_path, libs);
+            snprintf(cmd, sizeof(cmd), GCC " -no-pie -o %s%s", out_path, libs);
 #endif
         }
-
+        out_paths = reverse(out_paths);
+        for (OutPath *p = out_paths; p; p = p->next) {
+            strncat(cmd, " ", sizeof(cmd) - strlen(cmd));
+            strncat(cmd, p->path, sizeof(cmd) - strlen(cmd));
+        }
         int status = system(cmd);
         if (status != 0) {
-            fprintf(stderr, "rcc: error: backend gcc failed with code %d\n", status);
-            remove(asm_path);
+            fprintf(stderr, "rcc: error: backend %s failed with code %d\n", cmd, status);
+        }
+        for (OutPath *p = out_paths; p; p = p->next) {
+            remove(p->path);
+        }
+        if (status != 0) {
             return status;
         }
-        remove(asm_path);
     }
-
     return 0;
 }
