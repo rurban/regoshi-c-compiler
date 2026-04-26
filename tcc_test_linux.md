@@ -2,10 +2,10 @@
 Generated: April 2026
 
 ## Summary
- - **Total**:     131
+ - **Total**:     134
  - **Passed**:    127
- - **Failed**:    4
- - **Pass Rate**: 96%
+ - **Failed**:    7
+ - **Pass Rate**: 94%
 
 ## Detailed Results
 | Test                                     | Status       | Message                              |
@@ -106,10 +106,13 @@ Generated: April 2026
 | 118_switch                               | PASS         | Output matches                       |
 | 119_random_stuff                         | COMPILE_FAIL | rcc returned non-zero                |
 | 121_struct_return                        | PASS         | Output matches                       |
+| 127_asm_goto                             | COMPILE_FAIL | rcc returned non-zero                |
+| 128_run_atexit                           | MISMATCH     | Output does not match .expect        |
 | 129_scopes                               | PASS         | Output matches                       |
 | 130_large_argument                       | PASS         | Output matches                       |
 | 131_return_struct_in_reg                 | PASS         | Output matches                       |
 | 132_bound_test                           | PASS         | Output matches                       |
+| 133_old_func                             | COMPILE_FAIL | rcc returned non-zero                |
 | 134_double_to_signed                     | PASS         | Output matches                       |
 | 135_func_arg_struct_compare              | PASS         | Output matches                       |
 | 137_funcall_struct_args                  | PASS         | Output matches                       |

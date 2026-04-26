@@ -73,6 +73,7 @@ test_args() {
 	case "$1" in
 	31_args) printf '%s' "arg1 arg2 arg3 arg4 arg5" ;;
 	46_grep) printf '%s' '[^* ]*[:a:d: ]+\:\*-/: $'" $TEST_DIR/46_grep.c" ;;
+        128_run_atexit) printf "1" ;;
 	*) printf '' ;;
 	esac
 }
@@ -153,9 +154,6 @@ SKIP_TESTS="
 123_vla_bug
 124_atomic_counter
 125_atomic_misc
-127_asm_goto
-128_run_atexit
-133_old_func
 136_atomic_gcc_style
 "
 
@@ -207,15 +205,28 @@ while IFS= read -r src; do
 		src=129_scopes.c
         fi
         # 1. Compile (capture warnings/notes to TMP_OUT; errors abort)
-        # shellcheck disable=SC2086
-	if ! "$RCC" $p_src "$src" -o "$TMP_EXE" 2>"$TMP_OUT"; then
+        # shellcheck disable=SC2086,SC2129
+	if [ "$src" = "$TEST_DIR/128_run_atexit.c" ]; then
+            echo "[test_128_return]" >"$TMP_OUT"
+	    "$RCC" -Dtest_128_return "$src" -o "$TMP_EXE"
+            "$TMP_EXE" >>"$TMP_OUT"
+            run_atexit="$?"
+            echo "[returns $run_atexit]" >>"$TMP_OUT"
+            echo "" >>"$TMP_OUT"
+            echo "[test_128_exit]" >>"$TMP_OUT"
+	    "$RCC" -Dtest_128_exit "$src" -o "$TMP_EXE"
+            "$TMP_EXE" >>"$TMP_OUT"
+            xx="$?"
+            run_atexit="$run_atexit $xx"
+            echo "[returns $xx]" >>"$TMP_OUT"
+        elif ! "$RCC" $p_src "$src" -o "$TMP_EXE" 2>"$TMP_OUT"; then
 		# shellcheck disable=SC2059
 		printf "${RED}COMPILE FAIL${RESET}\n"
 		failed=$((failed + 1))
 		add_row "$base" "COMPILE_FAIL" "rcc returned non-zero"
 		print_change "$base" "COMPILE_FAIL"
 		if [ "$src" = "129_scopes.c" ]; then
-			cd - || exit
+			cd - >/dev/null || exit
 			src="$TEST_DIR/129_scopes.c"
 			RCC="$orig_RCC"
 		fi
@@ -229,14 +240,14 @@ while IFS= read -r src; do
 		add_row "$base" "COMPILE_FAIL" "executable missing"
 		print_change "$base" "COMPILE_FAIL"
 		if [ "$src" = "129_scopes.c" ]; then
-			cd - || exit
+			cd - >/dev/null || exit
 			src="$TEST_DIR/129_scopes.c"
 			RCC="$orig_RCC"
 		fi
 		continue
 	fi
 	if [ "$src" = "129_scopes.c" ]; then
-		cd - || exit
+		cd - >/dev/null || exit
 		src="$TEST_DIR/129_scopes.c"
 		RCC="$orig_RCC"
         fi
@@ -248,6 +259,9 @@ while IFS= read -r src; do
 		if [ "$base" = "46_grep" ]; then
 			# 46_grep pattern contains spaces; run from TEST_DIR with local filename
 			(cd "$TEST_DIR" && "$TMP_EXE" '[^* ]*[:a:d: ]+\:\*-/: $' 46_grep.c) >>"$TMP_OUT" 2>&1; actual_exit=$?
+		elif [ "$base" = "128_run_atexit" ]; then
+			actual_exit="$run_atexit"
+			expected_exit="1 2" # we already ran twice
 		else
 			# shellcheck disable=SC2086
 			"$TMP_EXE" $args >>"$TMP_OUT" 2>&1; actual_exit=$?
