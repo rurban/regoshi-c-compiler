@@ -177,6 +177,8 @@ struct LVar {
     bool is_extern;
     bool is_function;
     bool is_static; // static local variable
+    bool is_inline;
+    bool is_weak;
     bool has_init;
     int64_t init_val;
     char *init_data;
@@ -311,6 +313,11 @@ struct Function {
     bool is_variadic;
     bool is_constructor;
     bool is_destructor;
+    bool is_inline;
+    bool is_static;
+    bool is_extern;
+    bool is_weak;
+    bool has_def;
 };
 
 typedef struct StrLit StrLit;

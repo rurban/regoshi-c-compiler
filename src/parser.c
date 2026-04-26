@@ -8,6 +8,8 @@ struct VarAttr {
     bool is_typedef;
     bool is_extern;
     bool is_static;
+    bool is_inline;
+    bool is_weak;
     bool has_type;
 };
 
@@ -423,7 +425,8 @@ static Node *append_cleanup_range(Node *body, LVar *begin, LVar *end, Token *tok
 static bool is_storage_class(Token *tok) {
     return equal(tok, "typedef") || equal(tok, "extern") || equal(tok, "static") ||
         equal(tok, "inline") || equal(tok, "__inline") || equal(tok, "__inline__") ||
-        equal(tok, "const") || equal(tok, "volatile") || equal(tok, "restrict") || equal(tok, "signed") ||
+        equal(tok, "const") || equal(tok, "volatile") || equal(tok, "restrict") ||
+        equal(tok, "signed") ||
         equal(tok, "unsigned") || equal(tok, "short") || equal(tok, "long");
 }
 
@@ -441,10 +444,10 @@ static Token *skip_balanced(Token *tok) {
 
 static Type *type_name(Token **rest, Token *tok);
 
-static Token *read_type_attrs(Token *tok, int *align);
+static Token *read_type_attrs(Token *tok, int *align, VarAttr *attr);
 
 static Token *skip_attributes(Token *tok) {
-    return read_type_attrs(tok, NULL);
+    return read_type_attrs(tok, NULL, NULL);
 }
 
 static unsigned char collect_type_quals(Token **rest, Token *tok) {
@@ -490,7 +493,7 @@ static void maybe_update_align(int *align, int value) {
         *align = value;
 }
 
-static Token *read_type_attrs(Token *tok, int *align) {
+static Token *read_type_attrs(Token *tok, int *align, VarAttr *attr) {
     while (true) {
         if (equal(tok, "_Alignas")) {
             tok = tok->next;
@@ -563,6 +566,17 @@ static Token *read_type_attrs(Token *tok, int *align) {
                         }
                         tok = skip(tok, ")");
                     }
+                    if (equal(tok, ","))
+                        tok = tok->next;
+                    continue;
+                }
+
+                if (equal(tok, "weak")) {
+                    if (attr)
+                        attr->is_weak = true;
+                    tok = tok->next;
+                    if (equal(tok, "("))
+                        tok = skip_balanced(tok);
                     if (equal(tok, ","))
                         tok = tok->next;
                     continue;
@@ -767,11 +781,11 @@ static Type *type_suffix(Token **rest, Token *tok, Type *ty) {
 
 static Type *declarator(Token **rest, Token *tok, Type *ty, char **name) {
     int decl_align = 0;
-    tok = read_type_attrs(tok, &decl_align);
+    tok = read_type_attrs(tok, &decl_align, NULL);
     while (equal(tok, "*")) {
         ty = pointer_to(ty);
         tok = tok->next;
-        tok = read_type_attrs(tok, &decl_align);
+        tok = read_type_attrs(tok, &decl_align, NULL);
         unsigned char pq = collect_type_quals(&tok, tok);
         if (pq) {
             ty = copy_type(ty);
@@ -847,7 +861,7 @@ static Type *declarator(Token **rest, Token *tok, Type *ty, char **name) {
     if (name)
         *name = tok->name;
     tok = tok->next;
-    tok = read_type_attrs(tok, &decl_align);
+    tok = read_type_attrs(tok, &decl_align, NULL);
     ty = type_suffix(rest, tok, ty);
     return apply_type_align(ty, decl_align);
 }
@@ -1167,7 +1181,7 @@ static Type *declspec(Token **rest, Token *tok, VarAttr *attr) {
     memset(attr, 0, sizeof(*attr));
 
     for (;;) {
-        Token *attr_tok = read_type_attrs(tok, &attr_align);
+        Token *attr_tok = read_type_attrs(tok, &attr_align, attr);
         if (attr_tok != tok) {
             tok = attr_tok;
             continue;
@@ -1189,6 +1203,7 @@ static Type *declspec(Token **rest, Token *tok, VarAttr *attr) {
             continue;
         }
         if (equal(tok, "inline") || equal(tok, "__inline") || equal(tok, "__inline__")) {
+            attr->is_inline = true;
             tok = tok->next;
             continue;
         }
@@ -3640,8 +3655,15 @@ Program *parse(Token *tok) {
                 LVar *fn_sym = new_var(name, fn_symbol_ty, false);
                 fn_sym->is_extern = true;
                 fn_sym->is_function = true;
+                fn_sym->is_inline = attr.is_inline;
+                fn_sym->is_weak = attr.is_weak;
             } else {
                 existing->ty = fn_symbol_ty;
+                // Update flags on redeclaration
+                if (attr.is_inline)
+                    existing->is_inline = true;
+                if (attr.is_weak)
+                    existing->is_weak = true;
             }
 
             if (equal(tok, ";")) {
@@ -3677,6 +3699,10 @@ Program *parse(Token *tok) {
             fn->is_variadic = is_variadic;
             fn->is_constructor = pending_constructor;
             fn->is_destructor = pending_destructor;
+            fn->is_inline = attr.is_inline;
+            fn->is_static = attr.is_static;
+            fn->is_extern = attr.is_extern;
+            fn->is_weak = attr.is_weak;
             pending_constructor = false;
             pending_destructor = false;
             pending_asm_name = NULL;

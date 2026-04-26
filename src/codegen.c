@@ -1976,8 +1976,12 @@ void codegen(Program *prog) {
         // Fix 16-byte alignment
         if ((push_bytes + sub_amount) % 16 != 0) sub_amount += 8;
 
-        // Emit prologue
-        printf(".globl %s\n", fn->name);
+        // Emit prologue - handle is_weak for __attribute__((weak)) and inline
+        if (fn->is_weak) {
+            printf(".weak %s\n", fn->name);
+        } else if (!fn->is_static) {
+            printf(".globl %s\n", fn->name);
+        }
         printf("%s = %s\n", fn->name, fn->asm_name ? fn->asm_name : fn->name);
         printf("%s:\n", fn->asm_name ? fn->asm_name : fn->name);
         printf("  push rbp\n");
