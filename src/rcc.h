@@ -100,6 +100,7 @@ struct Member {
     int offset;
     int bit_width; // 0 = not a bitfield
     int bit_offset; // bit position within the storage unit
+    int bf_load_size; // effective R/W size for dense-packed bitfields (0 = use ty->size)
 };
 
 struct Type {

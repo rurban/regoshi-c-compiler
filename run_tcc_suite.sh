@@ -425,4 +425,4 @@ fi
 
 printf "Report saved to %s\n" "$REPORT_FILE"
 
-[ "$passed" -ge 130 ]
+[ "$passed" -ge 133 ]

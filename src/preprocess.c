@@ -1035,7 +1035,7 @@ static char *preprocess_file(char *filename, char *input, int *line_counts) {
             while (s < end && isspace((unsigned char)*s))
                 s++;
 
-            if (pp_startswith(s, "pragma")) {
+            if (pp_startswith(s, "pragma") && active) {
                 s += 6;
                 while (s < end && isspace((unsigned char)*s))
                     s++;
@@ -1044,6 +1044,10 @@ static char *preprocess_file(char *filename, char *input, int *line_counts) {
                 else if (pp_startswith(s, "pack")) {
                     s += 4;
                     while (s < end && isspace((unsigned char)*s)) s++;
+                    if (*s == '(') {
+                        s++;
+                        while (s < end && isspace((unsigned char)*s)) s++;
+                    }
                     if (pp_startswith(s, "push")) {
                         pack_align_stack[pack_align_idx++] = pack_align;
                         s += 4;
@@ -1054,15 +1058,17 @@ static char *preprocess_file(char *filename, char *input, int *line_counts) {
                         }
                         if (*s >= '1' && *s <= '9')
                             pack_align = *s - '0';
+                        // Emit so parser sees current pack state
+                        // fprintf(stderr, "DEBUG PP: push pack_align=%d\n", pack_align);
+                        sb_puts(&out, format("# pragma pack(%d)\n", pack_align));
                     } else if (pp_startswith(s, "pop")) {
                         pack_align = pack_align_stack[--pack_align_idx];
+                        // fprintf(stderr, "DEBUG PP: pop pack_align=%d\n", pack_align);
+                        sb_puts(&out, "# pragma pack()\n");
                     } else if (*s >= '1' && *s <= '9') {
                         pack_align = *s - '0';
-                    } else if (*s == '(') {
-                        s++;
-                        while (s < end && isspace((unsigned char)*s)) s++;
-                        if (*s >= '1' && *s <= '9')
-                            pack_align = *s - '0';
+                        // fprintf(stderr, "DEBUG PP: set pack_align=%d\n", pack_align);
+                        sb_puts(&out, format("# pragma pack(%d)\n", pack_align));
                     }
                 } else if (pp_startswith(s, "push_macro")) {
                     s += 10;

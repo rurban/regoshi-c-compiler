@@ -916,7 +916,8 @@ static Type *enum_specifier(Token **rest, Token *tok) {
 
 static Type *struct_or_union_specifier(Token **rest, Token *tok, bool is_union) {
     tok = tok->next;
-    tok = skip_attributes(tok);
+    int struct_attr_align = 0;
+    tok = read_type_attrs(tok, &struct_attr_align, NULL);
     char *type_cleanup = pending_cleanup_func;
     pending_cleanup_func = NULL;
     pending_cleanup_tok = NULL;
@@ -964,7 +965,8 @@ static Type *struct_or_union_specifier(Token **rest, Token *tok, bool is_union) 
     int max_size = 0;
     int max_align = 1;
     int bit_pos = 0; // current bit position within the struct (for bitfield packing)
-    int bf_unit_size = 0; // size of current bitfield storage unit (0 = none active)
+    // int bf_unit_size = 0; // size of current bitfield storage unit (0 = none active)
+    // int bf_unit_offset = 0; // byte offset of current bitfield storage unit
     int struct_pack = pack_align; // capture #pragma pack value at struct start
 
     while (!equal(tok, "}")) {
@@ -980,7 +982,7 @@ static Type *struct_or_union_specifier(Token **rest, Token *tok, bool is_union) 
         if (equal(tok, ";")) {
             // Anonymous struct/union member: struct { ... }; or union { ... };
             if (base->kind == TY_STRUCT || base->kind == TY_UNION) {
-                bf_unit_size = 0;
+                // bf_unit_size = 0;
                 Member *mem = arena_alloc(sizeof(Member));
                 mem->name = NULL;
                 mem->bit_offset = 0;
@@ -1025,7 +1027,7 @@ static Type *struct_or_union_specifier(Token **rest, Token *tok, bool is_union) 
             // Anonymous struct/union member (no name, no bitfield width, aggregate type)
             // e.g. "struct { u8 a, b; };" inside another struct/union
             if (!name && bit_width == 0 && (mem_ty->kind == TY_STRUCT || mem_ty->kind == TY_UNION)) {
-                bf_unit_size = 0;
+                // bf_unit_size = 0;
                 Member *mem = arena_alloc(sizeof(Member));
                 mem->name = NULL;
                 mem->bit_offset = 0;
@@ -1055,18 +1057,33 @@ static Type *struct_or_union_specifier(Token **rest, Token *tok, bool is_union) 
                 if (!is_union) {
                     int unit = mem_ty->size;
                     int unit_bits = unit * 8;
-                    // :0 always forces a new storage unit
-                    if (bit_width == 0 || bf_unit_size != unit ||
-                        bit_pos % unit_bits + bit_width > unit_bits) {
-                        offset = align_to(offset, unit);
-                        bit_pos = offset * 8;
-                        bf_unit_size = unit;
-                    }
-                    if (bit_width > 0) {
-                        bit_pos += bit_width;
+                    if (bit_width == 0) {
+                        // :0 always advances to the next T-aligned boundary
+                        // (uses declared type size regardless of struct_pack)
+                        int unit_base = (bit_pos / unit_bits) * unit;
+                        if (bit_pos % unit_bits != 0)
+                            unit_base += unit;
+                        if (unit_base > offset) offset = unit_base;
+                        bit_pos = unit_base * 8;
+                        // bf_unit_size = unit;
+                    } else {
+                        // :N — advance bit_pos by N bits within layout
+                        if (struct_pack > 0) {
+                            // Dense packing: just advance cursor
+                            bit_pos += bit_width;
+                        } else {
+                            // Non-packed GCC rule: fit within T-aligned unit
+                            int unit_base = (bit_pos / unit_bits) * unit;
+                            int bit_off = bit_pos - unit_base * 8;
+                            if (bit_off + bit_width > unit_bits) {
+                                unit_base += unit;
+                                bit_pos = unit_base * 8;
+                                if (unit_base > offset) offset = unit_base;
+                            }
+                            bit_pos += bit_width;
+                        }
                         int end_byte = (bit_pos + 7) / 8;
-                        if (end_byte > offset)
-                            offset = end_byte;
+                        if (end_byte > offset) offset = end_byte;
                     }
                 }
                 if (!equal(tok, ","))
@@ -1081,45 +1098,84 @@ static Type *struct_or_union_specifier(Token **rest, Token *tok, bool is_union) 
             Member *mem = arena_alloc(sizeof(Member));
             mem->name = name;
             mem->bit_width = bit_width;
+            mem->bf_load_size = 0;
 
             if (bit_width > 0) {
-                // Bitfield member: pack within a storage unit of mem_ty->size
                 int unit = mem_ty->size; // storage unit size in bytes
                 int unit_bits = unit * 8;
 
-                // Check if we need to start a new storage unit:
-                // - no current unit, or different unit size, or doesn't fit
-                if (bf_unit_size != unit ||
-                    bit_pos % (unit * 8) + bit_width > unit_bits) {
-                    // Align to start of a new storage unit
-                    if (!is_union) {
-                        int a = unit;
-                        if (struct_pack > 0 && (struct_pack < a || a == 0))
-                            a = struct_pack;
-                        offset = align_to(offset, a);
-                        bit_pos = offset * 8;
-                    }
-                    bf_unit_size = unit;
-                }
-
                 mem->ty = mem_ty;
-                mem->bit_offset = bit_pos % unit_bits;
+
                 if (is_union) {
                     mem->offset = 0;
-                    if (max_size < unit)
-                        max_size = unit;
-                } else {
-                    mem->offset = (bit_pos / unit_bits) * unit;
+                    mem->bit_offset = 0;
+                    // bf_unit_size = unit;
+                    // bf_unit_offset = 0;
+                    if (max_size < unit) max_size = unit;
+                } else if (struct_pack > 0) {
+                    // Dense packing (#pragma pack): place at current bit cursor,
+                    // but if the member has an explicit alignment attribute
+                    // (align > natural size), enforce at least byte-alignment
+                    // (limited by struct_pack, so e.g. aligned(16) in pack(1) → 1).
+                    if (mem_ty->align > mem_ty->size) {
+                        int eff = mem_ty->align < struct_pack ? mem_ty->align : struct_pack;
+                        if (eff < 1) eff = 1;
+                        int aligned_byte = align_to((bit_pos + 7) / 8, eff);
+                        bit_pos = aligned_byte * 8;
+                        if (aligned_byte > offset) offset = aligned_byte;
+                    }
+                    int byte_pos = bit_pos / 8;
+                    int bit_off = bit_pos % 8;
+                    mem->offset = byte_pos;
+                    mem->bit_offset = bit_off;
+                    // bf_unit_size = unit;
+                    // bf_unit_offset = byte_pos;
+                    // If field crosses its declared type boundary, record larger load size
+                    int needed = (bit_off + bit_width + 7) / 8;
+                    if (needed > unit) {
+                        int ls = unit;
+                        while (ls < needed) ls *= 2;
+                        mem->bf_load_size = ls;
+                    }
                     bit_pos += bit_width;
                     int end_byte = (bit_pos + 7) / 8;
-                    if (end_byte > offset)
-                        offset = end_byte;
+                    if (end_byte > offset) offset = end_byte;
+                } else {
+                    // GCC T-aligned unit algorithm (non-packed):
+                    // Find the T-aligned storage unit that contains bit_pos.
+                    // If the bitfield fits within that unit, place it there.
+                    // Otherwise advance to the next T-aligned unit.
+                    // If the member type has explicit alignment > unit size,
+                    // the bitfield must start at that alignment boundary.
+                    int unit_base = (bit_pos / unit_bits) * unit;
+                    int bit_off = bit_pos - unit_base * 8;
+                    if (bit_off + bit_width > unit_bits) {
+                        unit_base += unit;
+                        bit_off = 0;
+                        bit_pos = unit_base * 8;
+                    }
+                    // Enforce explicit member alignment (e.g. __attribute__((aligned(16))) char a:4)
+                    // Only when alignment was explicitly set beyond the type's natural size.
+                    if (mem_ty->align > unit) {
+                        unit_base = align_to(unit_base, mem_ty->align);
+                        bit_off = 0;
+                        bit_pos = unit_base * 8;
+                    }
+                    mem->offset = unit_base;
+                    mem->bit_offset = bit_off;
+                    // bf_unit_size = unit;
+                    // bf_unit_offset = unit_base;
+                    if (unit_base > offset) offset = unit_base;
+                    bit_pos = unit_base * 8 + bit_off + bit_width;
+                    int end_byte = (bit_pos + 7) / 8;
+                    if (end_byte > offset) offset = end_byte;
+                    if (max_align < mem_ty->align) max_align = mem_ty->align;
                 }
                 if (max_align < unit)
                     max_align = unit;
             } else {
                 // Normal (non-bitfield) member
-                bf_unit_size = 0; // end any bitfield packing run
+                // bf_unit_size = 0; // end any bitfield packing run
                 mem->ty = mem_ty;
                 mem->bit_offset = 0;
                 if (is_union) {
@@ -1158,6 +1214,8 @@ static Type *struct_or_union_specifier(Token **rest, Token *tok, bool is_union) 
     int final_align = max_align;
     if (struct_pack > 0 && struct_pack < max_align)
         final_align = struct_pack;
+    if (struct_attr_align > final_align)
+        final_align = struct_attr_align;
     ty->align = final_align;
     ty->size = is_union ? align_to(max_size, final_align) : align_to(offset, final_align);
     *rest = tok;
@@ -2345,6 +2403,22 @@ static Node *compound_stmt_ex(Token **rest, Token *tok, LVar **out_locals) {
     current_block_depth++;
 
     while (!equal(tok, "}")) {
+        // Handle # pragma pack(N) emitted by the preprocessor
+        if (equal(tok, "#") && equal(tok->next, "pragma") &&
+            equal(tok->next->next, "pack")) {
+            tok = tok->next->next->next;
+            if (equal(tok, "(")) {
+                tok = tok->next;
+                if (tok->kind == TK_NUM)
+                    pack_align = tok->val;
+                else
+                    pack_align = 0;
+                tok = tok->next;
+                if (equal(tok, ")"))
+                    tok = tok->next;
+            }
+            continue;
+        }
         if (is_typename(tok)) {
             cur->next = declaration(&tok, tok);
             while (cur->next)
@@ -3711,6 +3785,22 @@ Program *parse(Token *tok) {
     TLItem *item_cur = &item_head;
 
     while (tok->kind != TK_EOF) {
+        // fprintf(stderr, "DEBUG PARSE: tok kind=%d '%.*s'\n", tok->kind, tok->len, tok->loc);
+        if (equal(tok, "#") && equal(tok->next, "pragma") &&
+            equal(tok->next->next, "pack")) {
+            tok = tok->next->next->next; // skip '# pragma pack'
+            if (equal(tok, "(")) {
+                tok = tok->next;
+                if (tok->kind == TK_NUM)
+                    pack_align = tok->val;
+                else
+                    pack_align = 0;
+                tok = tok->next;
+                if (equal(tok, ")"))
+                    tok = tok->next;
+            }
+            continue;
+        }
         if (equal(tok, "__asm__") || equal(tok, "__asm")) {
             tok = tok->next;
             char *str = parse_toplevel_asm(&tok, tok);

@@ -256,9 +256,19 @@ Token *tokenize(char *filename, char *p) {
                     }
                 }
             }
-            while (*p && *p != '\n')
-                p++;
-            continue;
+            // Don't skip #pragma pack directives; let the parser handle them
+            bool is_pack_pragma = false;
+            if (startswith(q, "pragma")) {
+                char *r = q + 6;
+                while (*r == ' ' || *r == '\t') r++;
+                if (startswith(r, "pack"))
+                    is_pack_pragma = true;
+            }
+            if (!is_pack_pragma) {
+                while (*p && *p != '\n')
+                    p++;
+                continue;
+            }
         }
 
         // Skip line comments

@@ -280,9 +280,17 @@ static int gen_funcall(Node *node, int hidden_ret_reg) {
         if (is_flonum(argv[i]->ty)) {
             printf("  mov qword ptr [rsp+%d], %s\n", shadow_space + arg_stack_idx[i] * 8, reg64[r]);
         } else {
-            if (argv[i]->ty->size == 1)
-                printf("  movzx %s, %s\n", reg64[r], reg8[r]);
-            else if (argv[i]->ty->size == 4) {
+            if (argv[i]->ty->size == 1) {
+                if (argv[i]->ty->is_unsigned)
+                    printf("  movzx %s, %s\n", reg64[r], reg8[r]);
+                else
+                    printf("  movsx %s, %s\n", reg32[r], reg8[r]);
+            } else if (argv[i]->ty->size == 2) {
+                if (argv[i]->ty->is_unsigned)
+                    printf("  movzx %s, %s\n", reg64[r], reg16[r]);
+                else
+                    printf("  movsx %s, %s\n", reg32[r], reg16[r]);
+            } else if (argv[i]->ty->size == 4) {
                 if (argv[i]->ty->is_unsigned)
                     printf("  mov %s, %s\n", reg32[r], reg32[r]);
                 else
@@ -326,7 +334,15 @@ static int gen_funcall(Node *node, int hidden_ret_reg) {
             printf("  movq %s, %s\n", argxmm[argi], reg64[arg_regs[i]]);
             printf("  mov %s, %s\n", argreg64[argi], reg64[arg_regs[i]]);
         } else if (arg_sizes[i] == 1) {
-            printf("  movzx %s, %s\n", argreg64[argi], reg8[arg_regs[i]]);
+            if (argv[i]->ty && !argv[i]->ty->is_unsigned)
+                printf("  movsx %s, %s\n", argreg32[argi], reg8[arg_regs[i]]);
+            else
+                printf("  movzx %s, %s\n", argreg64[argi], reg8[arg_regs[i]]);
+        } else if (arg_sizes[i] == 2) {
+            if (argv[i]->ty && !argv[i]->ty->is_unsigned)
+                printf("  movsx %s, %s\n", argreg32[argi], reg16[arg_regs[i]]);
+            else
+                printf("  movzx %s, %s\n", argreg64[argi], reg16[arg_regs[i]]);
         } else if (arg_sizes[i] == 4) {
             if (argv[i]->ty->is_unsigned)
                 printf("  mov %s, %s\n", argreg32[argi], reg(arg_regs[i], 4));
@@ -344,7 +360,15 @@ static int gen_funcall(Node *node, int hidden_ret_reg) {
         if (arg_is_float[i]) {
             printf("  movq %s, %s\n", argxmm[arg_fp_idx[i]], reg64[arg_regs[i]]);
         } else if (arg_sizes[i] == 1) {
-            printf("  movzx %s, %s\n", argreg64[arg_gp_idx[i]], reg8[arg_regs[i]]);
+            if (argv[i]->ty && !argv[i]->ty->is_unsigned)
+                printf("  movsx %s, %s\n", argreg32[arg_gp_idx[i]], reg8[arg_regs[i]]);
+            else
+                printf("  movzx %s, %s\n", argreg64[arg_gp_idx[i]], reg8[arg_regs[i]]);
+        } else if (arg_sizes[i] == 2) {
+            if (argv[i]->ty && !argv[i]->ty->is_unsigned)
+                printf("  movsx %s, %s\n", argreg32[arg_gp_idx[i]], reg16[arg_regs[i]]);
+            else
+                printf("  movzx %s, %s\n", argreg64[arg_gp_idx[i]], reg16[arg_regs[i]]);
         } else if (arg_sizes[i] == 4) {
             if (argv[i]->ty->is_unsigned)
                 printf("  mov %s, %s\n", argreg32[arg_gp_idx[i]], reg(arg_regs[i], 4));
@@ -865,11 +889,12 @@ static int gen(Node *node) {
             node->lhs->member->bit_width > 0) {
             int bw = node->lhs->member->bit_width;
             int bo = node->lhs->member->bit_offset;
-            int unit_sz = node->lhs->member->ty->size;
+            int unit_sz = node->lhs->member->bf_load_size
+                ? node->lhs->member->bf_load_size
+                : node->lhs->member->ty->size;
             unsigned long long mask = ((1ULL << bw) - 1) << bo;
 
             // Check if RHS reads the same bitfield (compound assignment like s.x += 1)
-            // In that case, we need to read the current value first
             bool rhs_reads_same = false;
             if (node->rhs->kind == ND_MEMBER && node->rhs->member == node->lhs->member) {
                 rhs_reads_same = true;
@@ -877,7 +902,6 @@ static int gen(Node *node) {
                        node->rhs->kind == ND_MUL || node->rhs->kind == ND_DIV ||
                        node->rhs->kind == ND_BITAND || node->rhs->kind == ND_BITOR ||
                        node->rhs->kind == ND_BITXOR) {
-                // Check if any operand reads the same bitfield
                 if (node->rhs->lhs && node->rhs->lhs->kind == ND_MEMBER &&
                     node->rhs->lhs->member == node->lhs->member)
                     rhs_reads_same = true;
@@ -886,86 +910,81 @@ static int gen(Node *node) {
                     rhs_reads_same = true;
             }
 
+            // Helper: emit unsigned load of unit_sz bytes
+#define BF_LOAD(sz, ra, rt) do { \
+    if ((sz) == 1) printf("  movzx %s, byte ptr [%s]\n", reg32[rt], reg64[ra]); \
+    else if ((sz) == 2) printf("  movzx %s, word ptr [%s]\n", reg32[rt], reg64[ra]); \
+    else if ((sz) == 4) printf("  mov %s, dword ptr [%s]\n", reg32[rt], reg64[ra]); \
+    else printf("  mov %s, qword ptr [%s]\n", reg64[rt], reg64[ra]); \
+} while (0)
+#define BF_STORE(sz, ra, rt) do { \
+    if ((sz) == 1) printf("  mov byte ptr [%s], %s\n", reg64[ra], reg8[rt]); \
+    else if ((sz) == 2) printf("  mov word ptr [%s], %s\n", reg64[ra], reg(rt, 2)); \
+    else if ((sz) == 4) printf("  mov dword ptr [%s], %s\n", reg64[ra], reg(rt, 4)); \
+    else printf("  mov qword ptr [%s], %s\n", reg64[ra], reg64[rt]); \
+} while (0)
+
             // Generate RHS (the new value to assign)
             int r2 = gen(node->rhs);
 
             if (rhs_reads_same) {
-                // Compound assignment: RHS reads the bitfield, so we need read-modify-write
                 int ra = gen_addr(node->lhs);
                 int rt = alloc_reg();
-                // rt = old value from storage unit (full extraction)
-                emit_load(node->lhs->member->ty, rt, format("[%s]", reg64[ra]));
-                // Extract current bitfield value
-                if (bo > 0) {
-                    printf("  shr %s, %d\n", reg64[rt], bo);
-                }
+                BF_LOAD(unit_sz, ra, rt);
+                if (bo > 0) printf("  shr %s, %d\n", reg64[rt], bo);
                 if (bw < unit_sz * 8) {
                     unsigned long long m = (1ULL << bw) - 1;
                     printf("  movabs rax, %llu\n", m);
                     printf("  and %s, rax\n", reg64[rt]);
                 }
-                // Now r2 should contain the result of the compound operation (e.g., old+1)
-                // But the gen() call above already evaluated the RHS which included reading
-                // the bitfield with our normal bitfield read code - so r2 has the result
-                // We just need to store it back with proper masking
-
-                // Clear the bitfield bits in old value
+                // Re-load for modify
+                BF_LOAD(unit_sz, ra, rt);
                 printf("  movabs rax, %llu\n", ~mask);
                 printf("  and %s, rax\n", reg64[rt]);
-                // Mask and shift new value into position
                 int rv = alloc_reg();
                 printf("  mov %s, %s\n", reg64[rv], reg64[r2]);
                 printf("  movabs rax, %llu\n", (1ULL << bw) - 1);
                 printf("  and %s, rax\n", reg64[rv]);
-                if (bo > 0)
-                    printf("  shl %s, %d\n", reg64[rv], bo);
+                if (bo > 0) printf("  shl %s, %d\n", reg64[rv], bo);
                 printf("  or %s, %s\n", reg64[rt], reg64[rv]);
-                // Store back
-                if (unit_sz == 1)
-                    printf("  mov byte ptr [%s], %s\n", reg64[ra], reg8[rt]);
-                else if (unit_sz == 2)
-                    printf("  mov word ptr [%s], %s\n", reg64[ra], reg(rt, 2));
-                else if (unit_sz == 4)
-                    printf("  mov dword ptr [%s], %s\n", reg64[ra], reg(rt, 4));
-                else
-                    printf("  mov qword ptr [%s], %s\n", reg64[ra], reg64[rt]);
+                BF_STORE(unit_sz, ra, rt);
                 free_reg(rv);
                 free_reg(rt);
                 free_reg(ra);
                 return r2;
             }
 
-            // Original simple assignment code
-            int r1 = gen_addr(node->lhs);
-            // Load current storage unit
-            emit_load(node->lhs->member->ty, r1, format("[%s]", reg64[r1]));
-            // We used r1 for loading, but we need the address again.
-            // Re-generate address.
-            free_reg(r1);
+            // Simple assignment: read-modify-write
+            free_reg(gen_addr(node->lhs)); // discard; re-gen below
             int ra = gen_addr(node->lhs);
             int rt = alloc_reg();
-            // rt = old value from storage unit
-            emit_load(node->lhs->member->ty, rt, format("[%s]", reg64[ra]));
-            // Clear the bitfield bits in old value
+            int eff_sz = unit_sz > 8 ? 8 : unit_sz;
+            BF_LOAD(eff_sz, ra, rt);
             printf("  movabs rax, %llu\n", ~mask);
             printf("  and %s, rax\n", reg64[rt]);
-            // Mask and shift new value into position
             int rv = alloc_reg();
             printf("  mov %s, %s\n", reg64[rv], reg64[r2]);
             printf("  movabs rax, %llu\n", (1ULL << bw) - 1);
             printf("  and %s, rax\n", reg64[rv]);
-            if (bo > 0)
-                printf("  shl %s, %d\n", reg64[rv], bo);
+            if (bo > 0) printf("  shl %s, %d\n", reg64[rv], bo);
             printf("  or %s, %s\n", reg64[rt], reg64[rv]);
-            // Store back
-            if (unit_sz == 1)
+            BF_STORE(eff_sz, ra, rt);
+            // Handle overflow bits beyond the first 8 bytes
+            if (unit_sz > 8 && bo + bw > 64) {
+                int overflow = bo + bw - 64;
+                unsigned int ovf_mask = (1u << overflow) - 1;
+                // Read-modify-write the byte at addr+8
+                printf("  add %s, 8\n", reg64[ra]);
+                printf("  movzx %s, byte ptr [%s]\n", reg32[rt], reg64[ra]);
+                printf("  and %s, %u\n", reg32[rt], (unsigned)(~ovf_mask & 0xFF));
+                printf("  mov %s, %s\n", reg64[rv], reg64[r2]);
+                printf("  shr %s, %d\n", reg64[rv], 64 - bo);
+                printf("  and %s, %u\n", reg32[rv], ovf_mask);
+                printf("  or %s, %s\n", reg32[rt], reg32[rv]);
                 printf("  mov byte ptr [%s], %s\n", reg64[ra], reg8[rt]);
-            else if (unit_sz == 2)
-                printf("  mov word ptr [%s], %s\n", reg64[ra], reg(rt, 2));
-            else if (unit_sz == 4)
-                printf("  mov dword ptr [%s], %s\n", reg64[ra], reg(rt, 4));
-            else
-                printf("  mov qword ptr [%s], %s\n", reg64[ra], reg64[rt]);
+            }
+#undef BF_LOAD
+#undef BF_STORE
             free_reg(rv);
             free_reg(rt);
             free_reg(ra);
@@ -1056,6 +1075,44 @@ static int gen(Node *node) {
                 printf("  movsd xmm0, qword ptr [%s]\n", reg64[r]);
                 printf("  movq %s, xmm0\n", reg64[r]);
             }
+        } else if (node->member && node->member->bit_width > 0 && node->member->bf_load_size) {
+            // Dense-packed bitfield: use larger unsigned load to cover all bits
+            int ls = node->member->bf_load_size;
+            int eff_ls = ls > 8 ? 8 : ls;
+            const char *sz = eff_ls == 1 ? "byte" : eff_ls == 2 ? "word"
+                : eff_ls == 4                                   ? "dword"
+                                                                : "qword";
+            // For overflow case (ls > 8), save address before clobbering r with value
+            int r_addr = -1;
+            if (ls > 8) {
+                int bw2 = node->member->bit_width;
+                int bo2 = node->member->bit_offset;
+                if (bo2 + bw2 > 64) {
+                    r_addr = alloc_reg();
+                    printf("  mov %s, %s\n", reg64[r_addr], reg64[r]);
+                }
+            }
+            if (eff_ls <= 2)
+                printf("  movzx %s, %s ptr [%s]\n", reg32[r], sz, reg64[r]);
+            else if (eff_ls == 4)
+                printf("  mov %s, %s ptr [%s]\n", reg32[r], sz, reg64[r]);
+            else
+                printf("  mov %s, %s ptr [%s]\n", reg64[r], sz, reg64[r]);
+            // Merge overflow bits beyond 8 bytes
+            if (ls > 8 && r_addr >= 0) {
+                int bw2 = node->member->bit_width;
+                int bo2 = node->member->bit_offset;
+                if (bo2 + bw2 > 64) {
+                    int overflow = bo2 + bw2 - 64;
+                    int tmp = alloc_reg();
+                    printf("  movzx %s, byte ptr [%s+8]\n", reg32[tmp], reg64[r_addr]);
+                    printf("  and %s, %d\n", reg32[tmp], (1 << overflow) - 1);
+                    printf("  shl %s, %d\n", reg64[tmp], 64 - bo2);
+                    printf("  or %s, %s\n", reg64[r], reg64[tmp]);
+                    free_reg(tmp);
+                }
+                free_reg(r_addr);
+            }
         } else {
             emit_load(load_ty, r, format("[%s]", reg64[r]));
         }
@@ -1063,10 +1120,12 @@ static int gen(Node *node) {
         if (node->member && node->member->bit_width > 0) {
             int bw = node->member->bit_width;
             int bo = node->member->bit_offset;
-            int unit_bits = node->member->ty->size * 8;
+            int load_bits = node->member->bf_load_size
+                ? node->member->bf_load_size * 8
+                : node->member->ty->size * 8;
             if (bo > 0)
                 printf("  shr %s, %d\n", reg64[r], bo);
-            if (bw < unit_bits) {
+            if (bw < load_bits) {
                 if (node->member->ty->is_unsigned || node->member->ty->is_enum) {
                     unsigned long long mask = (1ULL << bw) - 1;
                     printf("  movabs rax, %llu\n", mask);
