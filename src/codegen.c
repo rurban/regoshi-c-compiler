@@ -515,6 +515,21 @@ static void free_reg(int i) {
 
 static int gen(Node *node);
 
+// Try to get a compile-time constant value from a simple expression.
+static bool asm_get_const_cg(Node *e, long long *v) {
+    if (!e) return false;
+    if (e->kind == ND_NUM) {
+        *v = e->val;
+        return true;
+    }
+    if (e->kind == ND_CAST) return asm_get_const_cg(e->lhs, v);
+    if (e->kind == ND_NEG && asm_get_const_cg(e->lhs, v)) {
+        *v = -*v;
+        return true;
+    }
+    return false;
+}
+
 // Generate code to compute the absolute address of an lvalue.
 static int gen_addr(Node *node) {
     switch (node->kind) {
@@ -1415,86 +1430,295 @@ static int gen(Node *node) {
         return r;
     }
     case ND_ASM: {
-        // Evaluate operands: outputs (memory addr) then inputs (register value)
-        int op_regs[MAX_ASM_OPERANDS];
-        for (int i = 0; i < node->asm_noperands; i++) op_regs[i] = -1;
+        int nops = node->asm_noperands;
+        int nout = node->asm_nout;
+        AsmOperand *ops = node->asm_ops;
 
-        for (int i = 0; i < node->asm_noperands; i++) {
-            AsmOperand *op = &node->asm_ops[i];
-            if (op->is_memory || (op->is_output && !op->is_rw)) {
-                // memory operand or output: compute address
+        // ── helpers ──────────────────────────────────────────────────────────
+
+#define INTEL_HW(hw, sz)                                                       \
+    ((hw) == 'a'   ? ((sz) <= 1 ? "al" : (sz) <= 2 ? "ax" : (sz) <= 4 ? "eax" : "rax") \
+     : (hw) == 'd' ? ((sz) <= 1 ? "dl" : (sz) <= 2 ? "dx" : (sz) <= 4 ? "edx" : "rdx") \
+     : (hw) == 'S' ? ((sz) <= 1 ? "sil" : (sz) <= 2 ? "si" : (sz) <= 4 ? "esi" : "rsi") \
+     : (hw) == 'D' ? ((sz) <= 1 ? "dil" : (sz) <= 2 ? "di" : (sz) <= 4 ? "edi" : "rdi") \
+     : (hw) == 'c' ? ((sz) <= 1 ? "cl" : (sz) <= 2 ? "cx" : (sz) <= 4 ? "ecx" : "rcx") \
+     : "rax")
+
+        // Detect AT&T vs Intel template mode.
+        // AT&T indicators: %% (register escape), $ (immediate), or % followed by
+        // a letter other than an operand ref (%N) or goto (%l[).
+        // Default to AT&T: inline asm templates conventionally use AT&T syntax;
+        // the surrounding code generation uses Intel.
+        bool att_mode = false;
+        for (const char *tp = node->asm_template; *tp; tp++) {
+            if (tp[0] == '%' && tp[1] == '%') {
+                att_mode = true;
+                break;
+            }
+            if (tp[0] == '$') {
+                att_mode = true;
+                break;
+            }
+            // %letter (not a digit operand ref or %l[goto]) → AT&T register ref
+            if (tp[0] == '%' && tp[1] != '\0' && !(tp[1] >= '0' && tp[1] <= '9') &&
+                !(tp[1] == '[') && !(tp[1] == 'l' && tp[2] == '[')) {
+                att_mode = true;
+                break;
+            }
+        }
+        // If no AT&T indicators but the template is non-trivial, use AT&T to be
+        // safe (e.g. "incl %0" has AT&T mnemonic suffix but no other indicator).
+        if (!att_mode && node->asm_template[0] != '\0') att_mode = true;
+
+        // ── Phase 1: allocate scratch regs and build operand strings ─────────
+        for (int i = 0; i < nops; i++) {
+            AsmOperand *op = &ops[i];
+            int sz = op->expr && op->expr->ty ? op->expr->ty->size : 4;
+            if (sz < 1) sz = 4;
+            char hw = op->hw_char;
+            bool is_out = (i < nout);
+
+            if (op->ref_index >= 0) {
+                // Matching input: handled in phase 2 after outputs are set up.
+                continue;
+            }
+
+            if (op->is_memory) {
+                // "m", "=m", "+m": address in register
                 int r = gen_addr(op->expr);
-                op_regs[i] = r;
                 op->reg = r;
                 snprintf(op->asm_str, sizeof(op->asm_str), "(%%%s)", reg64[r]);
-            } else {
-                // register input: load value
-                int r = gen(op->expr);
-                op_regs[i] = r;
+                snprintf(op->intel_str, sizeof(op->intel_str), "[%s]", reg64[r]);
+                // For +m, the asm reads and writes; no separate load needed.
+            } else if (hw) {
+                // Specific hardware register ("a","d","S","D","c")
+                // Allocate a scratch reg as staging area; will mov to/from hw reg.
+                int r = alloc_reg();
                 op->reg = r;
-                int sz = op->expr->ty ? op->expr->ty->size : 4;
-                snprintf(op->asm_str, sizeof(op->asm_str), "%%%s", reg(r, sz));
-            }
-        }
-
-        // Emit template with operand substitution, wrapped in AT&T syntax
-        printf(".att_syntax prefix\n");
-
-        // Substitute %N and %l[name] in template
-        char out[4096];
-        int olen = 0;
-        const char *p = node->asm_template;
-        while (*p && olen < (int)sizeof(out) - 1) {
-            if (*p != '%') {
-                out[olen++] = *p++;
-                continue;
-            }
-            p++;
-            if (*p == '%') {
-                out[olen++] = '%';
-                p++;
-                continue;
-            }
-            // check for modifier 'l'
-            char mod = 0;
-            if (*p == 'l') { mod = *p++; }
-            if (mod == 'l' && *p == '[') {
-                // %l[name] -> goto label
-                p++;
-                const char *end = strchr(p, ']');
-                if (!end) {
-                    out[olen++] = '%';
-                    out[olen++] = 'l';
-                    out[olen++] = '[';
+                snprintf(op->asm_str, sizeof(op->asm_str), "%%%s", INTEL_HW(hw, sz));
+                snprintf(op->intel_str, sizeof(op->intel_str), "%s", INTEL_HW(hw, sz));
+                if (!is_out || op->is_rw) {
+                    // Need to load value into scratch before moving to hw reg
+                    int tmp = gen(op->expr);
+                    printf("  mov %s, %s\n", reg(r, sz <= 4 ? sz : 4), reg(tmp, sz <= 4 ? sz : 4));
+                    if (sz > 4)
+                        printf("  mov %s, %s\n", reg64[r], reg64[tmp]);
+                    free_reg(tmp);
+                }
+            } else if (op->is_imm) {
+                // "I","i","n" — try compile-time constant first
+                long long cval = 0;
+                if (op->expr && asm_get_const_cg(op->expr, &cval)) {
+                    snprintf(op->asm_str, sizeof(op->asm_str), "$%lld", cval);
+                    snprintf(op->intel_str, sizeof(op->intel_str), "%lld", cval);
+                    op->reg = -1;
+                    op->is_imm = true;
                     continue;
                 }
-                // emit .L.label.<fn>.<name>
-                const char *prefix = ".L.label.";
-                for (const char *s = prefix; *s && olen < (int)sizeof(out) - 1;) out[olen++] = *s++;
-                for (const char *s = current_fn; *s && olen < (int)sizeof(out) - 1;) out[olen++] = *s++;
-                if (olen < (int)sizeof(out) - 1) out[olen++] = '.';
-                for (const char *s = p; s < end && olen < (int)sizeof(out) - 1;) out[olen++] = *s++;
-                p = end + 1;
-            } else if (*p >= '0' && *p <= '9') {
-                int n = *p - '0';
-                p++;
-                if (n < node->asm_noperands) {
-                    const char *s = node->asm_ops[n].asm_str;
-                    while (*s && olen < (int)sizeof(out) - 1) out[olen++] = *s++;
-                }
+                // Fall back to register
+                goto load_as_register;
             } else {
-                out[olen++] = '%';
-                if (mod) out[olen++] = mod;
-                // leave other %x as-is
+            load_as_register:;
+                // "r", "q", "g", "p", "Ir" (as register), etc.
+                if (is_out && !op->is_rw) {
+                    // Pure output register: allocate without loading
+                    int r = alloc_reg();
+                    op->reg = r;
+                } else {
+                    int r = gen(op->expr);
+                    op->reg = r;
+                }
+                int display_sz = sz;
+                snprintf(op->asm_str, sizeof(op->asm_str), "%%%s", reg(op->reg, display_sz));
+                snprintf(op->intel_str, sizeof(op->intel_str), "%s", reg(op->reg, display_sz));
             }
         }
-        out[olen] = '\0';
-        printf("%s\n", out);
 
-        printf(".intel_syntax noprefix\n");
+        // ── Phase 2: handle matching inputs ("0","1",...) ────────────────────
+        for (int i = nout; i < nops; i++) {
+            AsmOperand *op = &ops[i];
+            if (op->ref_index < 0) continue;
+            int ref = op->ref_index;
+            if (ref >= nout) continue; // invalid reference
+            AsmOperand *ref_op = &ops[ref];
+            op->reg = ref_op->reg;
+            memcpy(op->asm_str, ref_op->asm_str, sizeof(op->asm_str));
+            memcpy(op->intel_str, ref_op->intel_str, sizeof(op->intel_str));
+            // Load the input expression value into the shared register
+            int sz = op->expr && op->expr->ty ? op->expr->ty->size : 4;
+            char hw = ref_op->hw_char;
+            if (!ref_op->is_memory && op->expr) {
+                int tmp = gen(op->expr);
+                if (hw) {
+                    printf("  mov %s, %s\n", INTEL_HW(hw, sz), reg(tmp, sz));
+                } else if (op->reg >= 0) {
+                    printf("  mov %s, %s\n", reg(op->reg, sz), reg(tmp, sz));
+                }
+                free_reg(tmp);
+            }
+        }
 
-        for (int i = 0; i < node->asm_noperands; i++)
-            if (op_regs[i] >= 0) free_reg(op_regs[i]);
+        // ── Phase 3: move inputs to specific hardware registers (Intel mov) ──
+        for (int i = 0; i < nops; i++) {
+            AsmOperand *op = &ops[i];
+            if (!op->hw_char || op->reg < 0) continue;
+            if (op->ref_index >= 0) continue; // already loaded in phase 2
+            bool is_out = (i < nout);
+            // For outputs that aren't read-write, skip pre-move (nothing to move in)
+            if (is_out && !op->is_rw) continue;
+            int sz = op->expr && op->expr->ty ? op->expr->ty->size : 4;
+            printf("  mov %s, %s\n", INTEL_HW(op->hw_char, sz), reg(op->reg, sz));
+        }
+
+        // ── Phase 4: emit the asm template ───────────────────────────────────
+        if (att_mode) printf(".att_syntax prefix\n");
+
+        {
+            char out[4096];
+            int olen = 0;
+            const char *p = node->asm_template;
+            while (*p && olen < (int)sizeof(out) - 2) {
+                if (*p != '%') {
+                    out[olen++] = *p++;
+                    continue;
+                }
+                p++; // skip first %
+                if (*p == '%') {
+                    // %% → single % (AT&T register prefix or literal)
+                    out[olen++] = '%';
+                    p++;
+                    continue;
+                }
+                // Pick up optional size modifier
+                char mod = 0;
+                if (*p == 'b' || *p == 'h' || *p == 'w' || *p == 'k' ||
+                    *p == 'q' || *p == 'P' || *p == 'c' || *p == 'n' || *p == 'l')
+                    mod = *p++;
+
+                if (mod == 'l' && *p == '[') {
+                    // %l[name] → goto label
+                    p++;
+                    const char *end = strchr(p, ']');
+                    if (!end) {
+                        out[olen++] = '%';
+                        out[olen++] = 'l';
+                        out[olen++] = '[';
+                        continue;
+                    }
+                    for (const char *s = ".L.label."; *s;) out[olen++] = *s++;
+                    for (const char *s = current_fn; *s;) out[olen++] = *s++;
+                    out[olen++] = '.';
+                    for (const char *s = p; s < end;) out[olen++] = *s++;
+                    p = end + 1;
+                } else if (*p == '[') {
+                    // %[name] – named operand; skip for now, emit as-is
+                    const char *end = strchr(p + 1, ']');
+                    out[olen++] = '%';
+                    if (mod) out[olen++] = mod;
+                    if (end) {
+                        for (const char *s = p; s <= end;) out[olen++] = *s++;
+                        p = end + 1;
+                    }
+                } else if (*p >= '0' && *p <= '9') {
+                    int n = *p - '0';
+                    p++;
+                    if (n < nops) {
+                        AsmOperand *op = &ops[n];
+                        int sz = op->expr && op->expr->ty ? op->expr->ty->size : 4;
+                        // Compute the sized operand string based on modifier
+                        char tmp[64];
+                        if (mod == 'h') {
+                            // High byte: ah/bh/ch/dh — only for hw regs a/b/c/d
+                            char hw2 = op->hw_char;
+                            const char *hb = hw2 == 'a' ? "ah" : hw2 == 'd' ? "dh"
+                                : hw2 == 'c'                                ? "ch"
+                                                                            : "bh";
+                            snprintf(tmp, sizeof(tmp), att_mode ? "%%%s" : "%s", hb);
+                            (void)sz;
+                        } else if (mod == 'b' || mod == 'w' || mod == 'k' || mod == 'q') {
+                            int msz = mod == 'b' ? 1 : mod == 'w' ? 2
+                                : mod == 'k'                      ? 4
+                                                                  : 8;
+                            if (op->hw_char) {
+                                if (att_mode)
+                                    snprintf(tmp, sizeof(tmp), "%%%s", INTEL_HW(op->hw_char, msz));
+                                else
+                                    snprintf(tmp, sizeof(tmp), "%s", INTEL_HW(op->hw_char, msz));
+                            } else if (op->reg >= 0) {
+                                if (att_mode)
+                                    snprintf(tmp, sizeof(tmp), "%%%s", reg(op->reg, msz));
+                                else
+                                    snprintf(tmp, sizeof(tmp), "%s", reg(op->reg, msz));
+                            } else {
+                                snprintf(tmp, sizeof(tmp), "%s",
+                                         att_mode ? op->asm_str : op->intel_str);
+                            }
+                            (void)sz;
+                        } else if (mod == 'P' || mod == 'c') {
+                            // Strip $ prefix from immediate, or use plain address
+                            const char *s = att_mode ? op->asm_str : op->intel_str;
+                            if (*s == '$') s++;
+                            snprintf(tmp, sizeof(tmp), "%s", s);
+                        } else {
+                            snprintf(tmp, sizeof(tmp), "%s",
+                                     att_mode ? op->asm_str : op->intel_str);
+                        }
+                        for (const char *s = tmp; *s && olen < (int)sizeof(out) - 1;)
+                            out[olen++] = *s++;
+                    }
+                } else {
+                    // Unknown %x: pass through verbatim
+                    out[olen++] = '%';
+                    if (mod) out[olen++] = mod;
+                    // don't consume *p — it'll be output next iteration
+                }
+            }
+            out[olen] = '\0';
+            printf("%s\n", out);
+        }
+
+        if (att_mode) printf(".intel_syntax noprefix\n");
+
+        // ── Phase 5: move output hw-register values to scratch, store lvalue ─
+        for (int i = 0; i < nout; i++) {
+            AsmOperand *op = &ops[i];
+            if (op->is_memory) continue; // asm wrote directly to memory
+            int sz = op->expr && op->expr->ty ? op->expr->ty->size : 4;
+            if (sz < 1) sz = 1;
+
+            // Move from hw register to scratch (Intel mov, back in Intel mode)
+            char hw = op->hw_char;
+            if (hw && op->reg >= 0) {
+                if (sz == 1)
+                    printf("  movzx %s, %s\n", reg64[op->reg], INTEL_HW(hw, 1));
+                else if (sz == 2)
+                    printf("  movzx %s, %s\n", reg64[op->reg], INTEL_HW(hw, 2));
+                else if (sz == 4)
+                    printf("  mov %s, %s\n", reg32[op->reg], INTEL_HW(hw, 4));
+                else
+                    printf("  mov %s, %s\n", reg64[op->reg], INTEL_HW(hw, 8));
+            }
+
+            // Store scratch register to lvalue
+            if (op->reg >= 0 && op->expr) {
+                int addr = gen_addr(op->expr);
+                printf("  mov %s [%s], %s\n", ptr_size(sz), reg64[addr],
+                       reg(op->reg, sz));
+                free_reg(addr);
+            }
+        }
+
+        // ── Phase 6: free all scratch registers ──────────────────────────────
+        for (int i = 0; i < nops; i++) {
+            if (ops[i].reg >= 0 && ops[i].ref_index < 0) free_reg(ops[i].reg);
+        }
+        // Free matching-input registers (shared with output, free once)
+        for (int i = nout; i < nops; i++) {
+            // already freed by output pass above; nothing extra needed
+            (void)i;
+        }
+
+#undef INTEL_HW
         return -1;
     }
     default:

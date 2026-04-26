@@ -194,13 +194,17 @@ void add_type(Node *node);
 
 typedef struct AsmOperand AsmOperand;
 struct AsmOperand {
-    char constraint[16]; // e.g. "=m", "r", "=r"
-    char asm_str[64]; // computed AT&T operand string (filled by codegen)
+    char constraint[16]; // e.g. "=m", "r", "=r", "=a", "+m"
+    char asm_str[64]; // AT&T operand string filled by codegen
+    char intel_str[64]; // Intel operand string filled by codegen
     Node *expr; // C expression for the operand
-    int reg; // allocated reg index (-1 if unused)
+    int reg; // scratch register index (-1 if hw-reg or immediate)
+    int ref_index; // >= 0: matching input — same reg as ops[ref_index]
+    char hw_char; // 'a','d','S','D','c' or 0 for generic scratch
     bool is_memory; // 'm' in constraint
     bool is_output; // '=' or '+' in constraint
     bool is_rw; // '+' (read-write) in constraint
+    bool is_imm; // pure immediate (no register allocated)
 };
 
 typedef enum {

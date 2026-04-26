@@ -513,6 +513,15 @@ static Token *read_type_attrs(Token *tok, int *align, VarAttr *attr) {
         }
 
         if (equal(tok, "__asm__") || equal(tok, "__asm")) {
+            // Peek ahead: __asm__("name") is a rename attribute, but
+            // __asm__("template" : ...) is an inline asm statement — don't
+            // consume it here; let stmt() handle it via is_asm_keyword().
+            if (!equal(tok->next, "(")) break;
+            Token *peek = tok->next->next;
+            while (peek && peek->kind == TK_STR)
+                peek = peek->next;
+            if (!peek || !equal(peek, ")")) break; // inline asm, stop attr scan
+
             tok = tok->next;
             tok = skip(tok, "(");
             char asm_buf[256];
@@ -2373,6 +2382,34 @@ static bool is_asm_keyword(Token *tok) {
     return equal(tok, "asm") || equal(tok, "__asm__") || equal(tok, "__asm");
 }
 
+// Fill constraint-derived flags on an AsmOperand after constraint[] is set.
+static void analyze_asm_constraint(AsmOperand *op) {
+    op->ref_index = -1;
+    op->hw_char = 0;
+    op->is_memory = false;
+    op->is_output = false;
+    op->is_rw = false;
+    op->is_imm = false;
+    for (const char *p = op->constraint; *p; p++) {
+        if (*p == '=' || *p == '+') op->is_output = true;
+        if (*p == '+') op->is_rw = true;
+        if (*p == 'm') op->is_memory = true;
+    }
+    // Primary constraint char (skip modifiers =+&%*)
+    const char *p = op->constraint;
+    while (*p == '=' || *p == '+' || *p == '&' || *p == '%' || *p == '*')
+        p++;
+    if (*p >= '0' && *p <= '9') {
+        op->ref_index = *p - '0'; // matching constraint
+    } else if (*p == 'a' || *p == 'd' || *p == 'c' || *p == 'S' || *p == 'D' ||
+               *p == 'q') {
+        // 'q' = any register with byte access; map to 'a' (eax has ah/al).
+        op->hw_char = (*p == 'q') ? 'a' : *p;
+    } else if (*p == 'I' || *p == 'i' || *p == 'n' || *p == 'e' || *p == 'E') {
+        op->is_imm = true; // immediate-only (may fall back to register)
+    }
+}
+
 static Node *parse_asm_stmt(Token **rest, Token *tok) {
     Node *node = new_node(ND_ASM, tok);
     tok = tok->next; // skip asm/__asm__/__asm
@@ -2405,6 +2442,31 @@ static Node *parse_asm_stmt(Token **rest, Token *tok) {
     for (int i = 0; i < MAX_ASM_OPERANDS; i++) ops[i].reg = -1;
     int nops = 0;
 
+    // Helper: parse one operand constraint+expression
+#define PARSE_ONE_OPERAND(op_ptr)                                              \
+    do {                                                                       \
+        AsmOperand *op__ = (op_ptr);                                           \
+        if (equal(tok, "[")) {                                                 \
+            tok = tok->next->next;                                             \
+            tok = skip(tok, "]");                                              \
+        }                                                                      \
+        if (tok->kind != TK_STR) error_tok(tok, "expected constraint string"); \
+        /* Concatenate adjacent string literals for constraints like "=" "r" */ \
+        int clen__ = 0;                                                        \
+        while (tok->kind == TK_STR && clen__ < 14) {                          \
+            int n__ = tok->len < 14 - clen__ ? tok->len : 14 - clen__;       \
+            memcpy(op__->constraint + clen__, tok->str, n__);                 \
+            clen__ += n__;                                                     \
+            tok = tok->next;                                                   \
+        }                                                                      \
+        op__->constraint[clen__] = '\0';                                      \
+        tok = skip(tok, "(");                                                  \
+        op__->expr = expr(&tok, tok);                                         \
+        add_type(op__->expr);                                                  \
+        tok = skip(tok, ")");                                                  \
+        analyze_asm_constraint(op__);                                          \
+    } while (0)
+
     // Parse output operands
     tok = skip(tok, ":");
     bool first = true;
@@ -2412,25 +2474,7 @@ static Node *parse_asm_stmt(Token **rest, Token *tok) {
         if (!first) tok = skip(tok, ",");
         first = false;
         if (nops >= MAX_ASM_OPERANDS) error_tok(tok, "too many asm operands");
-        AsmOperand *op = &ops[nops++];
-        if (equal(tok, "[")) { // skip named operand [id]
-            tok = tok->next->next;
-            tok = skip(tok, "]");
-        }
-        if (tok->kind != TK_STR) error_tok(tok, "expected constraint string");
-        int clen = tok->len < 15 ? tok->len : 15;
-        memcpy(op->constraint, tok->str, clen);
-        op->constraint[clen] = '\0';
-        tok = tok->next;
-        tok = skip(tok, "(");
-        op->expr = expr(&tok, tok);
-        add_type(op->expr);
-        tok = skip(tok, ")");
-        for (char *p = op->constraint; *p; p++) {
-            if (*p == '=' || *p == '+') op->is_output = true;
-            if (*p == '+') op->is_rw = true;
-            if (*p == 'm') op->is_memory = true;
-        }
+        PARSE_ONE_OPERAND(&ops[nops++]);
     }
     int nout = nops;
 
@@ -2442,22 +2486,7 @@ static Node *parse_asm_stmt(Token **rest, Token *tok) {
             if (!first) tok = skip(tok, ",");
             first = false;
             if (nops >= MAX_ASM_OPERANDS) error_tok(tok, "too many asm operands");
-            AsmOperand *op = &ops[nops++];
-            if (equal(tok, "[")) {
-                tok = tok->next->next;
-                tok = skip(tok, "]");
-            }
-            if (tok->kind != TK_STR) error_tok(tok, "expected constraint string");
-            int clen = tok->len < 15 ? tok->len : 15;
-            memcpy(op->constraint, tok->str, clen);
-            op->constraint[clen] = '\0';
-            tok = tok->next;
-            tok = skip(tok, "(");
-            op->expr = expr(&tok, tok);
-            add_type(op->expr);
-            tok = skip(tok, ")");
-            for (char *p = op->constraint; *p; p++)
-                if (*p == 'm') op->is_memory = true;
+            PARSE_ONE_OPERAND(&ops[nops++]);
         }
 
         // Skip clobbers
@@ -2491,6 +2520,8 @@ static Node *parse_asm_stmt(Token **rest, Token *tok) {
     node->asm_ops = ops;
     node->asm_nout = nout;
     node->asm_noperands = nops;
+
+#undef PARSE_ONE_OPERAND
 
     tok = skip(tok, ")");
     *rest = skip(tok, ";");
