@@ -1414,6 +1414,89 @@ static int gen(Node *node) {
         printf("  leaq .L.label.%s.%s(%%rip), %s\n", current_fn, node->label_name, reg64[r]);
         return r;
     }
+    case ND_ASM: {
+        // Evaluate operands: outputs (memory addr) then inputs (register value)
+        int op_regs[MAX_ASM_OPERANDS];
+        for (int i = 0; i < node->asm_noperands; i++) op_regs[i] = -1;
+
+        for (int i = 0; i < node->asm_noperands; i++) {
+            AsmOperand *op = &node->asm_ops[i];
+            if (op->is_memory || (op->is_output && !op->is_rw)) {
+                // memory operand or output: compute address
+                int r = gen_addr(op->expr);
+                op_regs[i] = r;
+                op->reg = r;
+                snprintf(op->asm_str, sizeof(op->asm_str), "(%%%s)", reg64[r]);
+            } else {
+                // register input: load value
+                int r = gen(op->expr);
+                op_regs[i] = r;
+                op->reg = r;
+                int sz = op->expr->ty ? op->expr->ty->size : 4;
+                snprintf(op->asm_str, sizeof(op->asm_str), "%%%s", reg(r, sz));
+            }
+        }
+
+        // Emit template with operand substitution, wrapped in AT&T syntax
+        printf(".att_syntax prefix\n");
+
+        // Substitute %N and %l[name] in template
+        char out[4096];
+        int olen = 0;
+        const char *p = node->asm_template;
+        while (*p && olen < (int)sizeof(out) - 1) {
+            if (*p != '%') {
+                out[olen++] = *p++;
+                continue;
+            }
+            p++;
+            if (*p == '%') {
+                out[olen++] = '%';
+                p++;
+                continue;
+            }
+            // check for modifier 'l'
+            char mod = 0;
+            if (*p == 'l') { mod = *p++; }
+            if (mod == 'l' && *p == '[') {
+                // %l[name] -> goto label
+                p++;
+                const char *end = strchr(p, ']');
+                if (!end) {
+                    out[olen++] = '%';
+                    out[olen++] = 'l';
+                    out[olen++] = '[';
+                    continue;
+                }
+                // emit .L.label.<fn>.<name>
+                const char *prefix = ".L.label.";
+                for (const char *s = prefix; *s && olen < (int)sizeof(out) - 1;) out[olen++] = *s++;
+                for (const char *s = current_fn; *s && olen < (int)sizeof(out) - 1;) out[olen++] = *s++;
+                if (olen < (int)sizeof(out) - 1) out[olen++] = '.';
+                for (const char *s = p; s < end && olen < (int)sizeof(out) - 1;) out[olen++] = *s++;
+                p = end + 1;
+            } else if (*p >= '0' && *p <= '9') {
+                int n = *p - '0';
+                p++;
+                if (n < node->asm_noperands) {
+                    const char *s = node->asm_ops[n].asm_str;
+                    while (*s && olen < (int)sizeof(out) - 1) out[olen++] = *s++;
+                }
+            } else {
+                out[olen++] = '%';
+                if (mod) out[olen++] = mod;
+                // leave other %x as-is
+            }
+        }
+        out[olen] = '\0';
+        printf("%s\n", out);
+
+        printf(".intel_syntax noprefix\n");
+
+        for (int i = 0; i < node->asm_noperands; i++)
+            if (op_regs[i] >= 0) free_reg(op_regs[i]);
+        return -1;
+    }
     default:
         break;
     }

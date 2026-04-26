@@ -190,6 +190,19 @@ struct LVar {
 typedef struct Node Node;
 void add_type(Node *node);
 
+#define MAX_ASM_OPERANDS 30
+
+typedef struct AsmOperand AsmOperand;
+struct AsmOperand {
+    char constraint[16]; // e.g. "=m", "r", "=r"
+    char asm_str[64]; // computed AT&T operand string (filled by codegen)
+    Node *expr; // C expression for the operand
+    int reg; // allocated reg index (-1 if unused)
+    bool is_memory; // 'm' in constraint
+    bool is_output; // '=' or '+' in constraint
+    bool is_rw; // '+' (read-write) in constraint
+};
+
 typedef enum {
     ND_ADD, // +
     ND_SUB, // -
@@ -242,6 +255,7 @@ typedef enum {
     ND_NEG, // Unary minus
     ND_NOT, // Logical not
     ND_ZERO_INIT, // Zero-fill a local variable (lhs=ND_LVAR)
+    ND_ASM, // inline asm statement
 } NodeKind;
 
 typedef struct Node Node;
@@ -298,6 +312,14 @@ struct Node {
     int64_t case_end; // for case ranges (GNU extension)
     bool is_case_range;
     int label_id;
+
+    // ND_ASM (inline asm statement)
+    char *asm_template; // raw template string (with escape sequences decoded)
+    int asm_nout; // number of output operands
+    int asm_noperands; // outputs + inputs
+    AsmOperand *asm_ops; // [0..noperands-1], outputs first
+    char **asm_goto_labels; // goto label names
+    int asm_ngoto;
 };
 
 typedef struct Function Function;

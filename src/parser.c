@@ -2369,6 +2369,134 @@ static Node *compound_stmt(Token **rest, Token *tok) {
     return compound_stmt_ex(rest, tok, NULL);
 }
 
+static bool is_asm_keyword(Token *tok) {
+    return equal(tok, "asm") || equal(tok, "__asm__") || equal(tok, "__asm");
+}
+
+static Node *parse_asm_stmt(Token **rest, Token *tok) {
+    Node *node = new_node(ND_ASM, tok);
+    tok = tok->next; // skip asm/__asm__/__asm
+
+    // consume optional volatile/goto qualifiers
+    while (equal(tok, "volatile") || equal(tok, "__volatile__") ||
+           equal(tok, "__volatile") || equal(tok, "goto"))
+        tok = tok->next;
+
+    tok = skip(tok, "(");
+
+    // Concatenate template string literals
+    char buf[4096];
+    int len = 0;
+    while (tok->kind == TK_STR) {
+        if (len + tok->len < (int)sizeof(buf) - 1) {
+            memcpy(buf + len, tok->str, tok->len);
+            len += tok->len;
+        }
+        tok = tok->next;
+    }
+    node->asm_template = str_intern(buf, len);
+
+    if (equal(tok, ")")) {
+        *rest = skip(tok->next, ";");
+        return node;
+    }
+
+    AsmOperand *ops = arena_alloc(sizeof(AsmOperand) * MAX_ASM_OPERANDS);
+    for (int i = 0; i < MAX_ASM_OPERANDS; i++) ops[i].reg = -1;
+    int nops = 0;
+
+    // Parse output operands
+    tok = skip(tok, ":");
+    bool first = true;
+    while (!equal(tok, ":") && !equal(tok, ")")) {
+        if (!first) tok = skip(tok, ",");
+        first = false;
+        if (nops >= MAX_ASM_OPERANDS) error_tok(tok, "too many asm operands");
+        AsmOperand *op = &ops[nops++];
+        if (equal(tok, "[")) { // skip named operand [id]
+            tok = tok->next->next;
+            tok = skip(tok, "]");
+        }
+        if (tok->kind != TK_STR) error_tok(tok, "expected constraint string");
+        int clen = tok->len < 15 ? tok->len : 15;
+        memcpy(op->constraint, tok->str, clen);
+        op->constraint[clen] = '\0';
+        tok = tok->next;
+        tok = skip(tok, "(");
+        op->expr = expr(&tok, tok);
+        add_type(op->expr);
+        tok = skip(tok, ")");
+        for (char *p = op->constraint; *p; p++) {
+            if (*p == '=' || *p == '+') op->is_output = true;
+            if (*p == '+') op->is_rw = true;
+            if (*p == 'm') op->is_memory = true;
+        }
+    }
+    int nout = nops;
+
+    // Parse input operands
+    if (!equal(tok, ")")) {
+        tok = skip(tok, ":");
+        first = true;
+        while (!equal(tok, ":") && !equal(tok, ")")) {
+            if (!first) tok = skip(tok, ",");
+            first = false;
+            if (nops >= MAX_ASM_OPERANDS) error_tok(tok, "too many asm operands");
+            AsmOperand *op = &ops[nops++];
+            if (equal(tok, "[")) {
+                tok = tok->next->next;
+                tok = skip(tok, "]");
+            }
+            if (tok->kind != TK_STR) error_tok(tok, "expected constraint string");
+            int clen = tok->len < 15 ? tok->len : 15;
+            memcpy(op->constraint, tok->str, clen);
+            op->constraint[clen] = '\0';
+            tok = tok->next;
+            tok = skip(tok, "(");
+            op->expr = expr(&tok, tok);
+            add_type(op->expr);
+            tok = skip(tok, ")");
+            for (char *p = op->constraint; *p; p++)
+                if (*p == 'm') op->is_memory = true;
+        }
+
+        // Skip clobbers
+        if (!equal(tok, ")")) {
+            tok = skip(tok, ":");
+            while (!equal(tok, ":") && !equal(tok, ")")) {
+                if (tok->kind != TK_STR) error_tok(tok, "expected clobber string");
+                tok = tok->next;
+                if (equal(tok, ",")) tok = tok->next;
+            }
+
+            // Parse goto labels
+            if (!equal(tok, ")")) {
+                tok = skip(tok, ":");
+                char **glabels = arena_alloc(sizeof(char *) * MAX_ASM_OPERANDS);
+                int ngoto = 0;
+                first = true;
+                while (!equal(tok, ")")) {
+                    if (!first) tok = skip(tok, ",");
+                    first = false;
+                    if (tok->kind != TK_IDENT) error_tok(tok, "expected label name");
+                    glabels[ngoto++] = tok->name;
+                    tok = tok->next;
+                }
+                node->asm_goto_labels = glabels;
+                node->asm_ngoto = ngoto;
+            }
+        }
+    }
+
+    node->asm_ops = ops;
+    node->asm_nout = nout;
+    node->asm_noperands = nops;
+
+    tok = skip(tok, ")");
+    *rest = skip(tok, ";");
+    return node;
+}
+
 static Node *stmt(Token **rest, Token *tok) {
     if (equal(tok, "return")) {
         Node *node = new_node(ND_RETURN, tok);
@@ -2597,6 +2725,9 @@ static Node *stmt(Token **rest, Token *tok) {
         *rest = tok->next;
         return new_node(ND_NULL, tok);
     }
+
+    if (is_asm_keyword(tok))
+        return parse_asm_stmt(rest, tok);
 
     Node *node = new_node(ND_EXPR_STMT, tok);
     node->lhs = expr(&tok, tok);

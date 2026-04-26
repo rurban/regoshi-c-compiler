@@ -3,9 +3,9 @@ Generated: April 2026
 
 ## Summary
  - **Total**:     134
- - **Passed**:    128
- - **Failed**:    6
- - **Pass Rate**: 95%
+ - **Passed**:    129
+ - **Failed**:    5
+ - **Pass Rate**: 96%
 
 ## Detailed Results
 | Test                                     | Status       | Message                              |
@@ -106,7 +106,7 @@ Generated: April 2026
 | 118_switch                               | PASS         | Output matches                       |
 | 119_random_stuff                         | COMPILE_FAIL | rcc returned non-zero                |
 | 121_struct_return                        | PASS         | Output matches                       |
-| 127_asm_goto                             | COMPILE_FAIL | rcc returned non-zero                |
+| 127_asm_goto                             | PASS         | Output matches                       |
 | 128_run_atexit                           | PASS         | Output matches                       |
 | 129_scopes                               | PASS         | Output matches                       |
 | 130_large_argument                       | PASS         | Output matches                       |
