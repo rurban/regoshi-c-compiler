@@ -479,33 +479,47 @@ static void mark_once_file(char *path) {
 static char *resolve_include(char *curr_file, char *spec) {
     char *dir = path_dirname(curr_file);
     char *path = path_join(dir, spec);
+    //fprintf(stderr, "resolve_include: %s (curr_file=%s, spec=%s))\n", path, curr_file, spec);
     if (file_exists(path))
         return canonical_path(path);
 
     char *base = path_basename(spec);
-    path = path_join(dir, base);
-    if (file_exists(path))
-        return canonical_path(path);
+    if (base != spec) {
+        path = path_join(dir, base);
+        //fprintf(stderr, "resolve_include: %s (base=%s)\n", path, base);
+        if (file_exists(path))
+            return canonical_path(path);
+    }
 
 #ifndef RCC_INCDIR
 #define RCC_INCDIR "include"
 #endif
     path = path_join(RCC_INCDIR, spec);
+    //fprintf(stderr, "resolve_include: %s (RCC_INCDIR=%s)\n", path, RCC_INCDIR);
     if (file_exists(path))
         return canonical_path(path);
+    if (strcmp(RCC_INCDIR, "include") != 0) {
+        path = path_join("include", spec);
+        //fprintf(stderr, "resolve_include: %s (RCC_INCDIR=%s)\n", path, RCC_INCDIR);
+        if (file_exists(path))
+            return canonical_path(path);
+    }
 
     for (int i = 0; i < nb_user_include_paths; i++) {
         path = path_join(user_include_paths[i], spec);
+        //fprintf(stderr, "resolve_include: %s\n", path);
         if (file_exists(path))
             return canonical_path(path);
     }
 
     for (int i = 0; sys_include_paths[i]; i++) {
         path = path_join(sys_include_paths[i], spec);
+        //fprintf(stderr, "resolve_include: %s\n", path);
         if (file_exists(path))
             return canonical_path(path);
     }
 
+    //fprintf(stderr, "resolve_include: %s\n", spec);
     if (file_exists(spec))
         return canonical_path(spec);
     return NULL;
