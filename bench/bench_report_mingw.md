@@ -1,12 +1,12 @@
 # Windows RCC Benchmark Results
 
-_Generated: 04/26/2026 19:22:36_
+_Generated: 04/27/2026 11:10:44_
 
 | Compiler              | Compile (ms) | Execute (ms) | Total (ms) |
 | :-------------------- | -----------: | -----------: | ---------: |
-| TCC (Tiny C Compiler) |         1012 |          513 |       1525 |
-| GCC -O0 (no opt)      |         1003 |          493 |       1496 |
-| GCC -O2 (optimized)   |         1003 |          162 |       1165 |
+| TCC (Tiny C Compiler) |         1014 |          499 |       1513 |
+| GCC -O0 (no opt)      |         1004 |          466 |       1470 |
+| GCC -O2 (optimized)   |         1011 |          118 |       1129 |
 
 ## Output Correctness
 

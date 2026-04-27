@@ -14,6 +14,9 @@ static void cg_emit(const char *fmt, ...) {
 #define printf(...) cg_emit(__VA_ARGS__)
 
 static char *current_fn;
+static int current_fn_stack_size = 0; // fn->stack_size of the function being generated
+static int fn_struct_ret_off = 0; // next free offset within the struct-ret-buf area
+static int fn_struct_ret_total = 0; // high-water mark of struct-ret-buf space used
 static int rcc_label_count = 0;
 static int break_stack[128];
 static int continue_stack[128];
@@ -57,8 +60,7 @@ static char *func_asm_name(char *name) {
 }
 
 static void emit_direct_call(char *name) {
-    printf("  lea r11, [rip + %s]\n", func_asm_name(name));
-    printf("  call r11\n");
+    printf("  call %s\n", func_asm_name(name));
 }
 
 static bool var_has_cleanup(LVar *var) {
@@ -208,11 +210,12 @@ static int gen_funcall(Node *node, int hidden_ret_reg) {
     int saved_scratch = used_regs & 3;
     if ((saved_scratch & 1) && hidden_ret_reg != 0) {
         printf("  mov [rbp-%d], r10\n", SPILL_R10);
-        used_regs &= ~1;
+        // Keep r10 marked as in-use so alloc_reg() doesn't reuse it for the
+        // hidden ret buffer, which would overwrite a caller's live arg value.
     }
     if ((saved_scratch & 2) && hidden_ret_reg != 1) {
         printf("  mov [rbp-%d], r11\n", SPILL_R11);
-        used_regs &= ~2;
+        // Same for r11.
     }
 
 #ifdef _WIN32
@@ -295,11 +298,16 @@ static int gen_funcall(Node *node, int hidden_ret_reg) {
 #endif
 
     int temp_ret_reg = -1;
+    int temp_ret_slot = 0; // rbp-relative offset for the hidden ret buf frame slot
     if (has_hidden_retbuf) {
         if (hidden_ret_reg == -1) {
             temp_ret_reg = alloc_reg();
-            printf("  sub rsp, %d\n", node->ty->size);
-            printf("  mov %s, rsp\n", reg64[temp_ret_reg]);
+            int alloc = (node->ty->size + 15) & ~15;
+            fn_struct_ret_off += alloc;
+            if (fn_struct_ret_off > fn_struct_ret_total)
+                fn_struct_ret_total = fn_struct_ret_off;
+            temp_ret_slot = current_fn_stack_size + fn_struct_ret_off;
+            printf("  lea %s, [rbp-%d]\n", reg64[temp_ret_reg], temp_ret_slot);
             hidden_ret_reg = temp_ret_reg;
         }
         printf("  mov %s, %s\n", argreg64[0], reg64[hidden_ret_reg]);
@@ -371,9 +379,12 @@ static int gen_funcall(Node *node, int hidden_ret_reg) {
     }
 
     if (has_hidden_retbuf) {
-        if (temp_ret_reg != -1)
-            return temp_ret_reg;
-        return hidden_ret_reg;
+        if (temp_ret_reg != -1) {
+            // temp_ret_reg (r10/r11) may have been clobbered by the callee; reload
+            // the frame-relative address — it is always valid.
+            printf("  lea %s, [rbp-%d]\n", reg64[temp_ret_reg], temp_ret_slot);
+        }
+        return temp_ret_reg != -1 ? temp_ret_reg : hidden_ret_reg;
     }
 
     int r = alloc_reg();
@@ -483,6 +494,7 @@ static bool use_unsigned_cmp(Node *node) {
 
 static void emit_load(Type *ty, int r, char *addr) {
     int load_sz = op_size(ty);
+    if (load_sz < 4) load_sz = 4; // movsx/movzx dest must be wider than source
     if (ty->size == 1) {
         printf("  %s %s, byte ptr %s\n", ty->is_unsigned ? "movzx" : "movsx", reg(r, load_sz), addr);
         return;
@@ -565,6 +577,14 @@ static int gen_addr(Node *node) {
         if (r1 != -1) free_reg(r1);
         return gen_addr(node->rhs);
     }
+    case ND_FUNCALL:
+        // Struct-returning call used as an lvalue (e.g. passed by address to
+        // another function): let gen_funcall allocate a hidden ret buffer and
+        // return its address.
+        if (node->ty && (node->ty->kind == TY_STRUCT || node->ty->kind == TY_UNION))
+            return gen_funcall(node, -1);
+        error_tok(node->tok, "lvalue required as left operand of assignment");
+        return -1;
     default:
         error_tok(node->tok, "lvalue required as left operand of assignment");
         return -1;
@@ -1076,9 +1096,15 @@ static int gen(Node *node) {
                 printf("  movq %s, xmm0\n", reg64[r]);
             }
         } else if (to->size == 1) {
-            printf("  movsx %s, %s\n", reg32[r], reg8[r]);
+            if (to->is_unsigned)
+                printf("  movzx %s, %s\n", reg32[r], reg8[r]);
+            else
+                printf("  movsx %s, %s\n", reg32[r], reg8[r]);
         } else if (to->size == 2) {
-            printf("  movsx %s, %s\n", reg32[r], reg16[r]);
+            if (to->is_unsigned)
+                printf("  movzx %s, %s\n", reg32[r], reg16[r]);
+            else
+                printf("  movsx %s, %s\n", reg32[r], reg16[r]);
         } else if (to->size == 4 && from->size == 8) {
             printf("  mov %s, %s\n", reg32[r], reg32[r]);
         } else if (to->size == 8 && from->size < 8) {
@@ -1412,7 +1438,7 @@ static int gen(Node *node) {
     }
     case ND_LABEL_VAL: {
         int r = alloc_reg();
-        printf("  leaq .L.label.%s.%s(%%rip), %s\n", current_fn, node->label_name, reg64[r]);
+        printf("  lea %s, [rip + .L.label.%s.%s]\n", reg64[r], current_fn, node->label_name);
         return r;
     }
     case ND_ASM: {
@@ -1962,6 +1988,9 @@ void codegen(Program *prog) {
         Function *fn = item->fn;
         current_fn = fn->name;
         current_fn_def = fn;
+        current_fn_stack_size = fn->stack_size;
+        fn_struct_ret_off = 0;
+        fn_struct_ret_total = 0;
 
         // Pass 1: Generate function body to temp file to discover register usage
         FILE *body_file = tmpfile();
@@ -2093,7 +2122,7 @@ void codegen(Program *prog) {
 
         // Calculate stack frame size
         // Total space below rbp must cover: locals + spills + shadow (32)
-        int need = fn->stack_size + 32;
+        int need = fn->stack_size + fn_struct_ret_total + 32;
         int push_bytes = n_pushes * 8;
         int sub_amount = need - push_bytes;
         if (sub_amount < 32) sub_amount = 32;

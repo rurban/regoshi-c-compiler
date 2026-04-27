@@ -3,8 +3,8 @@ Generated: April 2026
 
 ## Summary
  - **Total**:     134
- - **Passed**:    130
- - **Failed**:    4
+ - **Passed**:    131
+ - **Failed**:    3
  - **Pass Rate**: 97%
 
 ## Detailed Results
@@ -104,7 +104,7 @@ Generated: April 2026
 | 111_conversion                           | PASS         | Output matches                       |
 | 117_builtins                             | PASS         | Output matches                       |
 | 118_switch                               | PASS         | Output matches                       |
-| 119_random_stuff                         | COMPILE_FAIL | rcc returned non-zero                |
+| 119_random_stuff                         | PASS         | Output matches                       |
 | 121_struct_return                        | PASS         | Output matches                       |
 | 127_asm_goto                             | PASS         | Output matches                       |
 | 128_run_atexit                           | PASS         | Output matches                       |
