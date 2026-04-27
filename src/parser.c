@@ -3834,7 +3834,7 @@ Program *parse(Token *tok) {
             Type *fty = func_type(ty);
             Type *fn_symbol_ty = pointer_to(fty);
             locals = NULL;
-            stack_offset = 80; // reserve locals plus spill slots below rbp for r10/r11 saves
+            stack_offset = 80;
             label_scopes = NULL;
             pending_gotos = NULL;
             current_switch = NULL;
@@ -3842,10 +3842,55 @@ Program *parse(Token *tok) {
             parser_current_fn = name;
 
             tok = tok->next;
-            LVar *params = parse_params(&tok, tok, &is_variadic);
-            tok = skip(tok, ")");
-            tok = skip_attributes(tok);
-            current_fn_scope_locals = params;
+            LVar *params;
+            if (!equal(tok, ")") && !equal(tok, "...") && !is_typename(tok)) {
+                // K&R function definition: param list has identifiers, not types
+                LVar head = {};
+                LVar *cur = &head;
+                while (!equal(tok, ")")) {
+                    if (cur != &head)
+                        tok = skip(tok, ",");
+                    if (tok->kind != TK_IDENT)
+                        error_tok(tok, "expected parameter name");
+                    LVar *var = new_var(tok->name, ty_int, true);
+                    tok = tok->next;
+                    cur = cur->param_next = var;
+                }
+                params = head.param_next;
+                tok = skip(tok, ")");
+                tok = skip_attributes(tok);
+                current_fn_scope_locals = params;
+                // Parse K&R parameter declarations between ) and {
+                while (!equal(tok, "{")) {
+                    VarAttr dattr = {};
+                    Type *dty = declspec(&tok, tok, &dattr);
+                    for (;;) {
+                        char *dname = NULL;
+                        Type *ddecl = declarator(&tok, tok, copy_type(dty), &dname);
+                        if (dname) {
+                            for (LVar *p = params; p; p = p->param_next) {
+                                if (strcmp(p->name, dname) == 0) {
+                                    p->ty = ddecl;
+                                    break;
+                                }
+                            }
+                        }
+                        if (!equal(tok, ","))
+                            break;
+                        tok = tok->next;
+                    }
+                    tok = skip(tok, ";");
+                }
+                for (LVar *p = params; p; p = p->param_next) {
+                    if (!p->ty)
+                        p->ty = ty_int;
+                }
+            } else {
+                params = parse_params(&tok, tok, &is_variadic);
+                tok = skip(tok, ")");
+                tok = skip_attributes(tok);
+                current_fn_scope_locals = params;
+            }
             current_block_depth = 0;
             suppress_fn_scope_update = false;
 

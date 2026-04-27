@@ -3,9 +3,9 @@ Generated: April 2026
 
 ## Summary
  - **Total**:     134
- - **Passed**:    132
- - **Failed**:    2
- - **Pass Rate**: 98%
+ - **Passed**:    134
+ - **Failed**:    0
+ - **Pass Rate**: 100%
 
 ## Detailed Results
 | Test                                     | Status       | Message                              |
@@ -88,7 +88,7 @@ Generated: April 2026
 | 92_enum_bitfield                         | PASS         | Output matches                       |
 | 93_integer_promotion                     | PASS         | Output matches                       |
 | 94_generic                               | PASS         | Output matches                       |
-| 95_bitfields                             | MISMATCH     | Output does not match .expect        |
+| 95_bitfields                             | PASS         | Output matches                       |
 | 97_utf8_string_literal                   | PASS         | Output matches                       |
 | 100_c99array-decls                       | PASS         | Output matches                       |
 | 101_cleanup                              | PASS         | Output matches                       |
@@ -112,7 +112,7 @@ Generated: April 2026
 | 130_large_argument                       | PASS         | Output matches                       |
 | 131_return_struct_in_reg                 | PASS         | Output matches                       |
 | 132_bound_test                           | PASS         | Output matches                       |
-| 133_old_func                             | COMPILE_FAIL | rcc returned non-zero                |
+| 133_old_func                             | PASS         | Output matches                       |
 | 134_double_to_signed                     | PASS         | Output matches                       |
 | 135_func_arg_struct_compare              | PASS         | Output matches                       |
 | 137_funcall_struct_args                  | PASS         | Output matches                       |

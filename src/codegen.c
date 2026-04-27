@@ -1076,21 +1076,17 @@ static int gen(Node *node) {
                 printf("  movq %s, xmm0\n", reg64[r]);
             }
         } else if (node->member && node->member->bit_width > 0 && node->member->bf_load_size) {
-            // Dense-packed bitfield: use larger unsigned load to cover all bits
             int ls = node->member->bf_load_size;
+            int bw = node->member->bit_width;
+            int bo = node->member->bit_offset;
             int eff_ls = ls > 8 ? 8 : ls;
             const char *sz = eff_ls == 1 ? "byte" : eff_ls == 2 ? "word"
                 : eff_ls == 4                                   ? "dword"
                                                                 : "qword";
-            // For overflow case (ls > 8), save address before clobbering r with value
             int r_addr = -1;
-            if (ls > 8) {
-                int bw2 = node->member->bit_width;
-                int bo2 = node->member->bit_offset;
-                if (bo2 + bw2 > 64) {
-                    r_addr = alloc_reg();
-                    printf("  mov %s, %s\n", reg64[r_addr], reg64[r]);
-                }
+            if (ls > 8 && bo + bw > 64) {
+                r_addr = alloc_reg();
+                printf("  mov %s, %s\n", reg64[r_addr], reg64[r]);
             }
             if (eff_ls <= 2)
                 printf("  movzx %s, %s ptr [%s]\n", reg32[r], sz, reg64[r]);
@@ -1098,25 +1094,34 @@ static int gen(Node *node) {
                 printf("  mov %s, %s ptr [%s]\n", reg32[r], sz, reg64[r]);
             else
                 printf("  mov %s, %s ptr [%s]\n", reg64[r], sz, reg64[r]);
-            // Merge overflow bits beyond 8 bytes
-            if (ls > 8 && r_addr >= 0) {
-                int bw2 = node->member->bit_width;
-                int bo2 = node->member->bit_offset;
-                if (bo2 + bw2 > 64) {
-                    int overflow = bo2 + bw2 - 64;
-                    int tmp = alloc_reg();
-                    printf("  movzx %s, byte ptr [%s+8]\n", reg32[tmp], reg64[r_addr]);
-                    printf("  and %s, %d\n", reg32[tmp], (1 << overflow) - 1);
-                    printf("  shl %s, %d\n", reg64[tmp], 64 - bo2);
-                    printf("  or %s, %s\n", reg64[r], reg64[tmp]);
-                    free_reg(tmp);
-                }
+            if (bo > 0)
+                printf("  shr %s, %d\n", reg64[r], bo);
+            if (r_addr >= 0) {
+                int overflow = bo + bw - 64;
+                int tmp = alloc_reg();
+                printf("  movzx %s, byte ptr [%s+8]\n", reg32[tmp], reg64[r_addr]);
+                printf("  and %s, %d\n", reg32[tmp], (1 << overflow) - 1);
+                printf("  shl %s, %d\n", reg64[tmp], 64 - bo);
+                printf("  or %s, %s\n", reg64[r], reg64[tmp]);
+                free_reg(tmp);
                 free_reg(r_addr);
             }
+            int load_bits = ls * 8;
+            if (bw < load_bits) {
+                if (node->member->ty->is_unsigned || node->member->ty->is_enum) {
+                    unsigned long long mask = (1ULL << bw) - 1;
+                    printf("  movabs rax, %llu\n", mask);
+                    printf("  and %s, rax\n", reg64[r]);
+                } else {
+                    int shift = 64 - bw;
+                    printf("  shl %s, %d\n", reg64[r], shift);
+                    printf("  sar %s, %d\n", reg64[r], shift);
+                }
+            }
+            return r;
         } else {
             emit_load(load_ty, r, format("[%s]", reg64[r]));
         }
-        // Bitfield: extract the relevant bits
         if (node->member && node->member->bit_width > 0) {
             int bw = node->member->bit_width;
             int bo = node->member->bit_offset;
@@ -1131,7 +1136,6 @@ static int gen(Node *node) {
                     printf("  movabs rax, %llu\n", mask);
                     printf("  and %s, rax\n", reg64[r]);
                 } else {
-                    // Sign-extend: shift left then arithmetic shift right
                     int shift = 64 - bw;
                     printf("  shl %s, %d\n", reg64[r], shift);
                     printf("  sar %s, %d\n", reg64[r], shift);
@@ -2436,13 +2440,16 @@ void codegen(Program *prog) {
                                     strcmp(r1, r2) == 0 && strcmp(r2, r3) == 0 &&
                                     is_reg(d3) && !is_reg(mem1) &&
                                     (!strcmp(op2, "add") || !strcmp(op2, "sub"))) {
-                                    char nl1[200], nl2[100];
-                                    snprintf(nl1, sizeof(nl1), "  mov %s, %s", d3, mem1);
-                                    snprintf(nl2, sizeof(nl2), "  %s %s, %s", op2, d3, imm2);
-                                    lines[li] = strdup(nl1);
-                                    lines[lj] = strdup(nl2);
-                                    lines[lk] = "";
-                                    continue;
+                                    int r1_pid = phys_reg_id(r1);
+                                    if (r1_pid < 0 || !reg_live_after(lines, nlines, lk, r1_pid)) {
+                                        char nl1[200], nl2[100];
+                                        snprintf(nl1, sizeof(nl1), "  mov %s, %s", d3, mem1);
+                                        snprintf(nl2, sizeof(nl2), "  %s %s, %s", op2, d3, imm2);
+                                        lines[li] = strdup(nl1);
+                                        lines[lj] = strdup(nl2);
+                                        lines[lk] = "";
+                                        continue;
+                                    }
                                 }
                             }
                         }
