@@ -50,6 +50,7 @@ static int alloc_reg(void);
 static void free_reg(int i);
 static int gen(Node *node);
 static int gen_addr(Node *node);
+static bool is_asm_reserved(const char *name);
 
 static char *func_asm_name(char *name) {
     for (TLItem *item = all_items; item; item = item->next) {
@@ -60,6 +61,8 @@ static char *func_asm_name(char *name) {
 }
 
 static void emit_direct_call(char *name) {
+    if (is_asm_reserved(name))
+        name = format(".L_rcc_%s", name);
     printf("  call %s\n", func_asm_name(name));
 }
 
@@ -131,6 +134,8 @@ static void emit_alloca(void) {
            "  ret\n");
 }
 
+static char *var_label(LVar *var);
+
 static int gen_funcall(Node *node, int hidden_ret_reg) {
     Node *argv[64];
     int nargs = 0;
@@ -146,10 +151,11 @@ static int gen_funcall(Node *node, int hidden_ret_reg) {
         argv[nargs++] = arg;
 
     char *call_target = node->funcname;
+    if (call_target && is_asm_reserved(call_target))
+        call_target = format(".L_rcc_%s", call_target);
     if (!call_target && node->lhs && node->lhs->kind == ND_LVAR &&
         node->lhs->var && node->lhs->var->is_function)
-        call_target = node->lhs->var->name;
-
+        call_target = var_label(node->lhs->var);
 #ifdef _WIN32
     char *argreg32[] = {"ecx", "edx", "r8d", "r9d"};
     char *argreg64[] = {"rcx", "rdx", "r8", "r9"};
@@ -435,6 +441,22 @@ static int add_float_literal(double val, int size) {
 static bool is_asm_reserved(const char *name) {
     static const char *kw[] = {
         "cs", "ds", "es", "fs", "gs", "ss",
+        "al", "ah", "ax", "eax", "rax",
+        "bl", "bh", "bx", "ebx", "rbx",
+        "cl", "ch", "cx", "ecx", "rcx",
+        "dl", "dh", "dx", "edx", "rdx",
+        "sil", "si", "esi", "rsi",
+        "dil", "di", "edi", "rdi",
+        "bpl", "bp", "ebp", "rbp",
+        "spl", "sp", "esp", "rsp",
+        "r8", "r8b", "r8w", "r8d",
+        "r9", "r9b", "r9w", "r9d",
+        "r10", "r10b", "r10w", "r10d",
+        "r11", "r11b", "r11w", "r11d",
+        "r12", "r12b", "r12w", "r12d",
+        "r13", "r13b", "r13w", "r13d",
+        "r14", "r14b", "r14w", "r14d",
+        "r15", "r15b", "r15w", "r15d",
         "and", "or", "not", "xor", "shl", "shr", "mod",
         "eq", "ne", "lt", "le", "ge", "gt",
         NULL};
@@ -2139,19 +2161,40 @@ void codegen(Program *prog) {
         if ((push_bytes + sub_amount) % 16 != 0) sub_amount += 8;
 
         // Emit prologue - handle is_weak, inline, and static linkage.
-        // Pure inline (no extern) functions are not exported.
-        bool fn_exported = !fn->is_static && (!fn->is_inline || fn->is_extern);
+        // For inline functions, check:
+        // 1. If there's a non-inline declaration (has_init) in globals
+        // 2. If prior non-weak declaration had extern (LVar is_extern=true)
+        bool has_noninline_decl = false;
+        bool had_extern_decl = false;
+        if (fn->is_inline && !fn->is_extern) {
+            for (LVar *g = prog->globals; g; g = g->next) {
+                if (g->is_function && strcmp(g->name, fn->name) == 0) {
+                    if (g->has_init)
+                        has_noninline_decl = true;
+                    // Only consider non-weak extern declarations
+                    if (g->is_extern && !g->is_weak)
+                        had_extern_decl = true;
+                    break;
+                }
+            }
+        }
+        char *fn_label = fn->name;
+        if (is_asm_reserved(fn->name))
+            fn_label = format(".L_rcc_%s", fn->name);
+        bool fn_exported = !fn->is_static && (!fn->is_inline || fn->is_extern || has_noninline_decl || had_extern_decl);
         if (fn->is_weak) {
             printf(".weak %s\n", fn->name);
         } else if (fn_exported) {
             printf(".globl %s\n", fn->name);
         }
-        // Only emit the public-name alias when the function is exported or weak.
-        // Pure-inline/static functions must not expose a visible symbol so that
-        // weak references to them from other TUs resolve to NULL.
-        if (fn->asm_name && (fn_exported || fn->is_weak))
+        // When the function name collides with a reserved name (e.g. register),
+        // emit an alias from the real name to the safe label so that references
+        // resolve correctly.
+        if (fn_label != fn->name)
+            printf("%s = %s\n", fn->name, fn_label);
+        else if (fn->asm_name && (fn_exported || fn->is_weak))
             printf("%s = %s\n", fn->name, fn->asm_name);
-        printf("%s:\n", fn->asm_name ? fn->asm_name : fn->name);
+        printf("%s:\n", fn_label);
         printf("  push rbp\n");
         printf("  mov rbp, rsp\n");
 

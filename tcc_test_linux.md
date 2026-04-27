@@ -3,9 +3,9 @@ Generated: April 2026
 
 ## Summary
  - **Total**:     134
- - **Passed**:    128
- - **Failed**:    6
- - **Pass Rate**: 95%
+ - **Passed**:    132
+ - **Failed**:    2
+ - **Pass Rate**: 98%
 
 ## Detailed Results
 | Test                                     | Status       | Message                              |
@@ -42,7 +42,7 @@ Generated: April 2026
 | 30_hanoi                                 | PASS         | Output matches                       |
 | 31_args                                  | PASS         | Output matches                       |
 | 32_led                                   | PASS         | Output matches                       |
-| 33_ternary_op                            | COMPILE_FAIL | executable missing                   |
+| 33_ternary_op                            | PASS         | Output matches                       |
 | 34_array_assignment                      | PASS         | Output matches                       |
 | 35_sizeof                                | PASS         | Output matches                       |
 | 36_array_initialisers                    | PASS         | Output matches                       |
@@ -94,11 +94,11 @@ Generated: April 2026
 | 101_cleanup                              | PASS         | Output matches                       |
 | 102_alignas                              | PASS         | Output matches                       |
 | 103_implicit_memmove                     | PASS         | Output matches                       |
-| 104_inline                               | MISMATCH     | Output does not match .expect        |
+| 104_inline                               | PASS         | Output matches                       |
 | 105_local_extern                         | PASS         | Output matches                       |
 | 106_versym                               | PASS         | Output matches                       |
 | 107_stack_safe                           | PASS         | Output matches                       |
-| 108_constructor                          | COMPILE_FAIL | executable missing                   |
+| 108_constructor                          | PASS         | Output matches                       |
 | 109_float_struct_calling                 | PASS         | Output matches                       |
 | 110_average                              | PASS         | Output matches                       |
 | 111_conversion                           | PASS         | Output matches                       |
@@ -108,7 +108,7 @@ Generated: April 2026
 | 121_struct_return                        | PASS         | Output matches                       |
 | 127_asm_goto                             | PASS         | Output matches                       |
 | 128_run_atexit                           | PASS         | Output matches                       |
-| 129_scopes                               | COMPILE_FAIL | executable missing                   |
+| 129_scopes                               | PASS         | Output matches                       |
 | 130_large_argument                       | PASS         | Output matches                       |
 | 131_return_struct_in_reg                 | PASS         | Output matches                       |
 | 132_bound_test                           | PASS         | Output matches                       |

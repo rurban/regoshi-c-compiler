@@ -3705,6 +3705,8 @@ static char *parse_toplevel_asm(Token **rest, Token *tok) {
 }
 
 Program *parse(Token *tok) {
+    globals = NULL;
+    str_lits = NULL;
     TLItem item_head = {};
     TLItem *item_cur = &item_head;
 
@@ -3837,7 +3839,7 @@ Program *parse(Token *tok) {
             }
             Function *fn = arena_alloc(sizeof(Function));
             fn->name = name;
-            fn->asm_name = pending_asm_name ? pending_asm_name : format(".Lfn.%s", name);
+            fn->asm_name = pending_asm_name;
             fn->ty = fty;
             fn->params = params;
             fn->locals = fn_locals;
@@ -3851,8 +3853,7 @@ Program *parse(Token *tok) {
             // is_static is sticky: if any decl was static the fn is static
             fn->is_static = attr.is_static || (fn_sym2 && fn_sym2->is_static);
             // is_extern: explicit extern on this def, OR any non-inline extern
-            // declaration seen (has_init flag). Note: prior extern-inline decl
-            // does NOT make this function exported - only explicit extern does.
+            // declaration seen (has_init flag).
             fn->is_extern = attr.is_extern || (fn_sym2 && fn_sym2->has_init);
             fn->is_weak = attr.is_weak || (fn_sym2 && fn_sym2->is_weak);
             pending_constructor = false;
