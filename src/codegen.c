@@ -2504,14 +2504,22 @@ void codegen(Program *prog) {
         }
     }
     if (has_ctor) {
+#ifdef _WIN32
+        printf("\n.section .ctors,\"w\"\n");
+#else
         printf("\n.section .init_array,\"aw\",@init_array\n");
+#endif
         for (TLItem *item = prog->items; item; item = item->next) {
             if (item->kind == TL_FUNC && item->fn->is_constructor)
                 printf("  .quad %s\n", item->fn->name);
         }
     }
     if (has_dtor) {
+#ifdef _WIN32
+        printf("\n.section .dtors,\"w\"\n");
+#else
         printf("\n.section .fini_array,\"aw\",@fini_array\n");
+#endif
         for (TLItem *item = prog->items; item; item = item->next) {
             if (item->kind == TL_FUNC && item->fn->is_destructor)
                 printf("  .quad %s\n", item->fn->name);
