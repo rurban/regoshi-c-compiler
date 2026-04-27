@@ -57,7 +57,7 @@ Linux:
 
 Structs, unions, enums, typedefs, arrays (multi-dimensional), pointers (including function pointers), `for`/`while`/`do-while`/`switch`/`goto`, `sizeof`, `_Bool`, `static`, `extern`, variadic `printf`, string literals, compound assignment operators, pre/post increment, ternary operator, comma operator, designated initializers, \_Generic, attribute `__cleanup__`, `__aligned__`, `__packed__`, `__constructor__`, `__destructor__`, Windows and SystemV long doubles (internally all using SSE), unicode identifiers and strings, minimal `"wchar.h"`, enum bitfields.
 
-Not yet: VLA's, ms bitfields, inline, GNU alias, atomics, asm goto,old K&R function definitions.
+Not yet: VLA's, ms bitfields, inline, GNU alias, atomics, old K&R function definitions.
 
 Top-level `__asm__("...")` statements are supported and emitted in source order. Unlike GCC (which hoists all file-scope `asm` blocks to the top of the output at `-O2`/`-O3` unless `-fno-toplevel-reorder` is used), rcc always preserves their original position relative to functions.
 
