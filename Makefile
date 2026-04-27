@@ -15,8 +15,11 @@ INCDIR = $(PREFIX)/include/rcc
 ifeq ($(OS),Windows_NT)
 RCC_INCDIR ?= C:/Program Files/rcc/include
 DEF_INCDIR='-DRCC_INCDIR="$(RCC_INCDIR)"'
+TARGET = rcc.exe
 else
-ifneq ($(CC),x86_64-w64-mingw32-gcc)
+ifeq ($(CC),x86_64-w64-mingw32-gcc)
+TARGET = rcc.exe
+else
 RCC_INCDIR ?= $(shell cd include && pwd)
 DEF_INCDIR='-DRCC_INCDIR="$(RCC_INCDIR)"'
 endif

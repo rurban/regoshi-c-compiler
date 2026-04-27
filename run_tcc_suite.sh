@@ -20,7 +20,11 @@ if [ -z "$RCC" ]; then
 			RCC="$candidate"
 			if [ "$RCC" = "$SCRIPT_DIR/rcc.exe" ]; then
 				RCC="$SCRIPT_DIR/mingw-cross.sh"
-                                REPORT_FILE="$SCRIPT_DIR/tcc_test_mingw_cross.md"
+				REPORT_FILE="$SCRIPT_DIR/tcc_test_mingw_cross.md"
+				WINEDEBUG=fixme-all
+				WINEDLLOVERRIDES="winedbg=d"
+				WINENOPOPUPS=1
+				export WINEDEBUG WINEDLLOVERRIDES WINENOPOPUPS
 			fi
 			break
 		fi
@@ -133,12 +137,12 @@ print_change() {
 # Tests to skip – mirrors tinycc/tests/tests2/Makefile SKIP, minus TCC-internals
 # (bound-checker, backtrace, btdll, builtins are TCC-runtime-only and omitted here)
 #tcc-extension working: 34_array_assignment
+#TODO on mingw test 95_bitfields_ms, not 95_bitfields
 SKIP_TESTS="
 22_floating_point
 60_errors_and_warnings
 96_nodata_wanted
 73_arm64
-95_bitfields_ms
 112_backtrace
 113_btdll
 114_bound_signal
@@ -157,10 +161,20 @@ SKIP_TESTS="
 136_atomic_gcc_style
 "
 
+# Tests skipped only when using mingw-cross.sh (Windows cross-compilation)
+MINGW_SKIP_TESTS="
+95_bitfields
+"
+
 is_skipped() {
 	case "$SKIP_TESTS" in *"
 $1
 "*) return 0 ;; esac
+	if [ "$RCC" = "$SCRIPT_DIR/mingw-cross.sh" ]; then
+		case "$MINGW_SKIP_TESTS" in *"
+$1
+"*) return 0 ;; esac
+	fi
 	return 1
 }
 
@@ -267,7 +281,7 @@ while IFS= read -r src; do
 			"$TMP_EXE" $args >>"$TMP_OUT" 2>&1; actual_exit=$?
 		fi
 	else
-		"$TMP_EXE" >>"$TMP_OUT" 2>&1; actual_exit=$?
+		timeout 20s "$TMP_EXE" >>"$TMP_OUT" 2>&1; actual_exit=$?
 	fi
 	if [ "$actual_exit" != "$expected_exit" ]; then
 		# shellcheck disable=SC2059
