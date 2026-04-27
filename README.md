@@ -1,6 +1,6 @@
 # RCC — Regoshi C Compiler
 
-A fast, self-contained C compiler targeting x86-64 Windows and Unix. Written from scratch in C11 by Hosokawa-t, a 16 year old student. 
+A fast, self-contained C compiler targeting x86-64 Windows and Unix. Written from scratch in C11 by Hosokawa-t, a 16 year old student.
 **RCC equally fast code as TCC** while keeping compilation speed competitive.
 
 ## Benchmark Results
