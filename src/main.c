@@ -54,7 +54,7 @@ static char *read_file(char *path) {
 }
 
 void help(void) {
-    printf("rcc v1.2-dev - Copyright 2026 Hamagoto-Y and Reini Urban\n");
+    printf("rcc v1.2-dev - Copyright 2026 Hosokawa-t and Reini Urban\n");
     printf("rcc [options...] [-o outfile] [-c] infile(s)...\n");
     printf("Options:\n"
            "-I path       add include path\n"
