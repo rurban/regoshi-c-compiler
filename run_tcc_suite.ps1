@@ -103,9 +103,14 @@ foreach ($file in $TestFiles) {
         $inScopesDir = $true
     }
 
+    $extraFlags = ""
+    if ($base -eq "129_scopes") {
+        $extraFlags = "-D__TINYC__"
+    }
+
     # 1. Compilation
     $compileStart = Get-Date
-    $process = Start-Process -FilePath $RCC -ArgumentList $src, "-o", $exe -PassThru -NoNewWindow -Wait -ErrorAction SilentlyContinue
+    $process = Start-Process -FilePath $RCC -ArgumentList "$extraFlags $src", "-o", $exe -PassThru -NoNewWindow -Wait -ErrorAction SilentlyContinue
     $compileEnd = Get-Date
 
     if ($inScopesDir) {
@@ -234,7 +239,7 @@ if (-not $report.EndsWith("`n")) { $report += "`n" }
 Write-Host "`nTest complete. Summary: $Passed Passed, $Failed Failed." -ForegroundColor Cyan
 Write-Host "Full report saved to $ReportFile"
 
-if ($Passed -ge 90) {
+if ($Passed -ge 93) {
     exit 0
 } else {
     exit 1

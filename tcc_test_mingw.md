@@ -1,11 +1,11 @@
 # TCC Test Suite Report for RCC
-Generated on: 04/28/2026 09:06:04
+Generated on: 04/28/2026 09:29:00
 
 ## Summary
 - **Total Tests**: 104
-- **Passed**: 92
-- **Failed**: 12
-- **Pass Rate**: 88.46%
+- **Passed**: 93
+- **Failed**: 11
+- **Pass Rate**: 89.42%
 
 ## Detailed Results
 | Test | Status | Message |
@@ -128,7 +128,7 @@ Generated on: 04/28/2026 09:06:04
 | 126_bound_global | SKIP | Skipped |
 | 127_asm_goto | PASS | Output matches |
 | 128_run_atexit | SKIP | Skipped |
-| 129_scopes | COMPILE_FAIL | rcc exited with 1 |
+| 129_scopes | PASS | Output matches |
 | 130_large_argument | PASS | Output matches |
 | 131_return_struct_in_reg | PASS | Output matches |
 | 132_bound_test | PASS | Output matches |

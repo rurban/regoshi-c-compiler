@@ -224,6 +224,10 @@ while IFS= read -r src; do
 		RCC="$(realpath "$RCC")"
 		cd "$TEST_DIR" || exit
 		src=129_scopes.c
+		# 129_scopes uses __TINYC__ to decide __leading_underscore convention
+		if echo "$RCC" | grep -q mingw-cross; then
+			p_src="-D__TINYC__"
+		fi
         fi
         # 1. Compile (capture warnings/notes to TMP_OUT; errors abort)
         # shellcheck disable=SC2086,SC2129
@@ -447,7 +451,7 @@ fi
 printf "Report saved to %s\n" "$REPORT_FILE"
 
 if [ "$RCC" = "$SCRIPT_DIR/mingw-cross.sh" ]; then
-    [ "$passed" -ge 130 ]
+    [ "$passed" -ge 131 ]
 else
     [ "$passed" -ge 135 ]
 fi
