@@ -85,6 +85,7 @@ int main(int argc, char **argv) {
 #endif
         ;
     char *in_path = NULL;
+    bool first_input = true;
     bool opt_S = false;
     bool opt_c = false;
     bool opt_E = false;
@@ -187,11 +188,12 @@ int main(int argc, char **argv) {
             // CTFE is still incomplete and has caused miscompiles/crashes on parts
             // of the TCC suite, so keep the compile path conservative for now.
 
-            // Redirect stdout to our assembly file
-            if (!freopen(asm_path, "w", stdout)) {
+            // Redirect stdout to our assembly file (append for multi-file)
+            if (!freopen(asm_path, first_input ? "w" : "a", stdout)) {
                 fprintf(stderr, "rcc: error: cannot open output file %s\n", asm_path);
                 return 1;
             }
+            first_input = false;
             // Code generation (prints assembly to stdout, which is now asm_path)
             codegen(prog);
             fflush(stdout);
