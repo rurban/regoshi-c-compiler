@@ -1500,7 +1500,7 @@ char *preprocess(char *filename, char *p) {
     if (!find_macro("__builtin_alloca"))
         define_macro("__builtin_alloca", false, NULL, 0, "alloca");
     if (!find_macro("__builtin_unreachable"))
-        define_macro("__builtin_unreachable", false, NULL, 0, "while(1)");
+        define_macro("__builtin_unreachable", true, NULL, 0, "while(1){}");
     if (!find_macro("__GNUC__"))
         define_macro("__GNUC__", false, NULL, 0, "4");
     if (!find_macro("__GNUC_MINOR__"))

@@ -894,6 +894,13 @@ static Type *declarator(Token **rest, Token *tok, Type *ty, char **name) {
         break;
     }
 
+    // __asm__ is not a declarator identifier — let stmt() handle inline asm
+    if (equal(tok, "__asm__") || equal(tok, "__asm")) {
+        if (name) *name = NULL;
+        *rest = tok;
+        return ty;
+    }
+
     if (tok->kind != TK_IDENT) {
         if (name)
             *name = NULL;
