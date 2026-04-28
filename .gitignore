@@ -22,3 +22,6 @@ tmp*.c
 amazon_bug_bounty/
 tcc_test_*.md
 test/*.out
+/mingw-test.sh
+/compile_commands.json
+/AGENTS.md

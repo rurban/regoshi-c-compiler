@@ -16,6 +16,7 @@ struct Macro {
     Macro *next;
     char *name;
     bool is_function;
+    bool is_variadic;
     char **params;
     int param_len;
     char *body;
@@ -38,6 +39,7 @@ struct MacroStack {
     MacroStack *next;
     char *name;
     bool is_function;
+    bool is_variadic;
     char **params;
     int param_len;
     char *body;
@@ -386,6 +388,7 @@ static void push_macro(char *name) {
     Macro *m = find_macro(name);
     if (m) {
         ms->is_function = m->is_function;
+        ms->is_variadic = m->is_variadic;
         ms->param_len = m->param_len;
         ms->params = m->params;
         ms->body = m->body;
@@ -427,6 +430,7 @@ static void pop_macro(char *name) {
             macros = m;
         }
         m->is_function = ms->is_function;
+        m->is_variadic = ms->is_variadic;
         m->param_len = ms->param_len;
         m->params = ms->params;
         m->body = ms->body;
@@ -442,6 +446,7 @@ static void define_macro(char *name, bool is_function, char **params, int param_
     }
     m->name = name;
     m->is_function = is_function;
+    m->is_variadic = false;
     m->params = params;
     m->param_len = param_len;
     m->body = body;
@@ -594,6 +599,20 @@ static char *substitute_macro(Macro *m, char **args, int argc, char *filename, i
     StrBuf sb;
     sb_init(&sb, strlen(m->body) * 8 + 256);
 
+    // For variadic macros, merge excess args into the last variadic slot
+    if (m->is_variadic && argc > m->param_len) {
+        // Merge args[m->param_len] through args[argc-1] with commas
+        StrBuf va_buf;
+        sb_init(&va_buf, 256);
+        for (int i = m->param_len; i < argc; i++) {
+            if (i > m->param_len) sb_putc(&va_buf, ',');
+            sb_puts(&va_buf, args[i]);
+        }
+        // Replace the slot with merged args
+        args[m->param_len] = va_buf.buf;
+        argc = m->param_len + 1;
+    }
+
     for (char *p = m->body; *p;) {
         if (*p == '"' || *p == '\'') {
             char quote = *p;
@@ -643,6 +662,13 @@ static char *substitute_macro(Macro *m, char **args, int argc, char *filename, i
             while (pp_is_ident2(*p))
                 p++;
             char *name = pp_strndup(start, p - start);
+            // Handle __VA_ARGS__ in variadic macros
+            if (m->is_variadic && strcmp(name, "__VA_ARGS__") == 0) {
+                if (m->param_len < argc) {
+                    sb_puts(&sb, args[m->param_len]);
+                }
+                continue;
+            }
             int idx = find_param_index(m, name);
             if (idx >= 0 && idx < argc) {
                 sb_puts(&sb, expand_text(args[idx], filename, line_no, depth + 1));
@@ -1120,6 +1146,7 @@ static char *preprocess_file(char *filename, char *input, int *line_counts) {
                     s++;
                 char *name = pp_strndup(name_start, s - name_start);
                 bool is_function = false;
+                bool is_variadic = false;
                 char **params = NULL;
                 int param_len = 0;
                 if (s < end && *s == '(') {
@@ -1129,6 +1156,20 @@ static char *preprocess_file(char *filename, char *input, int *line_counts) {
                     while (s < end && *s != ')') {
                         while (s < end && isspace((unsigned char)*s))
                             s++;
+                        // Check for ... (variadic macro)
+                        if (s[0] == '.' && s[1] == '.' && s[2] == '.') {
+                            s += 3;
+                            while (s < end && isspace((unsigned char)*s))
+                                s++;
+                            is_variadic = true;
+                            if (s < end && *s == ')')
+                                break;
+                            if (*s == ',') {
+                                s++;
+                                continue;
+                            }
+                            break;
+                        }
                         char *ps = s;
                         while (s < end && pp_is_ident2(*s))
                             s++;
@@ -1141,6 +1182,16 @@ static char *preprocess_file(char *filename, char *input, int *line_counts) {
                     }
                     if (s < end && *s == ')')
                         s++;
+                    define_macro(name, is_function, params, param_len, trim_copy(s, end - s));
+                    if (is_variadic) {
+                        Macro *m = find_macro(name);
+                        if (m) m->is_variadic = true;
+                    }
+                    if (line_counts)
+                        line_no += line_counts[line_idx++];
+                    else
+                        line_no++;
+                    continue;
                 }
                 while (s < end && (*s == ' ' || *s == '\t'))
                     s++;
