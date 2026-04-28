@@ -197,6 +197,7 @@ while IFS= read -r src; do
 
 	if is_skipped "$base"; then
 		printf "  %-40s %s\n" "$base..." "SKIP"
+		add_row "$base" "SKIP" "Skipped"
 		p_src=
 		continue
 	fi

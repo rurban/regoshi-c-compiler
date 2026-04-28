@@ -82,6 +82,11 @@ foreach ($file in $TestFiles) {
     # Skip tests that require TCC internals, inline asm, or pthreads
     if ($SkipTests -contains $base) {
         Write-Host "$base... SKIP" -ForegroundColor DarkGray
+        $Results += [PSCustomObject]@{
+            Test    = $base
+            Status  = "SKIP"
+            Message = "Skipped"
+        }
         $Total--
         continue
     }

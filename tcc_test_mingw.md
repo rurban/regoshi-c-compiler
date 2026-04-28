@@ -1,5 +1,5 @@
 # TCC Test Suite Report for RCC
-Generated on: 04/28/2026 04:41:10
+Generated on: 04/28/2026 05:32:13
 
 ## Summary
 - **Total Tests**: 103
@@ -32,6 +32,7 @@ Generated on: 04/28/2026 04:41:10
 | 19_pointer_arithmetic | PASS | Output matches |
 | 20_pointer_comparison | PASS | Output matches |
 | 21_char_array | PASS | Output matches |
+| 22_floating_point | SKIP | Skipped |
 | 23_type_coercion | PASS | Output matches |
 | 24_math_library | PASS | Output matches |
 | 25_quicksort | PASS | Output matches |
@@ -64,15 +65,19 @@ Generated on: 04/28/2026 04:41:10
 | 52_unnamed_enum | PASS | Output matches |
 | 54_goto | PASS | Output matches |
 | 55_lshift_type | PASS | Output matches |
+| 60_errors_and_warnings | SKIP | Skipped |
 | 61_integers | PASS | Output matches |
 | 64_macro_nesting | PASS | Output matches |
 | 67_macro_concat | PASS | Output matches |
 | 70_floating_point_literals | MISMATCH | Output does not match .expect |
 | 71_macro_empty_arg | PASS | Output matches |
 | 72_long_long_constant | PASS | Output matches |
+| 73_arm64 | SKIP | Skipped |
 | 75_array_in_struct_init | PASS | Output matches |
 | 76_dollars_in_identifiers | PASS | Output matches |
 | 77_push_pop_macro | PASS | Output matches |
+| 78_vla_label | SKIP | Skipped |
+| 79_vla_continue | SKIP | Skipped |
 | 80_flexarray | PASS | Output matches |
 | 81_types | PASS | Output matches |
 | 82_attribs_position | PASS | Output matches |
@@ -90,26 +95,45 @@ Generated on: 04/28/2026 04:41:10
 | 94_generic | PASS | Output matches |
 | 95_bitfields | PASS | Output matches |
 | 95_bitfields_ms | MISMATCH | Output does not match .expect |
+| 96_nodata_wanted | SKIP | Skipped |
 | 97_utf8_string_literal | PASS | Output matches |
+| 98_al_ax_extend | SKIP | Skipped |
+| 99_fastcall | SKIP | Skipped |
 | 100_c99array-decls | PASS | Output matches |
 | 101_cleanup | MISMATCH | Output does not match .expect |
 | 102_alignas | MISMATCH | Output does not match .expect |
 | 103_implicit_memmove | PASS | Output matches |
+| 104_inline | SKIP | Skipped |
 | 105_local_extern | PASS | Output matches |
+| 106_versym | SKIP | Skipped |
 | 107_stack_safe | PASS | Output matches |
 | 108_constructor | PASS | Output matches |
 | 109_float_struct_calling | MISMATCH | Output does not match .expect |
 | 110_average | PASS | Output matches |
 | 111_conversion | PASS | Output matches |
+| 112_backtrace | SKIP | Skipped |
+| 113_btdll | SKIP | Skipped |
+| 114_bound_signal | SKIP | Skipped |
+| 115_bound_setjmp | SKIP | Skipped |
+| 116_bound_setjmp2 | SKIP | Skipped |
 | 117_builtins | MISMATCH | Output does not match .expect |
 | 118_switch | PASS | Output matches |
 | 119_random_stuff | MISMATCH | Output does not match .expect |
+| 120_alias | SKIP | Skipped |
 | 121_struct_return | PASS | Output matches |
+| 122_vla_reuse | SKIP | Skipped |
+| 123_vla_bug | SKIP | Skipped |
+| 124_atomic_counter | SKIP | Skipped |
+| 125_atomic_misc | SKIP | Skipped |
+| 126_bound_global | SKIP | Skipped |
 | 127_asm_goto | PASS | Output matches |
+| 128_run_atexit | SKIP | Skipped |
 | 129_scopes | COMPILE_FAIL | rcc exited with 1 |
 | 130_large_argument | MISMATCH | Output does not match .expect |
 | 131_return_struct_in_reg | PASS | Output matches |
 | 132_bound_test | PASS | Output matches |
+| 133_old_func | SKIP | Skipped |
 | 134_double_to_signed | PASS | Output matches |
 | 135_func_arg_struct_compare | PASS | Output matches |
+| 136_atomic_gcc_style | SKIP | Skipped |
 | 137_funcall_struct_args | PASS | Output matches |

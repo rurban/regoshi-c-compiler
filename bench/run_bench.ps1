@@ -90,6 +90,13 @@ if ($TCC) {
 } else {
     Write-Host "TCC not found, skipping TCC benchmark" -ForegroundColor DarkGray
     Write-Host ""
+    $results += [PSCustomObject]@{
+        Label     = "TCC (Tiny C Compiler)"
+        Compile   = "SKIP"
+        Execute   = "SKIP"
+        Total     = "SKIP"
+        Output    = ""
+    }
 }
 
 $r = Run-Bench "GCC -O0 (no opt)" $GCC "-O0 $SRC -o $GCC_EXE -lm" $GCC_EXE "Magenta"
