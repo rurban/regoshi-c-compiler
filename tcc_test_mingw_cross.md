@@ -3,9 +3,9 @@ Generated: April 2026
 
 ## Summary
  - **Total**:     135
- - **Passed**:    132
- - **Failed**:    3
- - **Pass Rate**: 97%
+ - **Passed**:    133
+ - **Failed**:    2
+ - **Pass Rate**: 98%
 
 ## Detailed Results
 | Test                                     | Status       | Message                              |
@@ -127,7 +127,7 @@ Generated: April 2026
 | 125_atomic_misc                          | SKIP         | Skipped                              |
 | 126_bound_global                         | SKIP         | Skipped                              |
 | 127_asm_goto                             | PASS         | Output matches                       |
-| 128_run_atexit                           | MISMATCH     | Output does not match .expect        |
+| 128_run_atexit                           | PASS         | Output matches                       |
 | 129_scopes                               | PASS         | Output matches                       |
 | 130_large_argument                       | PASS         | Output matches                       |
 | 131_return_struct_in_reg                 | PASS         | Output matches                       |
