@@ -426,6 +426,7 @@ static bool is_storage_class(Token *tok) {
     return equal(tok, "typedef") || equal(tok, "extern") || equal(tok, "static") ||
         equal(tok, "inline") || equal(tok, "__inline") || equal(tok, "__inline__") ||
         equal(tok, "const") || equal(tok, "volatile") || equal(tok, "restrict") ||
+        equal(tok, "__restrict") || equal(tok, "__restrict__") ||
         equal(tok, "signed") ||
         equal(tok, "unsigned") || equal(tok, "short") || equal(tok, "long");
 }
@@ -513,7 +514,14 @@ static Token *read_type_attrs(Token *tok, int *align, VarAttr *attr) {
         }
 
         if (equal(tok, "__asm__") || equal(tok, "__asm")) {
+            Token *start = tok;
             tok = tok->next;
+            // Before consuming "(", check if next is "(" — if not, it's not an asm attribute
+            if (!equal(tok, "(")) {
+                // Could be __asm__ statement without parens (but we don't handle that here)
+                tok = start;
+                return tok;
+            }
             tok = skip(tok, "(");
             char asm_buf[256];
             asm_buf[0] = '\0';
@@ -526,10 +534,16 @@ static Token *read_type_attrs(Token *tok, int *align, VarAttr *attr) {
                 }
                 tok = tok->next;
             }
-            tok = skip(tok, ")");
-            if (asm_len > 0)
-                pending_asm_name = str_intern(asm_buf, asm_len);
-            continue;
+            // Simple __asm__("label") for symbol naming — no operands
+            if (equal(tok, ")")) {
+                tok = skip(tok, ")");
+                if (asm_len > 0)
+                    pending_asm_name = str_intern(asm_buf, asm_len);
+                continue;
+            }
+            // Inline asm with operand sections — don't consume, let stmt() handle it
+            tok = start;
+            return tok;
         }
 
         if (equal(tok, "__attribute__") || equal(tok, "__attribute")) {
@@ -793,7 +807,11 @@ static Type *declarator(Token **rest, Token *tok, Type *ty, char **name) {
         }
     }
 
-    Token *inner = skip_attributes(tok->next);
+    Token *inner = tok->next;
+    while (equal(inner, "__cdecl") || equal(inner, "__stdcall") || equal(inner, "__fastcall") ||
+           equal(inner, "__thiscall") || equal(inner, "__vectorcall"))
+        inner = inner->next;
+    inner = skip_attributes(inner);
     if (equal(tok, "(") && (equal(inner, "*") || equal(inner, "["))) {
         Token *start = tok->next;
         Type dummy = {};
@@ -801,6 +819,17 @@ static Type *declarator(Token **rest, Token *tok, Type *ty, char **name) {
         // Dummy parse to skip past inner declarator
         Token *after_inner;
         declarator(&after_inner, start, &dummy, &dummy_name);
+        // Inner might have parsed function params; skip them to find ')'
+        while (equal(after_inner, "(")) {
+            int depth = 1;
+            after_inner = after_inner->next;
+            while (depth > 0 && after_inner->kind != TK_EOF) {
+                if (equal(after_inner, "(")) depth++;
+                else if (equal(after_inner, ")"))
+                    depth--;
+                after_inner = after_inner->next;
+            }
+        }
         if (!equal(after_inner, ")"))
             error_tok(after_inner, "expected ')'");
         tok = after_inner->next;
@@ -849,6 +878,20 @@ static Type *declarator(Token **rest, Token *tok, Type *ty, char **name) {
         *rest = tok;
         // Re-parse inner declarator with the suffixed type
         return declarator(&tok, start, suffixed, name);
+    }
+
+    // Skip calling convention keywords, attributes, and pointer declarators before the identifier
+    for (;;) {
+        while (equal(tok, "__cdecl") || equal(tok, "__stdcall") || equal(tok, "__fastcall") ||
+               equal(tok, "__thiscall") || equal(tok, "__vectorcall"))
+            tok = tok->next;
+        tok = read_type_attrs(tok, &decl_align, NULL);
+        if (equal(tok, "*")) {
+            ty = pointer_to(ty);
+            tok = tok->next;
+            continue;
+        }
+        break;
     }
 
     if (tok->kind != TK_IDENT) {
@@ -1277,6 +1320,11 @@ static Type *declspec(Token **rest, Token *tok, VarAttr *attr) {
         }
         if (equal(tok, "restrict") || equal(tok, "__restrict") || equal(tok, "__restrict__")) {
             quals |= QUAL_RESTRICT;
+            tok = tok->next;
+            continue;
+        }
+        if (equal(tok, "__cdecl") || equal(tok, "__stdcall") || equal(tok, "__fastcall") ||
+            equal(tok, "__thiscall") || equal(tok, "__vectorcall")) {
             tok = tok->next;
             continue;
         }
@@ -3754,28 +3802,34 @@ static void global_initializer(Token **rest, Token *tok, LVar *var) {
 }
 
 static char *parse_toplevel_asm(Token **rest, Token *tok) {
+    while (equal(tok, "volatile") || equal(tok, "__volatile__") ||
+           equal(tok, "__volatile") || equal(tok, "goto"))
+        tok = tok->next;
     tok = skip(tok, "(");
     if (tok->kind != TK_STR)
         error_tok(tok, "expected string literal in asm");
-
-    int total_len = 0;
-    Token *t = tok;
-    while (t->kind == TK_STR) {
-        total_len += t->len;
-        t = t->next;
-    }
-
-    char *buf = arena_alloc(total_len + 1);
+    char buf[4096];
     int pos = 0;
     while (tok->kind == TK_STR) {
-        memcpy(buf + pos, tok->str, tok->len);
-        pos += tok->len;
+        int n = tok->len;
+        if (pos + n < (int)sizeof(buf)) {
+            memcpy(buf + pos, tok->str, n);
+            pos += n;
+        }
         tok = tok->next;
     }
     buf[pos] = '\0';
-    tok = skip(tok, ")");
+    // Skip the rest of the asm parenthesized expression without evaluating.
+    // Handle balanced parens.
+    int depth = 1; // we already consumed '('
+    while (depth > 0 && tok->kind != TK_EOF) {
+        if (equal(tok, ")")) depth--;
+        else if (equal(tok, "("))
+            depth++;
+        tok = tok->next;
+    }
     *rest = tok;
-    return buf;
+    return str_intern(buf, pos);
 }
 
 Program *parse(Token *tok) {
@@ -3785,7 +3839,7 @@ Program *parse(Token *tok) {
     TLItem *item_cur = &item_head;
 
     while (tok->kind != TK_EOF) {
-        // fprintf(stderr, "DEBUG PARSE: tok kind=%d '%.*s'\n", tok->kind, tok->len, tok->loc);
+
         if (equal(tok, "#") && equal(tok->next, "pragma") &&
             equal(tok->next->next, "pack")) {
             tok = tok->next->next->next; // skip '# pragma pack'

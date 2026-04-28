@@ -245,6 +245,9 @@ static char *canonical_path(char *path) {
     if (len >= 2 && ((p[0] >= 'A' && p[0] <= 'Z') || (p[0] >= 'a' && p[0] <= 'z')) && p[1] == ':') {
         absolute = true;
         p += 2;
+    } else if (*p == '/') {
+        absolute = true;
+        p++;
     }
     while (*p == '/')
         p++;
@@ -281,14 +284,19 @@ static char *canonical_path(char *path) {
 
     char out[4096];
     int dst = 0;
-#ifdef _WIN32
     if (absolute) {
-        out[dst++] = buf[0];
-        out[dst++] = ':';
-    }
-#endif
-    if (absolute)
+#ifdef _WIN32
+        if (buf[0] == '/') {
+            out[dst++] = '/';
+        } else {
+            out[dst++] = buf[0];
+            out[dst++] = ':';
+            out[dst++] = '/';
+        }
+#else
         out[dst++] = '/';
+#endif
+    }
 
     for (int i = 0; i < ncomp; i++) {
         if (i > 0)
@@ -1197,7 +1205,13 @@ static char *preprocess_file(char *filename, char *input, int *line_counts) {
                             sb_puts(&out, preprocess_file(full_path(path), spliced_inc.text, spliced_inc.line_counts));
                             line_no += incl_lines;
                             sb_puts(&out, format("# %u \"%s\"\n", src_resume, fpath));
+                        } else {
+                            fprintf(stderr, "%s:%d: error: cannot read include file '%s'\n", fpath, line_no, path);
+                            exit(1);
                         }
+                    } else {
+                        fprintf(stderr, "%s:%d: error: include file '%s' not found\n", fpath, line_no, spec);
+                        exit(1);
                     }
                 }
             } else if ((pp_startswith(s, "if") && !pp_startswith(s, "ifdef") && !pp_startswith(s, "ifndef"))) {
@@ -1495,10 +1509,12 @@ char *preprocess(char *filename, char *p) {
         define_macro("__STDC_VERSION__", false, NULL, 0, "201112L");
     if (!find_macro("__extension__"))
         define_macro("__extension__", false, NULL, 0, "");
-    if (!find_macro("__asm__"))
-        define_macro("__asm__", false, NULL, 0, "__asm");
-    if (!find_macro("__volatile__"))
-        define_macro("__volatile__", false, NULL, 0, "volatile");
+    if (!find_macro("__builtin_va_list"))
+        define_macro("__builtin_va_list", false, NULL, 0, "void*");
+    // Don't define __asm__ or __volatile__ as macros — the parser
+    // handles __asm__, __asm, and asm directly.  Expanding them here
+    // would strip the leading underscores and break the token-based
+    // is_asm_keyword() detection in the parser.
     if (!find_macro("__BYTE_ORDER__"))
         define_macro("__BYTE_ORDER__", false, NULL, 0, "1234");
     if (!find_macro("__CHAR_BIT__"))

@@ -167,11 +167,13 @@ SKIP_TESTS="
 # Tests skipped only when using mingw-cross.sh (Windows cross-compilation)
 MINGW_SKIP_TESTS="
 95_bitfields
-106_versym
-117_builtins
 "
 
 is_skipped() {
+	# 95_bitfields_ms works on mingw-cross but not on native Linux
+	if [ "$1" = "95_bitfields_ms" ] && [ "$RCC" = "$SCRIPT_DIR/mingw-cross.sh" ]; then
+		return 1
+	fi
 	case "$SKIP_TESTS" in *"
 $1
 "*) return 0 ;; esac

@@ -1,14 +1,14 @@
-# RCC Benchmark Results
+# Linux RCC Benchmark Results
 
 _Generated: April 2026_
 
 | Compiler | Compile (ms) | Execute (ms) | Total (ms) |
 | :------- | -----------: | -----------: | ---------: |
-| RCC      |           74 |          596 |        670 |
-| TCC      |            7 |          598 |        605 |
-| SLIMCC   |           50 |          649 |        699 |
-| KEFIR    |          215 |          774 |        989 |
-| GCC0     |           76 |          592 |        668 |
-| GCCO2    |          227 |          227 |        454 |
-| CLANG0   |          123 |          673 |        796 |
-| CLANGO2  |          159 |          239 |        398 |
+| RCC      |           74 |          645 |        719 |
+| TCC      |            8 |          586 |        594 |
+| SLIMCC   |           51 |          647 |        698 |
+| KEFIR    |          201 |          704 |        905 |
+| GCC0     |           77 |          607 |        684 |
+| GCCO2    |          232 |          229 |        461 |
+| CLANG0   |          117 |          727 |        844 |
+| CLANGO2  |          185 |          245 |        430 |
