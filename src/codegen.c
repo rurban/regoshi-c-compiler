@@ -1733,6 +1733,12 @@ static int gen(Node *node) {
             }
         } else {
             int r_rhs = gen(node->rhs);
+            // Sign-extend rhs to 64 bits when operation is 64-bit but rhs was
+            // computed as 32-bit signed (e.g. pointer + int, long + int).
+            // 32-bit writes zero-extend in x86-64, so without this a negative
+            // int would be treated as a large positive offset.
+            if (sz == 8 && op_size(node->rhs->ty) == 4 && !use_unsigned(node->rhs->ty))
+                printf("  movsxd %s, %s\n", reg64[r_rhs], reg(r_rhs, 4));
             printf("  %s %s, %s\n", inst, reg(r_lhs, sz), reg(r_rhs, sz));
             free_reg(r_rhs);
         }
