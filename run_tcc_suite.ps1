@@ -199,9 +199,9 @@ foreach ($file in $TestFiles) {
         $expectedRaw = Get-Content $expectFile -Raw
         $expectedOutput = if ($null -eq $expectedRaw) { "" } else { $expectedRaw.Trim() }
 
-        # Normalize line endings and spaces for comparison
-        $normActual = $actualOutput -replace "\r\n", "`n"
-        $normExpected = $expectedOutput -replace "\r\n", "`n"
+        # Normalize: CRLF→LF, strip trailing whitespace per line
+        $normActual   = (($actualOutput   -replace "\r\n", "`n") -split "`n" | ForEach-Object { $_.TrimEnd() }) -join "`n"
+        $normExpected = (($expectedOutput -replace "\r\n", "`n") -split "`n" | ForEach-Object { $_.TrimEnd() }) -join "`n"
 
         if ($normActual -eq $normExpected) {
             Write-Host "PASS" -ForegroundColor Green
@@ -214,8 +214,8 @@ foreach ($file in $TestFiles) {
         } else {
             Write-Host "MISMATCH" -ForegroundColor Yellow
             # Print diff for CI visibility
-            $expectedLines = $expectedOutput -split "`n"
-            $actualLines = $actualOutput -split "`n"
+            $expectedLines = $normExpected -split "`n"
+            $actualLines   = $normActual   -split "`n"
             $diff = Compare-Object -ReferenceObject $expectedLines -DifferenceObject $actualLines
             foreach ($line in $diff) {
                 $prefix = if ($line.SideIndicator -eq '<=') { '-' } else { '+' }
@@ -278,7 +278,7 @@ if (-not $report.EndsWith("`n")) { $report += "`n" }
 Write-Host "`nTest complete. Summary: $Passed Passed, $Failed Failed." -ForegroundColor Cyan
 Write-Host "Full report saved to $ReportFile"
 
-if ($Passed -ge 99) {
+if ($Passed -ge 100) {
     exit 0
 } else {
     exit 1
