@@ -141,7 +141,6 @@ print_change() {
 # (bound-checker, backtrace, btdll, builtins are TCC-runtime-only and omitted here)
 #tcc-extension working: 34_array_assignment
 SKIP_TESTS="
-22_floating_point
 60_errors_and_warnings
 73_arm64
 78_vla_label
@@ -448,7 +447,7 @@ fi
 printf "Report saved to %s\n" "$REPORT_FILE"
 
 if [ "$RCC" = "$SCRIPT_DIR/mingw-cross.sh" ]; then
-    [ "$passed" -ge 89 ]
+    [ "$passed" -ge 128 ]
 else
-    [ "$passed" -ge 134 ]
+    [ "$passed" -ge 135 ]
 fi

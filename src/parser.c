@@ -164,7 +164,7 @@ static Node *new_num(int64_t val, Token *tok) {
 static Node *new_fnum(double fval, Token *tok) {
     Node *node = new_node(ND_FNUM, tok);
     node->fval = fval;
-    node->ty = ty_double;
+    node->ty = tok->val == 2 ? ty_ldouble : ty_double;
     return node;
 }
 
@@ -3819,15 +3819,31 @@ static char *parse_toplevel_asm(Token **rest, Token *tok) {
         tok = tok->next;
     }
     buf[pos] = '\0';
-    // Skip the rest of the asm parenthesized expression without evaluating.
-    // Handle balanced parens.
-    int depth = 1; // we already consumed '('
-    while (depth > 0 && tok->kind != TK_EOF) {
-        if (equal(tok, ")")) depth--;
-        else if (equal(tok, "("))
-            depth++;
-        tok = tok->next;
+    // Skip operand sections (outputs, inputs, clobbers, goto labels)
+    while (!equal(tok, ")")) {
+        tok = skip(tok, ":");
+        while (!equal(tok, ":") && !equal(tok, ")")) {
+            if (equal(tok, "[")) {
+                tok = tok->next;
+                if (tok->kind == TK_IDENT) tok = tok->next;
+                if (equal(tok, "]")) tok = tok->next;
+                continue;
+            }
+            if (tok->kind == TK_STR) tok = tok->next;
+            if (equal(tok, "(")) {
+                int depth = 1;
+                tok = tok->next;
+                while (depth > 0 && tok->kind != TK_EOF) {
+                    if (equal(tok, ")")) depth--;
+                    else if (equal(tok, "("))
+                        depth++;
+                    tok = tok->next;
+                }
+            }
+            if (equal(tok, ",")) tok = tok->next;
+        }
     }
+    tok = skip(tok, ")");
     *rest = tok;
     return str_intern(buf, pos);
 }

@@ -27,7 +27,6 @@ if (-not $RCC) {
 # Tests to skip – mirrors tinycc/tests/tests2/Makefile SKIP, including WIN32 extras
 # (bound-checker, backtrace, btdll, builtins are TCC-runtime-only)
 $SkipTests = @(
-    "22_floating_point",
     "60_errors_and_warnings", # no main; TCC -dt mode
     "73_arm64",
     "96_nodata_wanted",       # no main; TCC -dt mode
@@ -235,7 +234,7 @@ if (-not $report.EndsWith("`n")) { $report += "`n" }
 Write-Host "`nTest complete. Summary: $Passed Passed, $Failed Failed." -ForegroundColor Cyan
 Write-Host "Full report saved to $ReportFile"
 
-if ($Passed -ge 87) {
+if ($Passed -ge 90) {
     exit 0
 } else {
     exit 1

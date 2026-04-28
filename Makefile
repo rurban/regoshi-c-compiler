@@ -67,6 +67,8 @@ install: $(TARGET)
 
 clean:
 	rm -f $(OBJS) $(TARGET) $(TARGET).exe src/sysinc_paths.h
+	if command -v git > /dev/null 2>&1; then \
+	  cd tinycc && git reset --hard && git clean -dxf tests/tests2; fi
 
 TAGS: $(SRCS) src/rcc.h
 	etags -a --language=c src/*.c src/*.h

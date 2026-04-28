@@ -2,8 +2,8 @@
 Generated: April 2026
 
 ## Summary
- - **Total**:     134
- - **Passed**:    134
+ - **Total**:     135
+ - **Passed**:    135
  - **Failed**:    0
  - **Pass Rate**: 100%
 
@@ -32,7 +32,7 @@ Generated: April 2026
 | 19_pointer_arithmetic                    | PASS         | Output matches                       |
 | 20_pointer_comparison                    | PASS         | Output matches                       |
 | 21_char_array                            | PASS         | Output matches                       |
-| 22_floating_point                        | SKIP         | Skipped                              |
+| 22_floating_point                        | PASS         | Output matches                       |
 | 23_type_coercion                         | PASS         | Output matches                       |
 | 24_math_library                          | PASS         | Output matches                       |
 | 25_quicksort                             | PASS         | Output matches                       |

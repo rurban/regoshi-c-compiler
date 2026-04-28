@@ -266,8 +266,12 @@ static int gen_funcall(Node *node, int hidden_ret_reg) {
             continue;
         // x87: long double args go on stack as 80-bit extended precision
         if (argv[i]->ty->kind == TY_LDOUBLE) {
-            int r = gen_addr(argv[i]);
-            printf("  fld tbyte ptr [%s]\n", reg64[r]);
+            // gen_addr fails for computed long double (e.g. ld1/ld2).
+            // Use rsp as scratch space (below sub rsp, N) to hold the
+            // 64-bit double, then promote to 80-bit with fld/fstp.
+            int r = gen(argv[i]);
+            printf("  mov qword ptr [rsp+%d], %s\n", shadow_space + arg_stack_idx[i] * 8, reg64[r]);
+            printf("  fld qword ptr [rsp+%d]\n", shadow_space + arg_stack_idx[i] * 8);
             printf("  fstp tbyte ptr [rsp+%d]\n", shadow_space + arg_stack_idx[i] * 8);
             free_reg(r);
             continue;
@@ -710,19 +714,6 @@ static int gen(Node *node) {
                 printf(".weak %s\n", label);
             printf("  lea %s, [rip + %s]\n", reg64[r], label);
         } else if (is_flonum(node->var->ty)) {
-#ifndef _WIN32
-            if (node->var->ty->kind == TY_LDOUBLE) {
-                if (node->var->is_local)
-                    printf("  fld tbyte ptr [rbp-%d]\n", node->var->offset);
-                else
-                    printf("  fld tbyte ptr [rip + %s]\n", label);
-                printf("  sub rsp, 8\n");
-                printf("  fstp qword ptr [rsp]\n");
-                printf("  movsd xmm0, qword ptr [rsp]\n");
-                printf("  add rsp, 8\n");
-                printf("  movq %s, xmm0\n", reg64[r]);
-            } else
-#endif
             {
                 if (node->var->is_local) {
                     if (node->var->ty->size == 4) {
@@ -842,25 +833,12 @@ static int gen(Node *node) {
         if (is_flonum(node->lhs->ty)) {
 #ifndef _WIN32
             if (node->lhs->ty->kind == TY_LDOUBLE) {
+                // Store long double as 64-bit double (truncated)
+                int r2 = gen(node->rhs);
                 int r1 = gen_addr(node->lhs);
-                // Determine whether rhs is already a long double in memory
-                Node *src = node->rhs;
-                while (src->kind == ND_CAST) src = src->lhs;
-                if (src->ty && src->ty->kind == TY_LDOUBLE &&
-                    (src->kind == ND_LVAR || src->kind == ND_MEMBER || src->kind == ND_DEREF)) {
-                    int r2 = gen_addr(src);
-                    printf("  fld tbyte ptr [%s]\n", reg64[r2]);
-                    free_reg(r2);
-                } else {
-                    // double/int rhs: generate value, push to temp, fldl
-                    int r2 = gen(node->rhs);
-                    printf("  sub rsp, 8\n");
-                    printf("  mov [rsp], %s\n", reg64[r2]);
-                    printf("  fld qword ptr [rsp]\n");
-                    printf("  add rsp, 8\n");
-                    free_reg(r2);
-                }
-                printf("  fstp tbyte ptr [%s]\n", reg64[r1]);
+                printf("  movq xmm0, %s\n", reg64[r2]);
+                printf("  movsd qword ptr [%s], xmm0\n", reg64[r1]);
+                free_reg(r2);
                 free_reg(r1);
                 int dummy = alloc_reg();
                 printf("  mov %s, 0\n", reg64[dummy]);
@@ -1056,18 +1034,7 @@ static int gen(Node *node) {
         }
         Type *load_ty = (node->member && node->member->bit_width > 0) ? node->member->ty : node->ty;
         if (is_flonum(load_ty)) {
-#ifndef _WIN32
-            if (load_ty->kind == TY_LDOUBLE) {
-                // x87: load 80-bit extended, convert to double for register use
-                printf("  fld tbyte ptr [%s]\n", reg64[r]);
-                printf("  sub rsp, 8\n");
-                printf("  fstp qword ptr [rsp]\n");
-                printf("  movsd xmm0, qword ptr [rsp]\n");
-                printf("  add rsp, 8\n");
-                printf("  movq %s, xmm0\n", reg64[r]);
-            } else
-#endif
-                if (load_ty->size == 4) {
+            if (load_ty->size == 4) {
                 printf("  movss xmm0, dword ptr [%s]\n", reg64[r]);
                 printf("  cvtss2sd xmm0, xmm0\n");
                 printf("  movq %s, xmm0\n", reg64[r]);
@@ -1557,10 +1524,24 @@ static int gen(Node *node) {
         // Emit template with operand substitution, wrapped in AT&T syntax
         printf(".att_syntax prefix\n");
 
+        // Translate TCC-specific {$}N to GAS-immediate $N in AT&T syntax
+        char adj[4096];
+        int alen = 0;
+        const char *tp = node->asm_template;
+        while (*tp && alen < (int)sizeof(adj) - 1) {
+            if (*tp == '{' && *(tp + 1) == '$' && *(tp + 2) == '}') {
+                adj[alen++] = '$';
+                tp += 3;
+            } else {
+                adj[alen++] = *tp++;
+            }
+        }
+        adj[alen] = '\0';
+
         // Substitute %N and %l[name] in template
         char out[4096];
         int olen = 0;
-        const char *p = node->asm_template;
+        const char *p = adj;
         while (*p && olen < (int)sizeof(out) - 1) {
             if (*p != '%') {
                 out[olen++] = *p++;
@@ -2076,7 +2057,16 @@ void codegen(Program *prog) {
 
     for (TLItem *item = prog->items; item; item = item->next) {
         if (item->kind == TL_ASM) {
-            printf("%s\n", item->asm_str);
+            // Translate TCC-specific {$} to immediate in Intel syntax
+            const char *tp = item->asm_str;
+            while (*tp) {
+                if (tp[0] == '{' && tp[1] == '$' && tp[2] == '}') {
+                    tp += 3;
+                } else {
+                    putchar(*tp++);
+                }
+            }
+            putchar('\n');
             continue;
         }
         Function *fn = item->fn;

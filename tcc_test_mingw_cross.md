@@ -2,8 +2,8 @@
 Generated: April 2026
 
 ## Summary
- - **Total**:     134
- - **Passed**:    127
+ - **Total**:     135
+ - **Passed**:    128
  - **Failed**:    7
  - **Pass Rate**: 94%
 
@@ -32,7 +32,7 @@ Generated: April 2026
 | 19_pointer_arithmetic                    | PASS         | Output matches                       |
 | 20_pointer_comparison                    | PASS         | Output matches                       |
 | 21_char_array                            | PASS         | Output matches                       |
-| 22_floating_point                        | SKIP         | Skipped                              |
+| 22_floating_point                        | PASS         | Output matches                       |
 | 23_type_coercion                         | PASS         | Output matches                       |
 | 24_math_library                          | PASS         | Output matches                       |
 | 25_quicksort                             | PASS         | Output matches                       |
@@ -56,7 +56,7 @@ Generated: April 2026
 | 43_void_param                            | PASS         | Output matches                       |
 | 44_scoped_declarations                   | PASS         | Output matches                       |
 | 45_empty_for                             | PASS         | Output matches                       |
-| 46_grep                                  | MISMATCH     | Output does not match .expect        |
+| 46_grep                                  | EXEC_FAIL    | non-zero exit                        |
 | 47_switch_return                         | PASS         | Output matches                       |
 | 48_nested_break                          | PASS         | Output matches                       |
 | 49_bracket_evaluation                    | PASS         | Output matches                       |

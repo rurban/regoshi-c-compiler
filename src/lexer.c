@@ -344,11 +344,14 @@ Token *tokenize(char *filename, char *p) {
 
             if (is_float) {
                 cur = cur->next = new_token(TK_FNUM, q, p);
-                // Check if 'f'/'F' suffix was present (p-1 would be 'f' or 'F')
+                // Check for 'f'/'F' or 'l'/'L' suffix
                 char last = *(p - 1);
                 if (last == 'f' || last == 'F') {
                     cur->fval = (double)strtof(q, NULL);
                     cur->val = 1; // flag: is single-precision float
+                } else if (last == 'l' || last == 'L') {
+                    cur->fval = strtod(q, NULL);
+                    cur->val = 2; // flag: is long double
                 } else {
                     cur->fval = strtod(q, NULL);
                     cur->val = 0; // flag: is double
