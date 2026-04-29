@@ -632,9 +632,25 @@ static char *substitute_macro(Macro *m, char **args, int argc, char *filename, i
             continue;
         }
         if (p[0] == '#' && p[1] == '#') {
-            sb_putc(&sb, '#');
-            sb_putc(&sb, '#');
             p += 2;
+            while (isspace((unsigned char)*p))
+                p++;
+            // GNU extension: ,##__VA_ARGS__ — delete comma if __VA_ARGS__ is empty
+            if (m->is_variadic && pp_startswith(p, "__VA_ARGS__") && !pp_is_ident2(p[11])) {
+                if (m->param_len >= argc) {
+                    // Strip trailing comma and whitespace from output
+                    while (sb.len > 0 && isspace((unsigned char)sb.buf[sb.len - 1]))
+                        sb.buf[--sb.len] = '\0';
+                    if (sb.len > 0 && sb.buf[sb.len - 1] == ',')
+                        sb.buf[--sb.len] = '\0';
+                } else {
+                    sb_puts(&sb, args[m->param_len]);
+                }
+                p += 11;
+                continue;
+            }
+            sb_putc(&sb, '#');
+            sb_putc(&sb, '#');
             continue;
         }
 
