@@ -1,11 +1,11 @@
 # TCC Test Suite Report for RCC
-Generated: April 2026
+Generated: May 2026
 
 ## Summary
- - **Total**:     138
+ - **Total**:     142
  - **Passed**:    54
- - **Failed**:    84
- - **Pass Rate**: 39%
+ - **Failed**:    88
+ - **Pass Rate**: 38%
 
 ## Detailed Results
 | Test                                     | Status       | Message                              |
@@ -76,8 +76,8 @@ Generated: April 2026
 | 75_array_in_struct_init                  | COMPILE_FAIL | rcc returned non-zero                |
 | 76_dollars_in_identifiers                | COMPILE_FAIL | rcc returned non-zero                |
 | 77_push_pop_macro                        | PASS         | Output matches                       |
-| 78_vla_label                             | SKIP         | Skipped                              |
-| 79_vla_continue                          | SKIP         | Skipped                              |
+| 78_vla_label                             | COMPILE_FAIL | rcc returned non-zero                |
+| 79_vla_continue                          | COMPILE_FAIL | rcc returned non-zero                |
 | 80_flexarray                             | COMPILE_FAIL | rcc returned non-zero                |
 | 81_types                                 | COMPILE_FAIL | rcc returned non-zero                |
 | 82_attribs_position                      | COMPILE_FAIL | rcc returned non-zero                |
@@ -121,8 +121,8 @@ Generated: April 2026
 | 119_random_stuff                         | COMPILE_FAIL | rcc returned non-zero                |
 | 120_alias                                | SKIP         | Skipped                              |
 | 121_struct_return                        | COMPILE_FAIL | rcc returned non-zero                |
-| 122_vla_reuse                            | SKIP         | Skipped                              |
-| 123_vla_bug                              | SKIP         | Skipped                              |
+| 122_vla_reuse                            | COMPILE_FAIL | rcc returned non-zero                |
+| 123_vla_bug                              | COMPILE_FAIL | rcc returned non-zero                |
 | 124_atomic_counter                       | SKIP         | Skipped                              |
 | 125_atomic_misc                          | SKIP         | Skipped                              |
 | 126_bound_global                         | SKIP         | Skipped                              |

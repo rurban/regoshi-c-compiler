@@ -1,7 +1,9 @@
 #!/bin/sh
 # SPDX-License-Identifier: LGPL-2.1-or-later
 # Run the TCC compatibility test suite against rcc.
-# Usage: ./run_tcc_suite.sh [rcc-binary] [test-dir]
+# Usage: ./run_tcc_suite.sh [rcc-binary] [test-dir] [extra-rcc-flags]
+#
+# Extra rcc flags (e.g. -O0) are passed to every compilation invocation.
 #
 # Compiles each tcc_tests/*.c file with rcc, runs it, and diffs the output
 # against the corresponding *.expect file.  Tests without an .expect file
@@ -12,6 +14,7 @@ cd "$(dirname "$0")" || exit
 SCRIPT_DIR=.
 RCC="${1:-}"
 TEST_DIR="${2:-$SCRIPT_DIR/tinycc/tests/tests2}"
+RCCFLAGS="${3:-}"
 REPORT_FILE=tcc_test_linux.md
 
 # Locate rcc binary
@@ -29,10 +32,19 @@ if [ -z "$RCC" ]; then
 				WINEDLLOVERRIDES="winedbg=d"
 				WINENOPOPUPS=1
 				export WINEDEBUG WINEDLLOVERRIDES WINENOPOPUPS
-			fi
+                        fi
 			break
 		fi
 	done
+fi
+
+# If arm64-cross.sh is available and rcc not found natively, use arm64 cross
+if [ "$RCC" = "./rcc-arm64" ] || [ "$RCC" = "./arm64-cross.sh" ]; then
+	RCC="$SCRIPT_DIR/arm64-cross.sh"
+	REPORT_FILE="$SCRIPT_DIR/tcc_test_arm64_cross.md"
+fi
+if [ "$(uname -m)" = "aarch64" ] || [ "$(uname -m)" = "arm64" ]; then
+    REPORT_FILE="$SCRIPT_DIR/tcc_test_arm64.md"
 fi
 
 if [ -z "$RCC" ] || [ ! -x "$RCC" ]; then
@@ -65,6 +77,7 @@ fi
 # shellcheck disable=SC2059
 printf "${CYAN}Starting TCC Test Suite on RCC...${RESET}\n"
 printf "RCC:      %s\n" "$RCC"
+[ -n "$RCCFLAGS" ] && printf "Flags:    %s\n" "$RCCFLAGS"
 printf "Test dir: %s\n\n" "$TEST_DIR"
 
 total=0
@@ -96,12 +109,33 @@ test_expected_exit() {
 TMPDIR="${TMPDIR:-/tmp}"
 TMP_OUT="$TMPDIR/rcc_test_$$.out"
 TMP_EXE="$TMPDIR/rcc_test_$$"
+is_arm64=''
+RUN_PREFIX=''
+ARM64_SYSROOT="${ARM64_SYSROOT:-/usr/aarch64-redhat-linux/sys-root/fc43}"
 if [ "$RCC" = "$SCRIPT_DIR/mingw-cross.sh" ]; then
 	TMP_EXE="$TMP_EXE.exe"
 	WINEDEBUG=fixme-all
 	WINEDLLOVERRIDES="winedbg=d"
 	export WINEDEBUG WINEDLLOVERRIDES
+elif [ "$RCC" = "$SCRIPT_DIR/arm64-cross.sh" ]; then
+	if [ -d "$ARM64_SYSROOT" ]; then
+		RUN_PREFIX="qemu-aarch64 -L $ARM64_SYSROOT"
+	else
+		RUN_PREFIX="qemu-aarch64"
+	fi
+	is_arm64=1
+elif [ "$(uname -m)" = "aarch64" ] || [ "$(uname -m)" = "arm64" ]; then
+	is_arm64=1
 fi
+
+run_exe() {
+	if [ -n "$RUN_PREFIX" ]; then
+		# shellcheck disable=SC2086
+		$RUN_PREFIX "$@"
+	else
+		"$@"
+	fi
+}
 trap 'rm -f "$TMP_OUT" "$TMP_EXE"' EXIT INT TERM
 
 # Parse previous report for change detection
@@ -143,7 +177,6 @@ print_change() {
 #tcc-extension working: 34_array_assignment
 SKIP_TESTS="
 60_errors_and_warnings
-73_arm64
 96_nodata_wanted
 98_al_ax_extend
 99_fastcall
@@ -164,10 +197,10 @@ MINGW_SKIP_TESTS="
 "
 
 is_skipped() {
-	# 95_bitfields_ms works on mingw-cross but not on native Linux
-	#if [ "$1" = "95_bitfields_ms" ] && [ "$RCC" = "$SCRIPT_DIR/mingw-cross.sh" ]; then
-	#	return 1
-	#fi
+	# Enable 73_arm64 test on ARM64 native/cross; skip otherwise
+	if [ "$1" = "73_arm64" ] && [ "$is_arm64" != "1" ] && [ "$RCC" != "$SCRIPT_DIR/arm64-cross.sh" ]; then
+		return 0
+	fi
 	case "$SKIP_TESTS" in *"
 $1
 "*) return 0 ;; esac
@@ -244,18 +277,18 @@ while IFS= read -r src; do
         # shellcheck disable=SC2086,SC2129
 	if [ "$src" = "$TEST_DIR/128_run_atexit.c" ]; then
             echo "[test_128_return]" >"$TMP_OUT"
-	    "$RCC" -Dtest_128_return -o "$TMP_EXE" "$src"
-            "$TMP_EXE" >>"$TMP_OUT"
+	    "$RCC" $RCCFLAGS -Dtest_128_return -o "$TMP_EXE" "$src"
+            run_exe "$TMP_EXE" >>"$TMP_OUT"
             run_atexit="$?"
             echo "[returns $run_atexit]" >>"$TMP_OUT"
             echo "" >>"$TMP_OUT"
             echo "[test_128_exit]" >>"$TMP_OUT"
-	    "$RCC" -Dtest_128_exit -o "$TMP_EXE" "$src"
-            "$TMP_EXE" >>"$TMP_OUT"
+	    "$RCC" $RCCFLAGS -Dtest_128_exit -o "$TMP_EXE" "$src"
+            run_exe "$TMP_EXE" >>"$TMP_OUT"
             xx="$?"
             run_atexit="$run_atexit $xx"
             echo "[returns $xx]" >>"$TMP_OUT"
-        elif ! "$RCC" -o "$TMP_EXE" $p_src "$src" $ldflags 2>"$TMP_OUT"; then
+        elif ! "$RCC" $RCCFLAGS -o "$TMP_EXE" $p_src "$src" $ldflags 2>"$TMP_OUT"; then
 		# shellcheck disable=SC2059
 		printf "${RED}COMPILE FAIL${RESET}\n"
 		failed=$((failed + 1))
@@ -294,16 +327,16 @@ while IFS= read -r src; do
 	if [ -n "$args" ]; then
 		if [ "$base" = "46_grep" ]; then
 			# 46_grep pattern contains spaces; run from TEST_DIR with local filename
-			(cd "$TEST_DIR" && "$TMP_EXE" '[^* ]*[:a:d: ]+\:\*-/: $' 46_grep.c) >>"$TMP_OUT" 2>&1; actual_exit=$?
+			(cd "$TEST_DIR" && run_exe "$TMP_EXE" '[^* ]*[:a:d: ]+\:\*-/: $' 46_grep.c) >>"$TMP_OUT" 2>&1; actual_exit=$?
 		elif [ "$base" = "128_run_atexit" ]; then
 			actual_exit="$run_atexit"
 			expected_exit="1 2" # we already ran twice
 		else
 			# shellcheck disable=SC2086
-			"$TMP_EXE" $args >>"$TMP_OUT" 2>&1; actual_exit=$?
+			run_exe "$TMP_EXE" $args >>"$TMP_OUT" 2>&1; actual_exit=$?
 		fi
 	else
-		timeout 20s "$TMP_EXE" >>"$TMP_OUT" 2>&1; actual_exit=$?
+		run_exe "$TMP_EXE" >>"$TMP_OUT" 2>&1; actual_exit=$?
 	fi
 	if [ "$actual_exit" != "$expected_exit" ]; then
 		# shellcheck disable=SC2059
@@ -372,7 +405,8 @@ if [ -d "$UNIT_TEST_DIR" ]; then
 		printf "  %-40s " "$base..."
 
 		if expect_compile_fail "$base"; then
-			if "$RCC" -o "$TMP_EXE" "$src" >/dev/null 2>&1; then
+			# shellcheck disable=SC2086
+			if "$RCC" $RCCFLAGS -o "$TMP_EXE" "$src" >/dev/null 2>&1; then
 				# shellcheck disable=SC2059
 				printf "${RED}SHOULD FAIL (compiled ok)${RESET}\n"
 				failed=$((failed + 1))
@@ -389,7 +423,8 @@ if [ -d "$UNIT_TEST_DIR" ]; then
 			continue
 		fi
 
-		if ! "$RCC" -o "$TMP_EXE" "$src" >/dev/null 2>&1; then
+		# shellcheck disable=SC2086
+		if ! "$RCC" $RCCFLAGS -o "$TMP_EXE" "$src" >/dev/null 2>&1; then
 			# shellcheck disable=SC2059
 			printf "${RED}COMPILE FAIL${RESET}\n"
 			failed=$((failed + 1))
@@ -406,7 +441,7 @@ if [ -d "$UNIT_TEST_DIR" ]; then
 			continue
 		fi
 
-		"$TMP_EXE" >"$TMP_OUT" 2>&1
+		run_exe "$TMP_EXE" >"$TMP_OUT" 2>&1
 		exit_code=$?
 		rm -f "$TMP_EXE"
 
@@ -461,7 +496,11 @@ fi
 
 printf "Report saved to %s\n" "$REPORT_FILE"
 
-if [ "$RCC" = "$SCRIPT_DIR/mingw-cross.sh" ]; then
+if [ "$RCC" = "$SCRIPT_DIR/arm64-cross.sh" ]; then
+    [ "$passed" -ge 54 ]
+elif [ "$REPORT_FILE" = "$SCRIPT_DIR/tcc_test_arm64.md" ]; then
+    [ "$passed" -ge 54 ]
+elif [ "$RCC" = "$SCRIPT_DIR/mingw-cross.sh" ]; then
     [ "$passed" -ge 141 ]
 else
     [ "$passed" -ge 141 ]

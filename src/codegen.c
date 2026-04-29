@@ -3262,6 +3262,9 @@ void codegen(Program *prog) {
 
         // Save params to locals (emitted to body buffer, will be after prologue)
         // ARM64: handled in the Pass 2 prologue instead
+        int param_xmm_index = 0;
+        int stack_param_index = 0;
+        int param_index = fn->ty->return_ty && (fn->ty->return_ty->kind == TY_STRUCT || fn->ty->return_ty->kind == TY_UNION) ? 1 : 0;
 #ifndef ARCH_ARM64
 #ifdef _WIN32
         char *param_regs64[] = {"rcx", "rdx", "r8", "r9"};
@@ -3279,9 +3282,6 @@ void codegen(Program *prog) {
         int max_param_regs = 6;
         int max_param_xmm = 8;
 #endif
-        int param_xmm_index = 0;
-        int stack_param_index = 0;
-        int param_index = fn->ty->return_ty && (fn->ty->return_ty->kind == TY_STRUCT || fn->ty->return_ty->kind == TY_UNION) ? 1 : 0;
         for (LVar *var = fn->params; var; var = var->param_next) {
 #ifdef _WIN32
             if (is_flonum(var->ty)) {

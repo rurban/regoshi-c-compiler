@@ -36,3 +36,4 @@ c-testsuite.tap.txt
 rcc-arm64
 .rcc-arm64.stamp
 *.arm64.o
+qemu_*.core

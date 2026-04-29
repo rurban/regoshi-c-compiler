@@ -35,6 +35,16 @@ MINGW_O = lib/mingw$(OBJ_EXT)
 OBJ_EXT = .obj
 OBJS = $(SRCS:.c=$(OBJ_EXT))
 endif
+ifeq ($(CC),aarch64-linux-gnu-gcc)
+TARGET = rcc-arm64
+OBJ_EXT = .arm64.o
+OBJS = $(SRCS:.c=$(OBJ_EXT))
+ARM64_SYSROOT := $(shell $(CC) -print-sysroot 2>/dev/null)
+ifeq ($(shell test -d "$(ARM64_SYSROOT)/usr/include" && echo yes),)
+ARM64_SYSROOT := /usr/aarch64-redhat-linux/sys-root/fc43
+endif
+CFLAGS += --sysroot=$(ARM64_SYSROOT)
+endif
 endif
 DEF_INCDIR = -DRCC_INCDIR='"$(RCC_INCDIR)"'
 VERSION ?= $(shell git describe --long --tags --always 2>/dev/null || echo "v1.2-dev")
