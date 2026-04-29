@@ -21,10 +21,11 @@ ifeq ($(OS),Windows_NT)
 TARGET = rcc.exe
 MINGW_O = lib/mingw$(OBJ_EXT)
 OBJ_EXT = .obj
-PREFIX = C:/Program Files
-BINDIR = C:/Program Files/rcc
-INCDIR = C:/Program Files/rcc/include
-LIBDIR = C:/Program Files/rcc/lib
+PREFIX ?= C:/Program Files/rcc
+BINDIR = $(PREFIX)
+INCDIR = $(PREFIX)/include
+LIBDIR = $(PREFIX)/lib
+DOCDIR = $(PREFIX)/doc
 OBJS = $(SRCS:.c=$(OBJ_EXT))
 else
 ifeq ($(CC),x86_64-w64-mingw32-gcc)
@@ -79,28 +80,37 @@ bench: $(TARGET)
 install: $(TARGET)
 	$(MAKE) clean
 	$(MAKE) RCC_INCDIR="$(INCDIR)"
-	install -d $(DESTDIR)$(BINDIR) $(DESTDIR)$(INCDIR) $(DESTDIR)$(DOCDIR)
-	install -m 755 $(TARGET) $(DESTDIR)$(BINDIR)/
-	install -m 644 include/* $(DESTDIR)$(INCDIR)/
-	install -m 644 README.md tcc_test*.md LICENSE bench/bench_report*.md $(DESTDIR)$(DOCDIR)/
-	if test -n "$(MINGW_O)"; then install -d $(DESTDIR)$(LIBDIR); install -m 644 $(MINGW_O) $(DESTDIR)$(LIBDIR)/ ; fi
+ifeq ($(OS),Windows_NT)
+	install -d "$(if $(DESTDIR),$(DESTDIR)$(subst C:,,$(BINDIR)),$(BINDIR))" "$(if $(DESTDIR),$(DESTDIR)$(subst C:,,$(INCDIR)),$(INCDIR))" "$(if $(DESTDIR),$(DESTDIR)$(subst C:,,$(DOCDIR)),$(DOCDIR))"
+	install -m 755 $(TARGET) "$(if $(DESTDIR),$(DESTDIR)$(subst C:,,$(BINDIR)),$(BINDIR))/"
+	install -m 644 include/* "$(if $(DESTDIR),$(DESTDIR)$(subst C:,,$(INCDIR)),$(INCDIR))/"
+	install -m 644 README.md tcc_test*.md LICENSE bench/bench_report*.md "$(if $(DESTDIR),$(DESTDIR)$(subst C:,,$(DOCDIR)),$(DOCDIR))/"
+	if test -n "$(MINGW_O)"; then install -d "$(if $(DESTDIR),$(DESTDIR)$(subst C:,,$(LIBDIR)),$(LIBDIR))"; install -m 644 $(MINGW_O) "$(if $(DESTDIR),$(DESTDIR)$(subst C:,,$(LIBDIR)),$(LIBDIR))/"; fi
+else
+	install -d "$(DESTDIR)$(BINDIR)" "$(DESTDIR)$(INCDIR)" "$(DESTDIR)$(DOCDIR)"
+	install -m 755 $(TARGET) "$(DESTDIR)$(BINDIR)/"
+	install -m 644 include/* "$(DESTDIR)$(INCDIR)/"
+	install -m 644 README.md tcc_test*.md LICENSE bench/bench_report*.md "$(DESTDIR)$(DOCDIR)/"
+	if test -n "$(MINGW_O)"; then install -d "$(DESTDIR)$(LIBDIR)"; install -m 644 $(MINGW_O) "$(DESTDIR)$(LIBDIR)/"; fi
+endif
 
 dist: $(TARGET)
+	@echo make dist on $(OS)
 	@rm -rf rcc-$(VERSION) || true
-	$(MAKE) install DESTDIR="rcc-$(VERSION)"
 ifeq ($(OS),Windows_NT)
-	tar cfz rcc-$(VERSION).tar.gz rcc-$(VERSION)
-	tar cfJ rcc-$(VERSION).tar.xz rcc-$(VERSION)
-else
-	cd rcc-$(VERSION) && zip ../rcc-$(VERSION).zip * && cd -
-endif
+	$(MAKE) install DESTDIR="rcc-$(VERSION)" PREFIX=""
+	cd rcc-$(VERSION) && powershell -command "Compress-Archive -Path * -DestinationPath ../rcc-$(VERSION).zip -Force"
 	rm -rf rcc-$(VERSION)
 	git checkout-index --prefix=rcc-$(VERSION)-src/ -a
-ifeq ($(OS),Windows_NT)
+	cd rcc-$(VERSION)-src && powershell -command "Compress-Archive -Path * -DestinationPath ../rcc-$(VERSION)-src.zip -Force"
+else
+	$(MAKE) install DESTDIR="rcc-$(VERSION)"
+	tar cfz rcc-$(VERSION).tar.gz rcc-$(VERSION)
+	tar cfJ rcc-$(VERSION).tar.xz rcc-$(VERSION)
+	rm -rf rcc-$(VERSION)
+	git checkout-index --prefix=rcc-$(VERSION)-src/ -a
 	tar cfz rcc-$(VERSION)-src.tar.gz rcc-$(VERSION)-src
 	tar cfJ rcc-$(VERSION)-src.tar.xz rcc-$(VERSION)-src
-else
-	cd rcc-$(VERSION)-src && zip ../rcc-$(VERSION)-src.zip * && cd -
 endif
 	rm -rf rcc-$(VERSION)-src
 
