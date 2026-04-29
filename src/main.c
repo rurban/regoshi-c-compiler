@@ -277,7 +277,11 @@ int main(int argc, char **argv) {
         if (opt_c) {
             snprintf(cmd, sizeof(cmd), GCC " -c -o %s", out_path);
         } else {
+#ifdef __APPLE__
+            snprintf(cmd, sizeof(cmd), GCC " -o %s", out_path);
+#else
             snprintf(cmd, sizeof(cmd), GCC " -no-pie -o %s", out_path);
+#endif
         }
         if (!opt_dryrun) {
             out_paths = reverse(out_paths);
