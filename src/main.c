@@ -69,7 +69,9 @@ void help(void) {
            "-mms-bitfields     use MSVC bitfield layout by default\n"
            "-mno-ms-bitfields  use GCC bitfield layout by default\n"
            "-Dname[=val]  define a macro value\n"
-           "-Uname        undefine a macro value\n");
+           "-Uname        undefine a macro value\n"
+           "--help\n"
+           "--version\n");
 }
 
 bool opt_O0 = false;
@@ -118,6 +120,10 @@ int main(int argc, char **argv) {
     for (int i = 1; i < argc; i++) {
         if (!strcmp(argv[i], "--help")) {
             help();
+            return 0;
+        }
+        if (!strcmp(argv[i], "--version")) {
+            printf("rcc %s\n", VERSION);
             return 0;
         }
         if (!strcmp(argv[i], "-S")) {

@@ -25,3 +25,6 @@ test/*.out
 /mingw-test.sh
 /compile_commands.json
 /AGENTS.md
+/kimi-export*.md
+rcc-*-src/
+rcc-*.tar.*

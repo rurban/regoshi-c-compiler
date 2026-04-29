@@ -10,6 +10,7 @@ PREFIX ?= /usr/local
 BINDIR = $(PREFIX)/bin
 INCDIR = $(PREFIX)/include/rcc
 LIBDIR = $(PREFIX)/lib/rcc
+DOCDIR = $(PREFIX)/share/doc/rcc
 
 # Build-time include directory: absolute path to the source include/ dir.
 # Override this when installing to a different prefix.
@@ -29,6 +30,7 @@ MINGW_O = lib/mingw.o
 endif
 endif
 DEF_INCDIR = -DRCC_INCDIR='"$(RCC_INCDIR)"'
+VERSION ?= $(shell git describe --long --tags --always 2>/dev/null || echo "v1.2-dev")
 
 $(TARGET): $(OBJS) $(MINGW_O)
 	$(CC) $(CFLAGS) -o $@ $^
@@ -39,7 +41,7 @@ src/sysinc_paths.h:
 $(MINGW_O): lib/mingw.c
 	$(CC) $(CFLAGS) -c $< -o $@
 src/main.o: src/main.c src/sysinc_paths.h
-	$(CC) $(CFLAGS) -c $< -o $@ -DGCC=\"$(CC)\" $(DEF_INCDIR)
+	$(CC) $(CFLAGS) -c $< -o $@ -DGCC=\"$(CC)\" $(DEF_INCDIR) -DVERSION=\"$(VERSION)\"
 src/preprocess.o: src/preprocess.c src/sysinc_paths.h
 	$(CC) $(CFLAGS) -c $< -o $@ $(DEF_INCDIR)
 %.o: %.c
@@ -71,18 +73,38 @@ bench: $(TARGET)
 # without needing -I after installation.
 install: $(TARGET)
 	$(MAKE) clean
-	$(MAKE) RCC_INCDIR=$(DESTDIR)$(INCDIR)
-	install -d $(DESTDIR)$(BINDIR) $(DESTDIR)$(INCDIR)
+	$(MAKE) RCC_INCDIR="$(INCDIR)"
+	install -d $(DESTDIR)$(BINDIR) $(DESTDIR)$(INCDIR) $(DESTDIR)$(DOCDIR)
 	install -m 755 $(TARGET) $(DESTDIR)$(BINDIR)/
 	install -m 644 include/* $(DESTDIR)$(INCDIR)/
+	install -m 644 README.md tcc_test*.md LICENSE bench/bench_report*.md $(DESTDIR)$(DOCDIR)/
 	if test -n "$(MINGW_O)"; then install -d $(DESTDIR)$(LIBDIR); install -m 644 $(MINGW_O) $(DESTDIR)$(LIBDIR)/ ; fi
 
+dist: $(TARGET)
+	@rm -rf rcc-$(VERSION) || true
+	$(MAKE) install DESTDIR="rcc-$(VERSION)"
+ifeq ($(OS),Windows_NT)
+	tar cfz rcc-$(VERSION).tar.gz rcc-$(VERSION)
+	tar cfJ rcc-$(VERSION).tar.xz rcc-$(VERSION)
+else
+	cd rcc-$(VERSION) && zip ../rcc-$(VERSION).zip * && cd -
+endif
+	rm -rf rcc-$(VERSION)
+	git checkout-index --prefix=rcc-$(VERSION)-src/ -a
+ifeq ($(OS),Windows_NT)
+	tar cfz rcc-$(VERSION)-src.tar.gz rcc-$(VERSION)-src
+	tar cfJ rcc-$(VERSION)-src.tar.xz rcc-$(VERSION)-src
+else
+	cd rcc-$(VERSION)-src && zip ../rcc-$(VERSION)-src.zip * && cd -
+endif
+	rm -rf rcc-$(VERSION)-src
+
 clean:
-	rm -f $(OBJS) $(TARGET) $(TARGET).exe src/sysinc_paths.h
+	rm -f $(OBJS) $(TARGET) $(TARGET).exe src/sysinc_paths.h fred.txt *.s
 	if command -v git > /dev/null 2>&1; then \
 	  cd tinycc && git reset --hard && git clean -dxf tests/tests2; fi
 
 TAGS: $(SRCS) src/rcc.h
 	etags -a --language=c src/*.c src/*.h
 
-.PHONY: clean test check bench install
+.PHONY: clean test check lint bench install dist bench

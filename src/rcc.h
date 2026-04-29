@@ -15,6 +15,10 @@
 #include <stdint.h>
 #include <float.h>
 
+#ifndef VERSION
+#define VERSION "v1.2-dev"
+#endif
+
 //
 // Tokenizer / Lexer
 //
