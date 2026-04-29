@@ -1267,7 +1267,15 @@ static int gen(Node *node) {
         int r = alloc_reg();
 #ifdef ARCH_ARM64
         // ARM64 mov immediate handles up to 16 bits; larger values need movz+movk
-        printf("  mov %s, #%lld\n", reg(r, op_size(node->ty)), (long long)node->val);
+        uint64_t v = (uint64_t)(long long)node->val;
+        printf("  mov %s, #%llu\n", reg(r, op_size(node->ty)), v & 0xffff);
+        v >>= 16;
+        int shift = 16;
+        while (v) {
+            printf("  movk %s, #%llu, lsl #%d\n", reg(r, op_size(node->ty)), v & 0xffff, shift);
+            v >>= 16;
+            shift += 16;
+        }
 #else
         if (node->val == (int32_t)node->val) {
             printf("  mov %s, %lld\n", reg(r, op_size(node->ty)), (long long)node->val);
@@ -1929,18 +1937,43 @@ static int gen(Node *node) {
             }
 #endif
         } else if (to->size == 1) {
+#ifdef ARCH_ARM64
+            printf("  %s %s, %s\n", to->is_unsigned ? "and" : "sxtb", reg32[r], reg32[r]);
+            if (to->is_unsigned)
+                printf("  and %s, %s, #0xff\n", reg32[r], reg32[r]);
+#else
             if (to->is_unsigned)
                 printf("  movzx %s, %s\n", reg32[r], reg8[r]);
             else
                 printf("  movsx %s, %s\n", reg32[r], reg8[r]);
+#endif
         } else if (to->size == 2) {
+#ifdef ARCH_ARM64
+            printf("  %s %s, %s\n", to->is_unsigned ? "and" : "sxth", reg32[r], reg32[r]);
+            if (to->is_unsigned)
+                printf("  and %s, %s, #0xffff\n", reg32[r], reg32[r]);
+#else
             if (to->is_unsigned)
                 printf("  movzx %s, %s\n", reg32[r], reg16[r]);
             else
                 printf("  movsx %s, %s\n", reg32[r], reg16[r]);
+#endif
         } else if (to->size == 4 && from->size == 8) {
             printf("  mov %s, %s\n", reg32[r], reg32[r]);
         } else if (to->size == 8 && from->size < 8) {
+#ifdef ARCH_ARM64
+            if (from->size == 4) {
+                if (from->is_unsigned)
+                    printf("  mov %s, %s\n", reg32[r], reg32[r]);
+                else
+                    printf("  sxtw %s, %s\n", reg64[r], reg32[r]);
+            } else {
+                if (from->is_unsigned)
+                    printf("  uxtb %s, %s\n", reg64[r], reg32[r]);
+                else
+                    printf("  sxtb %s, %s\n", reg64[r], reg32[r]);
+            }
+#else
             if (from->size == 4) {
                 if (from->is_unsigned)
                     printf("  mov %s, %s\n", reg32[r], reg32[r]);
@@ -1953,6 +1986,7 @@ static int gen(Node *node) {
                 else
                     printf("  movsx %s, %s\n", reg64[r], reg(r, from->size));
             }
+#endif
         }
         return r;
     }
@@ -2830,8 +2864,14 @@ static int gen(Node *node) {
                     tmp >>= 1;
                 }
                 printf("  lsl %s, %s, #%d\n", reg(r_lhs, sz), reg(r_lhs, sz), shift);
-            } else {
-                printf("  %s %s, %s, #%d\n", inst, reg(r_lhs, sz), reg(r_lhs, sz), imm);
+            } else if (node->kind == ND_MUL) {
+                // ARM64 mul doesn't take immediates; load into a scratch register
+                int tmp = alloc_reg();
+                printf("  mov %s, #%d\n", reg(tmp, sz), imm);
+                printf("  mul %s, %s, %s\n", reg(r_lhs, sz), reg(r_lhs, sz), reg(tmp, sz));
+                free_reg(tmp);
+            } else if (!strcmp(inst, "cmp")) {
+                printf("  cmp %s, #%d\n", reg(r_lhs, sz), imm);
 #else
             } else if (node->kind == ND_MUL && imm > 0 && (imm & (imm - 1)) == 0) {
                 // Strength reduction: multiply by power of 2 → shift
@@ -2853,7 +2893,11 @@ static int gen(Node *node) {
             // computed as 32-bit signed. ARM64: use sxtw.
             if (sz == 8 && op_size(node->rhs->ty) == 4 && !use_unsigned(node->rhs->ty))
                 printf("  sxtw %s, %s\n", reg64[r_rhs], reg32[r_rhs]);
-            printf("  %s %s, %s, %s\n", inst, reg(r_lhs, sz), reg(r_lhs, sz), reg(r_rhs, sz));
+            if (!strcmp(inst, "cmp")) {
+                printf("  cmp %s, %s\n", reg(r_lhs, sz), reg(r_rhs, sz));
+            } else {
+                printf("  %s %s, %s, %s\n", inst, reg(r_lhs, sz), reg(r_lhs, sz), reg(r_rhs, sz));
+            }
 #else
             // Sign-extend rhs to 64 bits when operation is 64-bit but rhs was
             // computed as 32-bit signed (e.g. pointer + int, long + int).
