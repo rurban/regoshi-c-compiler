@@ -336,7 +336,10 @@ static void strip_comments(char *p) {
     bool in_string = false;
     while (*p) {
         if (in_string) {
-            if (*p == '\\' && p[1]) {
+            if (*p == '\n') {
+                in_string = false;
+                p++;
+            } else if (*p == '\\' && p[1]) {
                 p += 2;
             } else if (*p == '"') {
                 in_string = false;
