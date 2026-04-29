@@ -263,13 +263,13 @@ int main(int argc, char **argv) {
         // Check local dev tree first, then installed path
         struct stat libst;
 #ifdef RCC_INCDIR
-        const char *rcc_lib = RCC_INCDIR "/../lib/mingw.o";
-        if (stat("lib/mingw.o", &libst) != 0 && stat(rcc_lib, &libst) == 0)
+        const char *rcc_lib = RCC_INCDIR "/../lib/mingw.obj";
+        if (stat("lib/mingw.obj", &libst) != 0 && stat(rcc_lib, &libst) == 0)
             snprintf(cmd + strlen(cmd), sizeof(cmd) - strlen(cmd), " %s", rcc_lib);
         else
 #endif
-            if (stat("lib/mingw.o", &libst) == 0)
-            snprintf(cmd + strlen(cmd), sizeof(cmd) - strlen(cmd), " lib/mingw.o");
+            if (stat("lib/mingw.obj", &libst) == 0)
+            snprintf(cmd + strlen(cmd), sizeof(cmd) - strlen(cmd), " lib/mingw.obj");
 #endif
         if (libs_len)
             strncat(cmd, libs, sizeof(cmd) - strlen(cmd) - 1);

@@ -4,7 +4,8 @@ TAGS
 *.exe
 a.out
 *.o
-*.S
+*.obj
+*.s
 *.i
 *.tmp
 *.log

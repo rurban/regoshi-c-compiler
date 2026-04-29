@@ -2,9 +2,10 @@ CC     = gcc
 CFLAGS = -std=c11 -Wall -Wextra -O2 -g
 TARGET = rcc
 MINGW_O =
+OBJ_EXT = .o
 
 SRCS = src/main.c src/lexer.c src/preprocess.c src/parser.c src/type.c src/codegen.c src/opt.c src/alloc.c src/unicode.c
-OBJS = $(SRCS:.c=.o)
+OBJS = $(SRCS:.c=$(OBJ_EXT))
 
 PREFIX ?= /usr/local
 BINDIR = $(PREFIX)/bin
@@ -18,15 +19,19 @@ RCC_INCDIR ?= $(CURDIR)/include
 # On native Windows builds, default to the standard install location.
 ifeq ($(OS),Windows_NT)
 TARGET = rcc.exe
-MINGW_O = lib/mingw.o
+MINGW_O = lib/mingw$(OBJ_EXT)
+OBJ_EXT = .obj
 PREFIX = C:/Program Files
 BINDIR = C:/Program Files/rcc
 INCDIR = C:/Program Files/rcc/include
 LIBDIR = C:/Program Files/rcc/lib
+OBJS = $(SRCS:.c=$(OBJ_EXT))
 else
 ifeq ($(CC),x86_64-w64-mingw32-gcc)
 TARGET = rcc.exe
-MINGW_O = lib/mingw.o
+MINGW_O = lib/mingw$(OBJ_EXT)
+OBJ_EXT = .obj
+OBJS = $(SRCS:.c=$(OBJ_EXT))
 endif
 endif
 DEF_INCDIR = -DRCC_INCDIR='"$(RCC_INCDIR)"'
@@ -40,11 +45,11 @@ src/sysinc_paths.h:
 
 $(MINGW_O): lib/mingw.c
 	$(CC) $(CFLAGS) -c $< -o $@
-src/main.o: src/main.c src/sysinc_paths.h
+src/main$(OBJ_EXT): src/main.c src/sysinc_paths.h
 	$(CC) $(CFLAGS) -c $< -o $@ -DGCC=\"$(CC)\" $(DEF_INCDIR) -DVERSION=\"$(VERSION)\"
-src/preprocess.o: src/preprocess.c src/sysinc_paths.h
+src/preprocess$(OBJ_EXT): src/preprocess.c src/sysinc_paths.h
 	$(CC) $(CFLAGS) -c $< -o $@ $(DEF_INCDIR)
-%.o: %.c
+%$(OBJ_EXT): %.c
 	$(CC) $(CFLAGS) -c $< -o $@
 
 compile_commands.json: $(SRCS)
