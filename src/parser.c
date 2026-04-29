@@ -300,6 +300,7 @@ void init_builtins(void) {
                 ty_uint
 #endif
     );
+    add_typedef("iconv_t", pointer_to(ty_void));
 }
 
 static Type *typedef_find_name(const char *name) {
@@ -875,6 +876,11 @@ static Type *declarator(Token **rest, Token *tok, Type *ty, char **name) {
                         tok = tok->next;
                         break;
                     }
+                    if (equal(tok, ";")) {
+                        tok = tok->next;
+                        continue;
+                    }
+
                     VarAttr attr = {};
                     Type *base = declspec(&tok, tok, &attr);
                     Type *pty = declarator(&tok, tok, copy_type(base), NULL);
@@ -3962,6 +3968,11 @@ Program *parse(Token *tok) {
             item->asm_str = str;
             item_cur = item_cur->next = item;
             tok = skip(tok, ";");
+            continue;
+        }
+
+        if (equal(tok, ";")) {
+            tok = tok->next;
             continue;
         }
 
