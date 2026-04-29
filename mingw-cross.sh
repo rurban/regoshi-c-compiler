@@ -41,16 +41,15 @@ while [ $# -gt 0 ]; do
 	esac
 done
 
+inputs="${inputs# }"
+
 if [ -z "$inputs" ]; then
 	echo "mingw-cross.sh: no input files" >&2
 	exit 1
 fi
 
-# Derive output name from first input if not specified
-first_src="${inputs%% *}"
-first_base="${first_src%.c}"
 if [ -z "$output" ]; then
-	output="$(basename "$first_base.exe")"
+	output="a.exe"
 fi
 
 WINEDEBUG=fixme-all
