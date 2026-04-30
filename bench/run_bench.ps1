@@ -42,14 +42,27 @@ function Run-Bench {
 
     Write-Host "--- $Label ---" -ForegroundColor $Color
 
-    # Compile
+    # Compile (10s timeout via background job, avoids hang)
     $sw = [System.Diagnostics.Stopwatch]::StartNew()
-    $proc = Start-Process -FilePath $Compiler -ArgumentList $ArgStr -PassThru -NoNewWindow -Wait -ErrorAction SilentlyContinue
+    $job = Start-Job -ScriptBlock {
+        param($Compiler, $ArgStr)
+        $p = Start-Process -FilePath $Compiler -ArgumentList $ArgStr -PassThru -NoNewWindow -Wait -ErrorAction SilentlyContinue
+        if ($p) { $p.ExitCode } else { -1 }
+    } -ArgumentList $Compiler, $ArgStr
+    $completed = Wait-Job $job -Timeout 10
+    if (-not $completed) {
+        Stop-Job $job -ErrorAction SilentlyContinue
+        Remove-Job $job -ErrorAction SilentlyContinue
+        Write-Host "  COMPILE FAILED (timed out after 30s)" -ForegroundColor Red
+        return $null
+    }
+    $exitCode = Receive-Job $job
+    Remove-Job $job
     $sw.Stop()
     $compileMs = $sw.ElapsedMilliseconds
 
-    if ($proc.ExitCode -ne 0 -or -not (Test-Path $ExePath)) {
-        Write-Host "  COMPILE FAILED (exit=$($proc.ExitCode))" -ForegroundColor Red
+    if ($exitCode -ne 0 -or -not (Test-Path $ExePath)) {
+        Write-Host "  COMPILE FAILED (exit=$($exitCode))" -ForegroundColor Red
         return $null
     }
     Write-Host ("  Compile : {0,6} ms" -f $compileMs) -ForegroundColor DarkGray
@@ -136,7 +149,7 @@ foreach ($r in $results) {
 
 # --- Head-to-head ---
 Write-Host ""
-$rcc_r = $results | Where-Object { $_.Label -like "RCC*" }
+$rcc_r = $results | Where-Object { $_.Label -eq "RCC (your compiler)" }
 $tcc_r = $results | Where-Object { $_.Label -like "TCC*" }
 if ($rcc_r -and $tcc_r) {
     Write-Host "--- RCC vs TCC Head-to-Head ---" -ForegroundColor Cyan
