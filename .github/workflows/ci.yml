@@ -68,6 +68,7 @@ jobs:
         run: make lint
 
       - name: Run benchmarks
+        if: matrix.os != 'macos-latest' && steps.changed.outputs.sources == 'true'
         run: make bench
 
       - name: Check for source changes

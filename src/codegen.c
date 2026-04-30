@@ -1615,6 +1615,21 @@ static int gen(Node *node) {
             }
 
             // Helper: emit unsigned load of unit_sz bytes
+            // Helper: emit unsigned load of unit_sz bytes
+#ifdef ARCH_ARM64
+#define BF_LOAD(sz, ra, rt) do { \
+    if ((sz) == 1) printf("  ldrb %s, [%s]\n", reg32[rt], reg64[ra]); \
+    else if ((sz) == 2) printf("  ldrh %s, [%s]\n", reg32[rt], reg64[ra]); \
+    else if ((sz) == 4) printf("  ldr %s, [%s]\n", reg32[rt], reg64[ra]); \
+    else printf("  ldr %s, [%s]\n", reg64[rt], reg64[ra]); \
+} while (0)
+#define BF_STORE(sz, ra, rt) do { \
+    if ((sz) == 1) printf("  strb %s, [%s]\n", reg32[rt], reg64[ra]); \
+    else if ((sz) == 2) printf("  strh %s, [%s]\n", reg32[rt], reg64[ra]); \
+    else if ((sz) == 4) printf("  str %s, [%s]\n", reg32[rt], reg64[ra]); \
+    else printf("  str %s, [%s]\n", reg64[rt], reg64[ra]); \
+} while (0)
+#else
 #define BF_LOAD(sz, ra, rt) do { \
     if ((sz) == 1) printf("  movzx %s, byte ptr [%s]\n", reg32[rt], reg64[ra]); \
     else if ((sz) == 2) printf("  movzx %s, word ptr [%s]\n", reg32[rt], reg64[ra]); \
@@ -1627,6 +1642,7 @@ static int gen(Node *node) {
     else if ((sz) == 4) printf("  mov dword ptr [%s], %s\n", reg64[ra], reg(rt, 4)); \
     else printf("  mov qword ptr [%s], %s\n", reg64[ra], reg64[rt]); \
 } while (0)
+#endif
 
             // Generate RHS (the new value to assign)
             int r2 = gen(node->rhs);
@@ -1635,6 +1651,60 @@ static int gen(Node *node) {
                 int ra = gen_addr(node->lhs);
                 int rt = alloc_reg();
                 BF_LOAD(unit_sz, ra, rt);
+#ifdef ARCH_ARM64
+                if (bo > 0) printf("  lsr %s, %s, #%d\n", reg64[rt], reg64[rt], bo);
+                if (bw < unit_sz * 8) {
+                    unsigned long long m = (1ULL << bw) - 1;
+                    printf("  mov %s, #%llu\n", reg64[rt], m);
+                    printf("  and %s, %s, %s\n", reg64[rt], reg64[rt], reg64[rt]);
+                }
+                BF_LOAD(unit_sz, ra, rt);
+                int tmp = alloc_reg();
+                printf("  mov %s, #%llu\n", reg64[tmp], ~mask);
+                printf("  and %s, %s, %s\n", reg64[rt], reg64[rt], reg64[tmp]);
+                int rv = alloc_reg();
+                printf("  mov %s, %s\n", reg64[rv], reg64[r2]);
+                printf("  mov %s, #%llu\n", reg64[tmp], (1ULL << bw) - 1);
+                printf("  and %s, %s, %s\n", reg64[rv], reg64[rv], reg64[tmp]);
+                if (bo > 0) printf("  lsl %s, %s, #%d\n", reg64[rv], reg64[rv], bo);
+                printf("  orr %s, %s, %s\n", reg64[rt], reg64[rt], reg64[rv]);
+                BF_STORE(unit_sz, ra, rt);
+                free_reg(tmp);
+                free_reg(rv);
+                free_reg(rt);
+                free_reg(ra);
+                return r2;
+            }
+
+            // Simple assignment: read-modify-write
+            free_reg(gen_addr(node->lhs));
+            int ra = gen_addr(node->lhs);
+            int rt = alloc_reg();
+            int eff_sz = unit_sz > 8 ? 8 : unit_sz;
+            BF_LOAD(eff_sz, ra, rt);
+            int tmp = alloc_reg();
+            printf("  mov %s, #%llu\n", reg64[tmp], ~mask);
+            printf("  and %s, %s, %s\n", reg64[rt], reg64[rt], reg64[tmp]);
+            int rv = alloc_reg();
+            printf("  mov %s, %s\n", reg64[rv], reg64[r2]);
+            printf("  mov %s, #%llu\n", reg64[tmp], (1ULL << bw) - 1);
+            printf("  and %s, %s, %s\n", reg64[rv], reg64[rv], reg64[tmp]);
+            if (bo > 0) printf("  lsl %s, %s, #%d\n", reg64[rv], reg64[rv], bo);
+            printf("  orr %s, %s, %s\n", reg64[rt], reg64[rt], reg64[rv]);
+            BF_STORE(eff_sz, ra, rt);
+            if (unit_sz > 8 && bo + bw > 64) {
+                int overflow = bo + bw - 64;
+                unsigned int ovf_mask = (1u << overflow) - 1;
+                printf("  add %s, %s, #8\n", reg64[ra], reg64[ra]);
+                printf("  ldrb %s, [%s]\n", reg32[rt], reg64[ra]);
+                printf("  and %s, %s, #%u\n", reg32[rt], reg32[rt], (unsigned)(~ovf_mask & 0xFF));
+                printf("  mov %s, %s\n", reg64[rv], reg64[r2]);
+                printf("  lsr %s, %s, #%d\n", reg64[rv], reg64[rv], 64 - bo);
+                printf("  and %s, %s, #%u\n", reg32[rv], reg32[rv], ovf_mask);
+                printf("  orr %s, %s, %s\n", reg32[rt], reg32[rt], reg32[rv]);
+                printf("  strb %s, [%s]\n", reg32[rt], reg64[ra]);
+            }
+#else
                 if (bo > 0) printf("  shr %s, %d\n", reg64[rt], bo);
                 if (bw < unit_sz * 8) {
                     unsigned long long m = (1ULL << bw) - 1;
@@ -1687,6 +1757,7 @@ static int gen(Node *node) {
                 printf("  or %s, %s\n", reg32[rt], reg32[rv]);
                 printf("  mov byte ptr [%s], %s\n", reg64[ra], reg8[rt]);
             }
+#endif
 #undef BF_LOAD
 #undef BF_STORE
             free_reg(rv);
@@ -1829,14 +1900,47 @@ static int gen(Node *node) {
             int bw = node->member->bit_width;
             int bo = node->member->bit_offset;
             int eff_ls = ls > 8 ? 8 : ls;
-            const char *sz = eff_ls == 1 ? "byte" : eff_ls == 2 ? "word"
-                : eff_ls == 4                                   ? "dword"
-                                                                : "qword";
             int r_addr = -1;
             if (ls > 8 && bo + bw > 64) {
                 r_addr = alloc_reg();
                 printf("  mov %s, %s\n", reg64[r_addr], reg64[r]);
             }
+#ifdef ARCH_ARM64
+            if (eff_ls <= 2)
+                printf("  ldrh %s, [%s]\n", reg32[r], reg64[r]);
+            else if (eff_ls == 4)
+                printf("  ldr %s, [%s]\n", reg32[r], reg64[r]);
+            else
+                printf("  ldr %s, [%s]\n", reg64[r], reg64[r]);
+            if (bo > 0)
+                printf("  lsr %s, %s, #%d\n", reg64[r], reg64[r], bo);
+            if (r_addr >= 0) {
+                int overflow = bo + bw - 64;
+                int tmp = alloc_reg();
+                printf("  ldrb %s, [%s, #8]\n", reg32[tmp], reg64[r_addr]);
+                printf("  and %s, %s, #%d\n", reg32[tmp], reg32[tmp], (1 << overflow) - 1);
+                printf("  lsl %s, %s, #%d\n", reg64[tmp], reg64[tmp], 64 - bo);
+                printf("  orr %s, %s, %s\n", reg64[r], reg64[r], reg64[tmp]);
+                free_reg(tmp);
+                free_reg(r_addr);
+            }
+            int load_bits = ls * 8;
+            if (bw < load_bits) {
+                if (node->member->ty->is_unsigned || node->member->ty->is_enum) {
+                    unsigned long long mask = (1ULL << bw) - 1;
+                    printf("  mov %s, #%llu\n", reg64[r], mask);
+                    printf("  and %s, %s, %s\n", reg64[r], reg64[r], reg64[r]);
+                } else {
+                    int shift = 64 - bw;
+                    printf("  lsl %s, %s, #%d\n", reg64[r], reg64[r], shift);
+                    printf("  asr %s, %s, #%d\n", reg64[r], reg64[r], shift);
+                }
+            }
+            return r;
+#else
+            const char *sz = eff_ls == 1 ? "byte" : eff_ls == 2 ? "word"
+                : eff_ls == 4                                   ? "dword"
+                                                                : "qword";
             if (eff_ls <= 2)
                 printf("  movzx %s, %s ptr [%s]\n", reg32[r], sz, reg64[r]);
             else if (eff_ls == 4)
@@ -1868,6 +1972,7 @@ static int gen(Node *node) {
                 }
             }
             return r;
+#endif
         } else {
             emit_load(load_ty, r, format("[%s]", reg64[r]));
         }
@@ -1877,6 +1982,21 @@ static int gen(Node *node) {
             int load_bits = node->member->bf_load_size
                 ? node->member->bf_load_size * 8
                 : node->member->ty->size * 8;
+#ifdef ARCH_ARM64
+            if (bo > 0)
+                printf("  lsr %s, %s, #%d\n", reg64[r], reg64[r], bo);
+            if (bw < load_bits) {
+                if (node->member->ty->is_unsigned || node->member->ty->is_enum) {
+                    unsigned long long mask = (1ULL << bw) - 1;
+                    printf("  mov %s, #%llu\n", reg64[r], mask);
+                    printf("  and %s, %s, %s\n", reg64[r], reg64[r], reg64[r]);
+                } else {
+                    int shift = 64 - bw;
+                    printf("  lsl %s, %s, #%d\n", reg64[r], reg64[r], shift);
+                    printf("  asr %s, %s, #%d\n", reg64[r], reg64[r], shift);
+                }
+            }
+#else
             if (bo > 0)
                 printf("  shr %s, %d\n", reg64[r], bo);
             if (bw < load_bits) {
@@ -1890,6 +2010,7 @@ static int gen(Node *node) {
                     printf("  sar %s, %d\n", reg64[r], shift);
                 }
             }
+#endif
         }
         return r;
     }
@@ -3879,7 +4000,7 @@ void codegen(Program *prog) {
 #elif defined(__APPLE__)
         printf("\n.section __DATA,__mod_init_func\n");
 #else
-            printf("\n.section .init_array,\"aw\",@init_array\n");
+                printf("\n.section .init_array,\"aw\",@init_array\n");
 #endif
         for (TLItem *item = prog->items; item; item = item->next) {
             if (item->kind == TL_FUNC && item->fn->is_constructor)
@@ -3892,7 +4013,7 @@ void codegen(Program *prog) {
 #elif defined(__APPLE__)
         printf("\n.section __DATA,__mod_term_func\n");
 #else
-            printf("\n.section .fini_array,\"aw\",@fini_array\n");
+                printf("\n.section .fini_array,\"aw\",@fini_array\n");
 #endif
         for (TLItem *item = prog->items; item; item = item->next) {
             if (item->kind == TL_FUNC && item->fn->is_destructor)
