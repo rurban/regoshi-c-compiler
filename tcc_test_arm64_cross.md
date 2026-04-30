@@ -72,7 +72,7 @@ Generated: May 2026
 | 70_floating_point_literals               | PASS         | Output matches                       |
 | 71_macro_empty_arg                       | MISMATCH     | Output does not match .expect        |
 | 72_long_long_constant                    | PASS         | Output matches                       |
-| 73_arm64                                 | COMPILE_FAIL | rcc returned non-zero                |
+| 73_arm64                                 | EXEC_FAIL    | non-zero exit                        |
 | 75_array_in_struct_init                  | PASS         | Output matches                       |
 | 76_dollars_in_identifiers                | PASS         | Output matches                       |
 | 77_push_pop_macro                        | PASS         | Output matches                       |

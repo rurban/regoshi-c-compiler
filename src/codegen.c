@@ -1289,15 +1289,23 @@ static int gen(Node *node) {
     case ND_NUM: {
         int r = alloc_reg();
 #ifdef ARCH_ARM64
-        // ARM64 mov immediate handles up to 16 bits; larger values need movz+movk
         uint64_t v = (uint64_t)(long long)node->val;
-        printf("  mov %s, #%llu\n", reg(r, op_size(node->ty)), v & 0xffff);
-        v >>= 16;
-        int shift = 16;
-        while (v) {
-            printf("  movk %s, #%llu, lsl #%d\n", reg(r, op_size(node->ty)), v & 0xffff, shift);
+        // Use x register for 64-bit immediates, w for 32-bit (stops at lsl #16)
+        if (op_size(node->ty) == 4) {
+            printf("  mov %s, #%llu\n", reg32[r], v & 0xffff);
             v >>= 16;
-            shift += 16;
+            if (v) {
+                printf("  movk %s, #%llu, lsl #16\n", reg32[r], v & 0xffff);
+            }
+        } else {
+            printf("  mov %s, #%llu\n", reg64[r], v & 0xffff);
+            v >>= 16;
+            int shift = 16;
+            while (v) {
+                printf("  movk %s, #%llu, lsl #%d\n", reg64[r], v & 0xffff, shift);
+                v >>= 16;
+                shift += 16;
+            }
         }
 #else
         if (node->val == (int32_t)node->val) {
