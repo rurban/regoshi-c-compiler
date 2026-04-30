@@ -1047,6 +1047,18 @@ static char *reg(int r, int size) {
 }
 
 #ifdef ARCH_ARM64
+// Emit mov reg, #imm64 handling any size (movz + movk)
+static void emit_mov_imm64(const char *reg, uint64_t val) {
+    printf("  mov %s, #%llu\n", reg, val & 0xffffULL);
+    val >>= 16;
+    int shift = 16;
+    while (val) {
+        printf("  movk %s, #%llu, lsl #%d\n", reg, val & 0xffffULL, shift);
+        val >>= 16;
+        shift += 16;
+    }
+}
+
 // Emit load/store-safe address for [x29, #-offset] when offset > 255
 // Returns register holding the address (must be freed by caller)
 static int emit_stack_addr(int offset) {
@@ -2661,20 +2673,22 @@ static int gen(Node *node) {
             if (cs->is_case_range) {
                 int skip_lbl = ++rcc_label_count;
 #ifdef ARCH_ARM64
-                if (cs->case_val == (int32_t)cs->case_val)
+                if ((cs->case_val >= 0 && cs->case_val <= 4095) ||
+                    (cs->case_val > 0 && cs->case_val <= 0xffffff && (cs->case_val % 4096) == 0))
                     printf("  cmp %s, #%lld\n", reg(cond, sz), (long long)cs->case_val);
                 else {
                     int tmp = alloc_reg();
-                    printf("  mov %s, #%lld\n", reg64[tmp], (long long)cs->case_val);
+                    emit_mov_imm64(reg64[tmp], (uint64_t)cs->case_val);
                     printf("  cmp %s, %s\n", reg(cond, sz), reg(tmp, sz));
                     free_reg(tmp);
                 }
                 printf("  %s .L.skip.%d\n", is_uns ? "b.lo" : "b.lt", skip_lbl);
-                if (cs->case_end == (int32_t)cs->case_end)
+                if ((cs->case_end >= 0 && cs->case_end <= 4095) ||
+                    (cs->case_end > 0 && cs->case_end <= 0xffffff && (cs->case_end % 4096) == 0))
                     printf("  cmp %s, #%lld\n", reg(cond, sz), (long long)cs->case_end);
                 else {
                     int tmp = alloc_reg();
-                    printf("  mov %s, #%lld\n", reg64[tmp], (long long)cs->case_end);
+                    emit_mov_imm64(reg64[tmp], (uint64_t)cs->case_end);
                     printf("  cmp %s, %s\n", reg(cond, sz), reg(tmp, sz));
                     free_reg(tmp);
                 }
@@ -2702,11 +2716,12 @@ static int gen(Node *node) {
                 printf(".L.skip.%d:\n", skip_lbl);
             } else {
 #ifdef ARCH_ARM64
-                if (cs->case_val == (int32_t)cs->case_val) {
+                if ((cs->case_val >= 0 && cs->case_val <= 4095) ||
+                    (cs->case_val > 0 && cs->case_val <= 0xffffff && (cs->case_val % 4096) == 0)) {
                     printf("  cmp %s, #%lld\n", reg(cond, sz), (long long)cs->case_val);
                 } else {
                     int tmp = alloc_reg();
-                    printf("  mov %s, #%lld\n", reg64[tmp], (long long)cs->case_val);
+                    emit_mov_imm64(reg64[tmp], (uint64_t)cs->case_val);
                     printf("  cmp %s, %s\n", reg(cond, sz), reg(tmp, sz));
                     free_reg(tmp);
                 }
