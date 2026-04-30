@@ -647,7 +647,20 @@ static int gen_funcall(Node *node, int hidden_ret_reg) {
             if (fn_struct_ret_off > fn_struct_ret_total)
                 fn_struct_ret_total = fn_struct_ret_off;
             temp_ret_slot = current_fn_stack_size + fn_struct_ret_off;
-            printf("  add %s, %s, #%d\n", reg64[temp_ret_reg], FRAME_PTR, -temp_ret_slot);
+            if (temp_ret_slot <= 4095)
+                printf("  add %s, %s, #%d\n", reg64[temp_ret_reg], FRAME_PTR, -temp_ret_slot);
+            else {
+                int v = temp_ret_slot;
+                printf("  mov x16, #%d\n", v & 0xffff);
+                v >>= 16;
+                int s = 16;
+                while (v) {
+                    printf("  movk x16, #%d, lsl #%d\n", v & 0xffff, s);
+                    v >>= 16;
+                    s += 16;
+                }
+                printf("  sub %s, %s, x16\n", reg64[temp_ret_reg], FRAME_PTR);
+            }
             hidden_ret_reg = temp_ret_reg;
         }
         printf("  mov x8, %s\n", reg64[hidden_ret_reg]);
@@ -705,8 +718,22 @@ static int gen_funcall(Node *node, int hidden_ret_reg) {
     }
 
     if (has_hidden_retbuf) {
-        if (temp_ret_reg != -1)
-            printf("  add %s, %s, #%d\n", reg64[temp_ret_reg], FRAME_PTR, -temp_ret_slot);
+        if (temp_ret_reg != -1) {
+            if (temp_ret_slot <= 4095)
+                printf("  add %s, %s, #%d\n", reg64[temp_ret_reg], FRAME_PTR, -temp_ret_slot);
+            else {
+                int v = temp_ret_slot;
+                printf("  mov x16, #%d\n", v & 0xffff);
+                v >>= 16;
+                int s = 16;
+                while (v) {
+                    printf("  movk x16, #%d, lsl #%d\n", v & 0xffff, s);
+                    v >>= 16;
+                    s += 16;
+                }
+                printf("  sub %s, %s, x16\n", reg64[temp_ret_reg], FRAME_PTR);
+            }
+        }
         return temp_ret_reg != -1 ? temp_ret_reg : hidden_ret_reg;
     }
 
@@ -2367,7 +2394,20 @@ static int gen(Node *node) {
                     }
                 }
 #ifdef ARCH_ARM64
-                printf("  ldr x11, [%s, #-%d]\n", FRAME_PTR, retbuf_offset);
+                if (retbuf_offset <= 4095)
+                    printf("  ldr x11, [%s, #-%d]\n", FRAME_PTR, retbuf_offset);
+                else {
+                    int v = retbuf_offset;
+                    printf("  mov x16, #%d\n", v & 0xffff);
+                    v >>= 16;
+                    int s = 16;
+                    while (v) {
+                        printf("  movk x16, #%d, lsl #%d\n", v & 0xffff, s);
+                        v >>= 16;
+                        s += 16;
+                    }
+                    printf("  sub x11, %s, x16\n", FRAME_PTR);
+                }
                 printf("  mov x12, #%d\n", node->lhs->ty->size);
                 printf(".L.retcopy.%d:\n", c);
                 printf("  cmp x12, #0\n");
