@@ -1547,9 +1547,9 @@ static int gen(Node *node) {
                     printf(".L.copy.%d:\n", c);
                     printf("  cmp x12, #0\n");
                     printf("  b.eq .L.copy_end.%d\n", c);
+                    printf("  sub x12, x12, #1\n");
                     printf("  ldrb w13, [%s, x12]\n", reg64[src]);
                     printf("  strb w13, [%s, x12]\n", reg64[dst]);
-                    printf("  sub x12, x12, #1\n");
                     printf("  b .L.copy.%d\n", c);
                     printf(".L.copy_end.%d:\n", c);
                 }
@@ -1559,8 +1559,8 @@ static int gen(Node *node) {
                     printf(".L.copy.%d:\n", c2);
                     printf("  cmp x12, #0\n");
                     printf("  b.eq .L.copy_end.%d\n", c2);
-                    printf("  strb wzr, [%s, x12]\n", reg64[dst]);
                     printf("  sub x12, x12, #1\n");
+                    printf("  strb wzr, [%s, x12]\n", reg64[dst]);
                     printf("  b .L.copy.%d\n", c2);
                     printf(".L.copy_end.%d:\n", c2);
                 }
@@ -1613,9 +1613,9 @@ static int gen(Node *node) {
             printf(".L.copy.%d:\n", c);
             printf("  cmp x12, #0\n");
             printf("  b.eq .L.copy_end.%d\n", c);
+            printf("  sub x12, x12, #1\n");
             printf("  ldrb w13, [%s, x12]\n", reg64[src]);
             printf("  strb w13, [%s, x12]\n", reg64[dst]);
-            printf("  sub x12, x12, #1\n");
             printf("  b .L.copy.%d\n", c);
             printf(".L.copy_end.%d:\n", c);
 #else
@@ -2301,9 +2301,9 @@ static int gen(Node *node) {
                 printf(".L.retcopy.%d:\n", c);
                 printf("  cmp x12, #0\n");
                 printf("  b.eq .L.retcopy_end.%d\n", c);
+                printf("  sub x12, x12, #1\n");
                 printf("  ldrb w13, [%s, x12]\n", reg64[src]);
                 printf("  strb w13, [x11, x12]\n");
-                printf("  sub x12, x12, #1\n");
                 printf("  b .L.retcopy.%d\n", c);
                 printf(".L.retcopy_end.%d:\n", c);
                 printf("  mov x0, x11\n");
@@ -3846,6 +3846,7 @@ void codegen(Program *prog) {
                         printf(".L.pcopy.%d:\n", c);
                         printf("  cmp x12, #0\n");
                         printf("  b.eq .L.pcopy_end.%d\n", c);
+                        printf("  sub x12, x12, #1\n");
                         printf("  ldrb w13, [x11, x12]\n");
                         printf("  strb w13, [%s, #-%d]\n", FRAME_PTR, var->offset - var->ty->size);
                         printf("  add %s, %s, x12\n", FRAME_PTR, FRAME_PTR); // temporary — wrong
