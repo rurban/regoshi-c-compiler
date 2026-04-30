@@ -3,9 +3,9 @@ Generated: April 2026
 
 ## Summary
  - **Total**:     138
- - **Passed**:    104
- - **Failed**:    34
- - **Pass Rate**: 75%
+ - **Passed**:    109
+ - **Failed**:    29
+ - **Pass Rate**: 78%
 
 ## Detailed Results
 | Test                                     | Status       | Message                              |
@@ -31,7 +31,7 @@ Generated: April 2026
 | 18_include                               | PASS         | Output matches                       |
 | 19_pointer_arithmetic                    | PASS         | Output matches                       |
 | 20_pointer_comparison                    | PASS         | Output matches                       |
-| 21_char_array                            | EXEC_FAIL    | non-zero exit                        |
+| 21_char_array                            | PASS         | Output matches                       |
 | 22_floating_point                        | MISMATCH     | Output does not match .expect        |
 | 23_type_coercion                         | MISMATCH     | Output does not match .expect        |
 | 24_math_library                          | MISMATCH     | Output does not match .expect        |
@@ -42,14 +42,14 @@ Generated: April 2026
 | 29_array_address                         | PASS         | Output matches                       |
 | 30_hanoi                                 | PASS         | Output matches                       |
 | 31_args                                  | PASS         | Output matches                       |
-| 32_led                                   | EXEC_FAIL    | non-zero exit                        |
+| 32_led                                   | PASS         | Output matches                       |
 | 33_ternary_op                            | PASS         | Output matches                       |
 | 34_array_assignment                      | MISMATCH     | Output does not match .expect        |
 | 35_sizeof                                | PASS         | Output matches                       |
 | 36_array_initialisers                    | PASS         | Output matches                       |
 | 37_sprintf                               | PASS         | Output matches                       |
 | 38_multiple_array_index                  | PASS         | Output matches                       |
-| 39_typedef                               | MISMATCH     | Output does not match .expect        |
+| 39_typedef                               | PASS         | Output matches                       |
 | 40_stdio                                 | EXEC_FAIL    | non-zero exit                        |
 | 41_hashif                                | PASS         | Output matches                       |
 | 42_function_pointer                      | PASS         | Output matches                       |
@@ -58,7 +58,7 @@ Generated: April 2026
 | 45_empty_for                             | PASS         | Output matches                       |
 | 46_grep                                  | EXEC_FAIL    | non-zero exit                        |
 | 47_switch_return                         | PASS         | Output matches                       |
-| 48_nested_break                          | EXEC_FAIL    | non-zero exit                        |
+| 48_nested_break                          | PASS         | Output matches                       |
 | 49_bracket_evaluation                    | PASS         | Output matches                       |
 | 50_logical_second_arg                    | PASS         | Output matches                       |
 | 51_static                                | PASS         | Output matches                       |
@@ -72,7 +72,7 @@ Generated: April 2026
 | 70_floating_point_literals               | PASS         | Output matches                       |
 | 71_macro_empty_arg                       | PASS         | Output matches                       |
 | 72_long_long_constant                    | PASS         | Output matches                       |
-| 73_arm64                                 | COMPILE_FAIL | rcc returned non-zero                |
+| 73_arm64                                 | EXEC_FAIL    | non-zero exit                        |
 | 75_array_in_struct_init                  | PASS         | Output matches                       |
 | 76_dollars_in_identifiers                | PASS         | Output matches                       |
 | 77_push_pop_macro                        | PASS         | Output matches                       |
@@ -85,7 +85,7 @@ Generated: April 2026
 | 84_hex-float                             | PASS         | Output matches                       |
 | 85_asm-outside-function                  | PASS         | Output matches                       |
 | 86_memory-model                          | PASS         | Output matches                       |
-| 87_dead_code                             | EXEC_FAIL    | non-zero exit                        |
+| 87_dead_code                             | PASS         | Output matches                       |
 | 88_codeopt                               | PASS         | Output matches                       |
 | 89_nocode_wanted                         | PASS         | Output matches                       |
 | 90_struct-init                           | EXEC_FAIL    | non-zero exit                        |
