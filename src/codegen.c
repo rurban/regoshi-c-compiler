@@ -1944,13 +1944,15 @@ static int gen(Node *node) {
         int delta = 1;
         if (node->lhs->ty->kind == TY_PTR || node->lhs->ty->kind == TY_ARRAY)
             delta = node->lhs->ty->base->size;
-        // Update in-place: load, add/sub, store
-        printf("  ldr x11, [%s]\n", reg64[r]);
+        // Update in-place: load into temp, add/sub, store back
+        int r3 = alloc_reg();
+        printf("  ldr %s, [%s]\n", reg64[r3], reg64[r]);
         if (node->kind == ND_POST_INC)
-            printf("  add x11, x11, #%d\n", delta);
+            printf("  add %s, %s, #%d\n", reg64[r3], reg64[r3], delta);
         else
-            printf("  sub x11, x11, #%d\n", delta);
-        printf("  str x11, [%s]\n", reg64[r]);
+            printf("  sub %s, %s, #%d\n", reg64[r3], reg64[r3], delta);
+        printf("  str %s, [%s]\n", reg64[r3], reg64[r]);
+        free_reg(r3);
 #else
         printf("  mov %s, %s [%s]\n", reg(r2, sz), ptr_size(sz), reg64[r]);
         int delta = 1;
