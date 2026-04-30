@@ -1013,6 +1013,21 @@ static char *reg(int r, int size) {
 #endif
 }
 
+#ifdef ARCH_ARM64
+// Emit load/store-safe address for [x29, #-offset] when offset > 255
+// Returns register holding the address (must be freed by caller)
+static int emit_stack_addr(int offset) {
+    int ta = alloc_reg();
+    if (offset <= 4095)
+        printf("  sub %s, %s, #%d\n", reg64[ta], FRAME_PTR, offset);
+    else {
+        printf("  mov %s, #%d\n", reg64[ta], offset);
+        printf("  sub %s, %s, %s\n", reg64[ta], FRAME_PTR, reg64[ta]);
+    }
+    return ta;
+}
+#endif
+
 static char *ptr_size(int size) {
 #ifdef ARCH_ARM64
     // arm64: no ptr suffix needed in load/store (size encoded in register name)
@@ -1056,6 +1071,33 @@ static void emit_load(Type *ty, int r, char *addr) {
     int load_sz = op_size(ty);
 #ifdef ARCH_ARM64
     // ARM64 narrow loads always write to w register (32-bit), zero-extending
+    // Handle negative offsets with large magnitude (ARM64 ldr/str 9-bit signed limit)
+    int off;
+    char base[32];
+    char load_op[16];
+    char *dst_reg;
+    bool needs_split = false;
+    if (sscanf(addr, "[%31[^,], #%d]", base, &off) >= 1 && off < -255) {
+        needs_split = true;
+        int tr = alloc_reg();
+        if (-off <= 4095)
+            printf("  sub %s, %s, #%d\n", reg64[tr], base, -off);
+        else {
+            printf("  mov %s, #%d\n", reg64[tr], -off);
+            printf("  sub %s, %s, %s\n", reg64[tr], base, reg64[tr]);
+        }
+        if (ty->size == 1) {
+            printf("  %s %s, [%s]\n", ty->is_unsigned ? "ldrb" : "ldrsb", reg(r, 4), reg64[tr]);
+        } else if (ty->size == 2) {
+            printf("  %s %s, [%s]\n", ty->is_unsigned ? "ldrh" : "ldrsh", reg(r, 4), reg64[tr]);
+        } else if (ty->size == 4) {
+            printf("  ldr %s, [%s]\n", reg(r, 4), reg64[tr]);
+        } else {
+            printf("  ldr %s, [%s]\n", reg(r, 8), reg64[tr]);
+        }
+        free_reg(tr);
+        return;
+    }
     if (ty->size == 1) {
         printf("  %s %s, %s\n", ty->is_unsigned ? "ldrb" : "ldrsb", reg(r, 4), addr);
         return;
@@ -1138,18 +1180,24 @@ static int gen_addr(Node *node) {
     case ND_LVAR: {
         int r = alloc_reg();
         if (node->var->is_local) {
-            if (node->var->ty->kind == TY_VLA)
+            if (node->var->ty->kind == TY_VLA) {
 #ifdef ARCH_ARM64
                 printf("  sub %s, %s, #%d\n", reg64[r], FRAME_PTR, node->var->offset - 8);
 #else
                 printf("  lea %s, [rbp-%d]\n", reg64[r], node->var->offset - 8);
 #endif
-            else
+            } else {
 #ifdef ARCH_ARM64
-                printf("  sub %s, %s, #%d\n", reg64[r], FRAME_PTR, node->var->offset);
+                if (node->var->offset <= 4095)
+                    printf("  sub %s, %s, #%d\n", reg64[r], FRAME_PTR, node->var->offset);
+                else {
+                    printf("  mov %s, #%d\n", reg64[r], node->var->offset);
+                    printf("  sub %s, %s, %s\n", reg64[r], FRAME_PTR, reg64[r]);
+                }
 #else
                 printf("  lea %s, [rbp-%d]\n", reg64[r], node->var->offset);
 #endif
+            }
         } else {
             if (node->var->is_weak)
                 printf(".weak %s\n", var_label(node->var));
@@ -1167,7 +1215,21 @@ static int gen_addr(Node *node) {
     case ND_MEMBER: {
         int r = gen_addr(node->lhs);
 #ifdef ARCH_ARM64
-        printf("  add %s, %s, #%d\n", reg64[r], reg64[r], node->member->offset);
+        if (node->member->offset > 0 && node->member->offset <= 4095)
+            printf("  add %s, %s, #%d\n", reg64[r], reg64[r], node->member->offset);
+        else if (node->member->offset > 0) {
+            int ti = alloc_reg();
+            printf("  mov %s, #%d\n", reg64[ti], node->member->offset);
+            printf("  add %s, %s, %s\n", reg64[r], reg64[r], reg64[ti]);
+            free_reg(ti);
+        } else if (node->member->offset < 0 && -node->member->offset <= 4095)
+            printf("  sub %s, %s, #%d\n", reg64[r], reg64[r], -node->member->offset);
+        else if (node->member->offset < 0) {
+            int ti = alloc_reg();
+            printf("  mov %s, #%d\n", reg64[ti], -node->member->offset);
+            printf("  sub %s, %s, %s\n", reg64[r], reg64[r], reg64[ti]);
+            free_reg(ti);
+        }
 #else
         printf("  add %s, %d\n", reg64[r], node->member->offset);
 #endif
@@ -1348,7 +1410,12 @@ static int gen(Node *node) {
         } else if (node->var->ty->kind == TY_ARRAY) {
             if (node->var->is_local)
 #ifdef ARCH_ARM64
-                printf("  sub %s, %s, #%d\n", reg64[r], FRAME_PTR, node->var->offset);
+                if (node->var->offset <= 4095)
+                    printf("  sub %s, %s, #%d\n", reg64[r], FRAME_PTR, node->var->offset);
+                else {
+                    printf("  mov %s, #%d\n", reg64[r], node->var->offset);
+                    printf("  sub %s, %s, %s\n", reg64[r], FRAME_PTR, reg64[r]);
+                }
 #else
                 printf("  lea %s, [rbp-%d]\n", reg64[r], node->var->offset);
 #endif
@@ -1603,7 +1670,13 @@ static int gen(Node *node) {
         if (node->lhs->kind == ND_LVAR && node->lhs->var->is_local && node->lhs->var->ty->kind != TY_ARRAY) {
             int r2 = gen(node->rhs);
 #ifdef ARCH_ARM64
-            printf("  str %s, [%s, #-%d]\n", reg(r2, node->lhs->ty->size), FRAME_PTR, node->lhs->var->offset);
+            if (node->lhs->var->offset <= 255)
+                printf("  str %s, [%s, #-%d]\n", reg(r2, node->lhs->ty->size), FRAME_PTR, node->lhs->var->offset);
+            else {
+                int ta = emit_stack_addr(node->lhs->var->offset);
+                printf("  str %s, [%s]\n", reg(r2, node->lhs->ty->size), reg64[ta]);
+                free_reg(ta);
+            }
 #else
             printf("  mov [rbp-%d], %s\n", node->lhs->var->offset, reg(r2, node->lhs->ty->size));
 #endif

@@ -3,9 +3,9 @@ Generated: May 2026
 
 ## Summary
  - **Total**:     142
- - **Passed**:    86
- - **Failed**:    56
- - **Pass Rate**: 60%
+ - **Passed**:    95
+ - **Failed**:    47
+ - **Pass Rate**: 66%
 
 ## Detailed Results
 | Test                                     | Status       | Message                              |
@@ -43,7 +43,7 @@ Generated: May 2026
 | 30_hanoi                                 | EXEC_FAIL    | non-zero exit                        |
 | 31_args                                  | PASS         | Output matches                       |
 | 32_led                                   | EXEC_FAIL    | non-zero exit                        |
-| 33_ternary_op                            | MISMATCH     | Output does not match .expect        |
+| 33_ternary_op                            | PASS         | Output matches                       |
 | 34_array_assignment                      | MISMATCH     | Output does not match .expect        |
 | 35_sizeof                                | PASS         | Output matches                       |
 | 36_array_initialisers                    | PASS         | Output matches                       |
@@ -52,7 +52,7 @@ Generated: May 2026
 | 39_typedef                               | MISMATCH     | Output does not match .expect        |
 | 40_stdio                                 | EXEC_FAIL    | non-zero exit                        |
 | 41_hashif                                | PASS         | Output matches                       |
-| 42_function_pointer                      | EXEC_FAIL    | non-zero exit                        |
+| 42_function_pointer                      | PASS         | Output matches                       |
 | 43_void_param                            | PASS         | Output matches                       |
 | 44_scoped_declarations                   | PASS         | Output matches                       |
 | 45_empty_for                             | PASS         | Output matches                       |
@@ -61,10 +61,10 @@ Generated: May 2026
 | 48_nested_break                          | EXEC_FAIL    | non-zero exit                        |
 | 49_bracket_evaluation                    | PASS         | Output matches                       |
 | 50_logical_second_arg                    | PASS         | Output matches                       |
-| 51_static                                | MISMATCH     | Output does not match .expect        |
+| 51_static                                | PASS         | Output matches                       |
 | 52_unnamed_enum                          | PASS         | Output matches                       |
 | 54_goto                                  | PASS         | Output matches                       |
-| 55_lshift_type                           | EXEC_FAIL    | non-zero exit                        |
+| 55_lshift_type                           | PASS         | Output matches                       |
 | 60_errors_and_warnings                   | SKIP         | Skipped                              |
 | 61_integers                              | MISMATCH     | Output does not match .expect        |
 | 64_macro_nesting                         | PASS         | Output matches                       |
@@ -72,7 +72,7 @@ Generated: May 2026
 | 70_floating_point_literals               | PASS         | Output matches                       |
 | 71_macro_empty_arg                       | MISMATCH     | Output does not match .expect        |
 | 72_long_long_constant                    | PASS         | Output matches                       |
-| 73_arm64                                 | EXEC_FAIL    | non-zero exit                        |
+| 73_arm64                                 | COMPILE_FAIL | rcc returned non-zero                |
 | 75_array_in_struct_init                  | PASS         | Output matches                       |
 | 76_dollars_in_identifiers                | PASS         | Output matches                       |
 | 77_push_pop_macro                        | PASS         | Output matches                       |
@@ -80,21 +80,21 @@ Generated: May 2026
 | 79_vla_continue                          | COMPILE_FAIL | rcc returned non-zero                |
 | 80_flexarray                             | EXEC_FAIL    | non-zero exit                        |
 | 81_types                                 | PASS         | Output matches                       |
-| 82_attribs_position                      | MISMATCH     | Output does not match .expect        |
-| 83_utf8_in_identifiers                   | MISMATCH     | Output does not match .expect        |
+| 82_attribs_position                      | PASS         | Output matches                       |
+| 83_utf8_in_identifiers                   | PASS         | Output matches                       |
 | 84_hex-float                             | MISMATCH     | Output does not match .expect        |
 | 85_asm-outside-function                  | PASS         | Output matches                       |
 | 86_memory-model                          | PASS         | Output matches                       |
 | 87_dead_code                             | EXEC_FAIL    | non-zero exit                        |
-| 88_codeopt                               | MISMATCH     | Output does not match .expect        |
+| 88_codeopt                               | PASS         | Output matches                       |
 | 89_nocode_wanted                         | PASS         | Output matches                       |
-| 90_struct-init                           | COMPILE_FAIL | rcc returned non-zero                |
+| 90_struct-init                           | EXEC_FAIL    | non-zero exit                        |
 | 91_ptr_longlong_arith32                  | PASS         | Output matches                       |
 | 92_enum_bitfield                         | MISMATCH     | Output does not match .expect        |
 | 93_integer_promotion                     | MISMATCH     | Output does not match .expect        |
 | 94_generic                               | PASS         | Output matches                       |
-| 95_bitfields                             | COMPILE_FAIL | rcc returned non-zero                |
-| 95_bitfields_ms                          | COMPILE_FAIL | rcc returned non-zero                |
+| 95_bitfields                             | EXEC_FAIL    | non-zero exit                        |
+| 95_bitfields_ms                          | EXEC_FAIL    | non-zero exit                        |
 | 96_nodata_wanted                         | SKIP         | Skipped                              |
 | 97_utf8_string_literal                   | MISMATCH     | Output does not match .expect        |
 | 98_al_ax_extend                          | SKIP         | Skipped                              |
@@ -127,7 +127,7 @@ Generated: May 2026
 | 125_atomic_misc                          | SKIP         | Skipped                              |
 | 126_bound_global                         | SKIP         | Skipped                              |
 | 127_asm_goto                             | COMPILE_FAIL | rcc returned non-zero                |
-| 128_run_atexit                           | EXEC_FAIL    | non-zero exit                        |
+| 128_run_atexit                           | PASS         | Output matches                       |
 | 129_scopes                               | MISMATCH     | Output does not match .expect        |
 | 130_large_argument                       | COMPILE_FAIL | rcc returned non-zero                |
 | 131_return_struct_in_reg                 | EXEC_FAIL    | non-zero exit                        |
@@ -138,31 +138,31 @@ Generated: May 2026
 | 136_atomic_gcc_style                     | SKIP         | Skipped                              |
 | 137_funcall_struct_args                  | MISMATCH     | Output does not match .expect        |
 | test_bitfields                           | PASS         | exit=0                               |
-| test_builtins                            | COMPILE_FAIL | rcc returned non-zero                |
-| test_elif2                               | PASS         | exit=96                              |
-| test_elif_simple                         | PASS         | exit=96                              |
+| test_builtins                            | PASS         | exit=0                               |
+| test_elif2                               | PASS         | exit=0                               |
+| test_elif_simple                         | PASS         | exit=0                               |
 | test_err                                 | PASS         | compile error as expected            |
 | test_func                                | PASS         | exit=0                               |
 | test_if                                  | PASS         | exit=0                               |
 | test_if2                                 | PASS         | exit=0                               |
 | test_if3                                 | PASS         | exit=0                               |
 | test_if4                                 | PASS         | exit=0                               |
-| test_if5                                 | PASS         | exit=96                              |
-| test_if6                                 | PASS         | exit=96                              |
-| test_if_nested                           | PASS         | exit=96                              |
-| test_if_simple                           | PASS         | exit=96                              |
-| test_include                             | PASS         | exit=96                              |
-| test_include2                            | PASS         | exit=96                              |
+| test_if5                                 | PASS         | exit=0                               |
+| test_if6                                 | PASS         | exit=0                               |
+| test_if_nested                           | PASS         | exit=0                               |
+| test_if_simple                           | PASS         | exit=0                               |
+| test_include                             | PASS         | exit=42                              |
+| test_include2                            | PASS         | exit=10                              |
 | test_loop                                | PASS         | exit=124                             |
 | test_macro                               | PASS         | exit=1                               |
 | test_minimal                             | PASS         | exit=0                               |
 | test_nested_if                           | PASS         | exit=0                               |
 | test_ptr                                 | PASS         | exit=0                               |
 | test_real                                | PASS         | exit=0                               |
-| test_self_include2                       | PASS         | exit=96                              |
+| test_self_include2                       | PASS         | exit=1                               |
 | test_signextend                          | PASS         | exit=0                               |
-| test_simple                              | PASS         | exit=96                              |
-| test_simple2                             | PASS         | exit=96                              |
+| test_simple                              | PASS         | exit=1                               |
+| test_simple2                             | PASS         | exit=1                               |
 | test_str                                 | PASS         | exit=0                               |
 | test_struct                              | PASS         | exit=0                               |
 | test_with_comment                        | PASS         | exit=0                               |

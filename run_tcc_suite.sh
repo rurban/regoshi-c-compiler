@@ -497,7 +497,7 @@ fi
 printf "Report saved to %s\n" "$REPORT_FILE"
 
 if [ "$RCC" = "$SCRIPT_DIR/arm64-cross.sh" ]; then
-    [ "$passed" -ge 86 ]
+    [ "$passed" -ge 95 ]
 elif [ "$REPORT_FILE" = "$SCRIPT_DIR/tcc_test_arm64.md" ]; then
     [ "$passed" -ge 1 ]
 elif [ "$RCC" = "$SCRIPT_DIR/mingw-cross.sh" ]; then
