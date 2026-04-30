@@ -3,9 +3,9 @@ Generated: April 2026
 
 ## Summary
  - **Total**:     138
- - **Passed**:    110
- - **Failed**:    28
- - **Pass Rate**: 79%
+ - **Passed**:    113
+ - **Failed**:    25
+ - **Pass Rate**: 81%
 
 ## Detailed Results
 | Test                                     | Status       | Message                              |
@@ -66,7 +66,7 @@ Generated: April 2026
 | 54_goto                                  | PASS         | Output matches                       |
 | 55_lshift_type                           | PASS         | Output matches                       |
 | 60_errors_and_warnings                   | SKIP         | Skipped                              |
-| 61_integers                              | MISMATCH     | Output does not match .expect        |
+| 61_integers                              | PASS         | Output matches                       |
 | 64_macro_nesting                         | PASS         | Output matches                       |
 | 67_macro_concat                          | PASS         | Output matches                       |
 | 70_floating_point_literals               | MISMATCH     | Output does not match .expect        |
@@ -90,7 +90,7 @@ Generated: April 2026
 | 89_nocode_wanted                         | PASS         | Output matches                       |
 | 90_struct-init                           | EXEC_FAIL    | non-zero exit                        |
 | 91_ptr_longlong_arith32                  | PASS         | Output matches                       |
-| 92_enum_bitfield                         | MISMATCH     | Output does not match .expect        |
+| 92_enum_bitfield                         | PASS         | Output matches                       |
 | 93_integer_promotion                     | MISMATCH     | Output does not match .expect        |
 | 94_generic                               | PASS         | Output matches                       |
 | 95_bitfields                             | MISMATCH     | Output does not match .expect        |
@@ -105,10 +105,10 @@ Generated: April 2026
 | 103_implicit_memmove                     | PASS         | Output matches                       |
 | 104_inline                               | MISMATCH     | Output does not match .expect        |
 | 105_local_extern                         | PASS         | Output matches                       |
-| 106_versym                               | PASS         | Output matches                       |
+| 106_versym                               | COMPILE_FAIL | rcc returned non-zero                |
 | 107_stack_safe                           | PASS         | Output matches                       |
 | 108_constructor                          | PASS         | Output matches                       |
-| 109_float_struct_calling                 | MISMATCH     | Output does not match .expect        |
+| 109_float_struct_calling                 | PASS         | Output matches                       |
 | 110_average                              | MISMATCH     | Output does not match .expect        |
 | 111_conversion                           | PASS         | Output matches                       |
 | 112_backtrace                            | SKIP         | Skipped                              |
@@ -118,9 +118,9 @@ Generated: April 2026
 | 116_bound_setjmp2                        | SKIP         | Skipped                              |
 | 117_builtins                             | EXEC_FAIL    | non-zero exit                        |
 | 118_switch                               | PASS         | Output matches                       |
-| 119_random_stuff                         | EXEC_FAIL    | non-zero exit                        |
+| 119_random_stuff                         | COMPILE_FAIL | rcc returned non-zero                |
 | 120_alias                                | SKIP         | Skipped                              |
-| 121_struct_return                        | EXEC_FAIL    | non-zero exit                        |
+| 121_struct_return                        | MISMATCH     | Output does not match .expect        |
 | 122_vla_reuse                            | SKIP         | Skipped                              |
 | 123_vla_bug                              | SKIP         | Skipped                              |
 | 124_atomic_counter                       | SKIP         | Skipped                              |
@@ -129,11 +129,11 @@ Generated: April 2026
 | 127_asm_goto                             | COMPILE_FAIL | rcc returned non-zero                |
 | 128_run_atexit                           | PASS         | Output matches                       |
 | 129_scopes                               | PASS         | Output matches                       |
-| 130_large_argument                       | EXEC_FAIL    | non-zero exit                        |
+| 130_large_argument                       | MISMATCH     | Output does not match .expect        |
 | 131_return_struct_in_reg                 | MISMATCH     | Output does not match .expect        |
 | 132_bound_test                           | PASS         | Output matches                       |
 | 133_old_func                             | MISMATCH     | Output does not match .expect        |
-| 134_double_to_signed                     | MISMATCH     | Output does not match .expect        |
+| 134_double_to_signed                     | PASS         | Output matches                       |
 | 135_func_arg_struct_compare              | PASS         | Output matches                       |
 | 136_atomic_gcc_style                     | SKIP         | Skipped                              |
 | 137_funcall_struct_args                  | MISMATCH     | Output does not match .expect        |

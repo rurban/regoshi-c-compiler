@@ -3143,10 +3143,9 @@ static int gen(Node *node) {
         if (node->kind == ND_DIV) {
             printf("  %s %s, %s, %s\n", is_unsigned ? "udiv" : "sdiv", reg(r_lhs, sz), reg(r_lhs, sz), reg(r_rhs, sz));
         } else {
-            // modulo: msub xN, xQ, xB, xA => xN = xA - xQ*xB
             int tmp = alloc_reg();
-            printf("  %s %s, %s, %s\n", is_unsigned ? "udiv" : "sdiv", reg64[tmp], reg64[r_lhs], reg64[r_rhs]);
-            printf("  mul %s, %s, %s\n", reg64[tmp], reg64[tmp], reg64[r_rhs]);
+            printf("  %s %s, %s, %s\n", is_unsigned ? "udiv" : "sdiv", reg(tmp, sz), reg(r_lhs, sz), reg(r_rhs, sz));
+            printf("  mul %s, %s, %s\n", reg(tmp, sz), reg(tmp, sz), reg(r_rhs, sz));
             printf("  sub %s, %s, %s\n", reg(r_lhs, sz), reg(r_lhs, sz), reg(tmp, sz));
             free_reg(tmp);
         }
