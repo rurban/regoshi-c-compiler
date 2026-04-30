@@ -134,7 +134,7 @@ if [ -n "$SLIMCC" ]; then
 fi
 if [ -n "$KEFIR" ]; then
    run_bench "KEFIR" "$KEFIR" "$SRC -o $KEFIR_EXE" "$KEFIR_EXE" || true
-   run_bench "KEFIR -O1" "$KEFIR" "$SRC -o $KEFIR_O1_EXE" "$KEFIR_O1_EXE" || true
+   run_bench "KEFIR -O1" "$KEFIR" "-O1 $SRC -o $KEFIR_O1_EXE" "$KEFIR_O1_EXE" || true
 fi
 run_bench "GCC -O0" "$GCC" "-O0 $SRC -o $GCC_EXE -lm" "$GCC_EXE" || true
 run_bench "GCC -O2" "$GCC" "-O2 $SRC -o $GCC_O2_EXE -lm" "$GCC_O2_EXE" || true
