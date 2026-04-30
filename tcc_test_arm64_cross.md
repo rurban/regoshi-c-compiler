@@ -32,9 +32,9 @@ Generated: May 2026
 | 19_pointer_arithmetic                    | PASS         | Output matches                       |
 | 20_pointer_comparison                    | PASS         | Output matches                       |
 | 21_char_array                            | EXEC_FAIL    | non-zero exit                        |
-| 22_floating_point                        | COMPILE_FAIL | rcc returned non-zero                |
+| 22_floating_point                        | MISMATCH     | Output does not match .expect        |
 | 23_type_coercion                         | MISMATCH     | Output does not match .expect        |
-| 24_math_library                          | COMPILE_FAIL | rcc returned non-zero                |
+| 24_math_library                          | MISMATCH     | Output does not match .expect        |
 | 25_quicksort                             | EXEC_FAIL    | non-zero exit                        |
 | 26_character_constants                   | PASS         | Output matches                       |
 | 27_sizeof                                | PASS         | Output matches                       |

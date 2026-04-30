@@ -131,7 +131,7 @@ fi
 run_exe() {
 	if [ -n "$RUN_PREFIX" ]; then
 		# shellcheck disable=SC2086
-		timeout 20s $RUN_PREFIX "$@"
+		timeout 5s $RUN_PREFIX "$@"
 	else
 		"$@"
 	fi

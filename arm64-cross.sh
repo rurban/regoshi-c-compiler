@@ -40,6 +40,7 @@ if [ ! -x "$rcc_bin" ]; then
 fi
 
 rcc_flags=""
+ld_flags=""
 inputs=""
 output=""
 
@@ -47,6 +48,10 @@ while [ $# -gt 0 ]; do
     case "$1" in
     -o)
         output="$2"; shift 2 ;;
+    -l*|-L*)
+        ld_flags="$ld_flags $1"
+        rcc_flags="$rcc_flags $1"
+        shift ;;
     -*)
         rcc_flags="$rcc_flags $1"
         if [ $# -gt 1 ]; then
@@ -87,9 +92,9 @@ done
 
 # shellcheck disable=SC2086
 if [ -n "$ARM64_SYSROOT" ] && [ -d "$ARM64_SYSROOT" ]; then
-    "$ARM64_CC" --sysroot="$ARM64_SYSROOT" -no-pie -o "$output" $s_files && rm -f $s_files
+    "$ARM64_CC" --sysroot="$ARM64_SYSROOT" -no-pie -o "$output" $s_files $ld_flags && rm -f $s_files
 else
-    "$ARM64_CC" -no-pie -o "$output" $s_files && rm -f $s_files
+    "$ARM64_CC" -no-pie -o "$output" $s_files $ld_flags && rm -f $s_files
 fi
 
 ret=$?
