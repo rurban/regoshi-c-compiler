@@ -278,7 +278,7 @@ int main(int argc, char **argv) {
             snprintf(cmd, sizeof(cmd), GCC " -c -o %s", out_path);
         } else {
 #ifdef __APPLE__
-            snprintf(cmd, sizeof(cmd), GCC " -o %s", out_path);
+            snprintf(cmd, sizeof(cmd), "ld -o %s -lSystem -syslibroot /Library/Developer/CommandLineTools/SDKs/MacOSX.sdk -arch arm64 -e _main", out_path);
 #else
             snprintf(cmd, sizeof(cmd), GCC " -no-pie -o %s", out_path);
 #endif
@@ -305,6 +305,7 @@ int main(int argc, char **argv) {
             if (stat("lib/mingw.obj", &libst) == 0)
             snprintf(cmd + strlen(cmd), sizeof(cmd) - strlen(cmd), " lib/mingw.obj");
 #endif
+
         if (libs_len)
             strncat(cmd, libs, sizeof(cmd) - strlen(cmd) - 1);
 
