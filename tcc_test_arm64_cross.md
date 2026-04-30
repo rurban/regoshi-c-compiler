@@ -1,10 +1,10 @@
 # TCC Test Suite Report for RCC
-Generated: April 2026
+Generated: May 2026
 
 ## Summary
- - **Total**:     138
- - **Passed**:    106
- - **Failed**:    32
+ - **Total**:     142
+ - **Passed**:    109
+ - **Failed**:    33
  - **Pass Rate**: 76%
 
 ## Detailed Results
@@ -44,7 +44,7 @@ Generated: April 2026
 | 31_args                                  | PASS         | Output matches                       |
 | 32_led                                   | PASS         | Output matches                       |
 | 33_ternary_op                            | PASS         | Output matches                       |
-| 34_array_assignment                      | MISMATCH     | Output does not match .expect        |
+| 34_array_assignment                      | PASS         | Output matches                       |
 | 35_sizeof                                | PASS         | Output matches                       |
 | 36_array_initialisers                    | PASS         | Output matches                       |
 | 37_sprintf                               | PASS         | Output matches                       |
@@ -72,12 +72,12 @@ Generated: April 2026
 | 70_floating_point_literals               | MISMATCH     | Output does not match .expect        |
 | 71_macro_empty_arg                       | PASS         | Output matches                       |
 | 72_long_long_constant                    | PASS         | Output matches                       |
-| 73_arm64                                 | EXEC_FAIL    | non-zero exit                        |
+| 73_arm64                                 | COMPILE_FAIL | rcc returned non-zero                |
 | 75_array_in_struct_init                  | PASS         | Output matches                       |
 | 76_dollars_in_identifiers                | PASS         | Output matches                       |
 | 77_push_pop_macro                        | PASS         | Output matches                       |
-| 78_vla_label                             | SKIP         | Skipped                              |
-| 79_vla_continue                          | SKIP         | Skipped                              |
+| 78_vla_label                             | COMPILE_FAIL | rcc returned non-zero                |
+| 79_vla_continue                          | COMPILE_FAIL | rcc returned non-zero                |
 | 80_flexarray                             | EXEC_FAIL    | non-zero exit                        |
 | 81_types                                 | PASS         | Output matches                       |
 | 82_attribs_position                      | PASS         | Output matches                       |
@@ -96,19 +96,19 @@ Generated: April 2026
 | 95_bitfields                             | MISMATCH     | Output does not match .expect        |
 | 95_bitfields_ms                          | MISMATCH     | Output does not match .expect        |
 | 96_nodata_wanted                         | SKIP         | Skipped                              |
-| 97_utf8_string_literal                   | MISMATCH     | Output does not match .expect        |
+| 97_utf8_string_literal                   | PASS         | Output matches                       |
 | 98_al_ax_extend                          | SKIP         | Skipped                              |
 | 99_fastcall                              | SKIP         | Skipped                              |
 | 100_c99array-decls                       | PASS         | Output matches                       |
-| 101_cleanup                              | COMPILE_FAIL | rcc returned non-zero                |
+| 101_cleanup                              | MISMATCH     | Output does not match .expect        |
 | 102_alignas                              | PASS         | Output matches                       |
 | 103_implicit_memmove                     | PASS         | Output matches                       |
 | 104_inline                               | MISMATCH     | Output does not match .expect        |
 | 105_local_extern                         | PASS         | Output matches                       |
-| 106_versym                               | PASS         | Output matches                       |
+| 106_versym                               | COMPILE_FAIL | rcc returned non-zero                |
 | 107_stack_safe                           | PASS         | Output matches                       |
 | 108_constructor                          | PASS         | Output matches                       |
-| 109_float_struct_calling                 | EXEC_FAIL    | non-zero exit                        |
+| 109_float_struct_calling                 | MISMATCH     | Output does not match .expect        |
 | 110_average                              | MISMATCH     | Output does not match .expect        |
 | 111_conversion                           | PASS         | Output matches                       |
 | 112_backtrace                            | SKIP         | Skipped                              |
@@ -116,21 +116,21 @@ Generated: April 2026
 | 114_bound_signal                         | SKIP         | Skipped                              |
 | 115_bound_setjmp                         | SKIP         | Skipped                              |
 | 116_bound_setjmp2                        | SKIP         | Skipped                              |
-| 117_builtins                             | EXEC_FAIL    | non-zero exit                        |
+| 117_builtins                             | PASS         | Output matches                       |
 | 118_switch                               | COMPILE_FAIL | rcc returned non-zero                |
 | 119_random_stuff                         | COMPILE_FAIL | rcc returned non-zero                |
 | 120_alias                                | SKIP         | Skipped                              |
 | 121_struct_return                        | EXEC_FAIL    | non-zero exit                        |
-| 122_vla_reuse                            | SKIP         | Skipped                              |
-| 123_vla_bug                              | SKIP         | Skipped                              |
+| 122_vla_reuse                            | COMPILE_FAIL | rcc returned non-zero                |
+| 123_vla_bug                              | COMPILE_FAIL | rcc returned non-zero                |
 | 124_atomic_counter                       | SKIP         | Skipped                              |
 | 125_atomic_misc                          | SKIP         | Skipped                              |
 | 126_bound_global                         | SKIP         | Skipped                              |
 | 127_asm_goto                             | COMPILE_FAIL | rcc returned non-zero                |
 | 128_run_atexit                           | PASS         | Output matches                       |
-| 129_scopes                               | MISMATCH     | Output does not match .expect        |
+| 129_scopes                               | PASS         | Output matches                       |
 | 130_large_argument                       | EXEC_FAIL    | non-zero exit                        |
-| 131_return_struct_in_reg                 | EXEC_FAIL    | non-zero exit                        |
+| 131_return_struct_in_reg                 | MISMATCH     | Output does not match .expect        |
 | 132_bound_test                           | PASS         | Output matches                       |
 | 133_old_func                             | MISMATCH     | Output does not match .expect        |
 | 134_double_to_signed                     | MISMATCH     | Output does not match .expect        |

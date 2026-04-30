@@ -137,7 +137,20 @@ static bool var_has_cleanup(LVar *var) {
 static void emit_cleanup_var(LVar *var) {
     if (var->cleanup_func) {
 #ifdef ARCH_ARM64
-        printf("  add x0, %s, #%d\n", FRAME_PTR, -var->offset);
+        if (var->offset <= 4095)
+            printf("  add x0, %s, #%d\n", FRAME_PTR, -var->offset);
+        else {
+            int v = var->offset;
+            printf("  mov x16, #%d\n", v & 0xffff);
+            v >>= 16;
+            int s = 16;
+            while (v) {
+                printf("  movk x16, #%d, lsl #%d\n", v & 0xffff, s);
+                v >>= 16;
+                s += 16;
+            }
+            printf("  sub x0, %s, x16\n", FRAME_PTR);
+        }
 #elif defined(_WIN32)
         printf("  lea rcx, [rbp-%d]\n", var->offset);
 #else
@@ -152,7 +165,21 @@ static void emit_cleanup_var(LVar *var) {
     int nelem = elem_size ? var->ty->size / elem_size : 0;
     for (int i = nelem - 1; i >= 0; i--) {
 #ifdef ARCH_ARM64
-        printf("  add x0, %s, #%d\n", FRAME_PTR, -(var->offset - i * elem_size));
+        int off = var->offset - i * elem_size;
+        if (off <= 4095)
+            printf("  add x0, %s, #%d\n", FRAME_PTR, -off);
+        else {
+            int v = off;
+            printf("  mov x16, #%d\n", v & 0xffff);
+            v >>= 16;
+            int s = 16;
+            while (v) {
+                printf("  movk x16, #%d, lsl #%d\n", v & 0xffff, s);
+                v >>= 16;
+                s += 16;
+            }
+            printf("  sub x0, %s, x16\n", FRAME_PTR);
+        }
 #elif defined(_WIN32)
         printf("  lea rcx, [rbp-%d]\n", var->offset - i * elem_size);
 #else
@@ -1027,7 +1054,15 @@ static int emit_stack_addr(int offset) {
     if (offset <= 4095)
         printf("  sub %s, %s, #%d\n", reg64[ta], FRAME_PTR, offset);
     else {
-        printf("  mov %s, #%d\n", reg64[ta], offset);
+        int v = offset;
+        printf("  mov %s, #%d\n", reg64[ta], v & 0xffff);
+        v >>= 16;
+        int s = 16;
+        while (v) {
+            printf("  movk %s, #%d, lsl #%d\n", reg64[ta], v & 0xffff, s);
+            v >>= 16;
+            s += 16;
+        }
         printf("  sub %s, %s, %s\n", reg64[ta], FRAME_PTR, reg64[ta]);
     }
     return ta;
@@ -1089,7 +1124,15 @@ static void emit_load(Type *ty, int r, char *addr) {
         if (-off <= 4095)
             printf("  sub %s, %s, #%d\n", reg64[tr], base, -off);
         else {
-            printf("  mov %s, #%d\n", reg64[tr], -off);
+            int v = -off;
+            printf("  mov %s, #%d\n", reg64[tr], v & 0xffff);
+            v >>= 16;
+            int s = 16;
+            while (v) {
+                printf("  movk %s, #%d, lsl #%d\n", reg64[tr], v & 0xffff, s);
+                v >>= 16;
+                s += 16;
+            }
             printf("  sub %s, %s, %s\n", reg64[tr], base, reg64[tr]);
         }
         if (ty->size == 1) {
@@ -1197,7 +1240,15 @@ static int gen_addr(Node *node) {
                 if (node->var->offset <= 4095)
                     printf("  sub %s, %s, #%d\n", reg64[r], FRAME_PTR, node->var->offset);
                 else {
-                    printf("  mov %s, #%d\n", reg64[r], node->var->offset);
+                    int v = node->var->offset;
+                    printf("  mov %s, #%d\n", reg64[r], v & 0xffff);
+                    v >>= 16;
+                    int s = 16;
+                    while (v) {
+                        printf("  movk %s, #%d, lsl #%d\n", reg64[r], v & 0xffff, s);
+                        v >>= 16;
+                        s += 16;
+                    }
                     printf("  sub %s, %s, %s\n", reg64[r], FRAME_PTR, reg64[r]);
                 }
 #else
@@ -1419,7 +1470,15 @@ static int gen(Node *node) {
                 if (node->var->offset <= 4095)
                     printf("  sub %s, %s, #%d\n", reg64[r], FRAME_PTR, node->var->offset);
                 else {
-                    printf("  mov %s, #%d\n", reg64[r], node->var->offset);
+                    int v = node->var->offset;
+                    printf("  mov %s, #%d\n", reg64[r], v & 0xffff);
+                    v >>= 16;
+                    int s = 16;
+                    while (v) {
+                        printf("  movk %s, #%d, lsl #%d\n", reg64[r], v & 0xffff, s);
+                        v >>= 16;
+                        s += 16;
+                    }
                     printf("  sub %s, %s, %s\n", reg64[r], FRAME_PTR, reg64[r]);
                 }
 #else
@@ -3797,7 +3856,15 @@ void codegen(Program *prog) {
         if (frame_size <= 4095)
             printf("  sub %s, %s, #%d\n", STACK_REG, STACK_REG, frame_size);
         else {
-            printf("  mov x16, #%d\n", frame_size);
+            int fs = frame_size;
+            printf("  mov x16, #%d\n", fs & 0xffff);
+            fs >>= 16;
+            int s = 16;
+            while (fs) {
+                printf("  movk x16, #%d, lsl #%d\n", fs & 0xffff, s);
+                fs >>= 16;
+                s += 16;
+            }
             printf("  sub %s, %s, x16\n", STACK_REG, STACK_REG);
         }
 
@@ -3909,7 +3976,15 @@ void codegen(Program *prog) {
         if (frame_size <= 4095)
             printf("  add %s, %s, #%d\n", STACK_REG, STACK_REG, frame_size);
         else {
-            printf("  mov x16, #%d\n", frame_size);
+            int fs = frame_size;
+            printf("  mov x16, #%d\n", fs & 0xffff);
+            fs >>= 16;
+            int s = 16;
+            while (fs) {
+                printf("  movk x16, #%d, lsl #%d\n", fs & 0xffff, s);
+                fs >>= 16;
+                s += 16;
+            }
             printf("  add %s, %s, x16\n", STACK_REG, STACK_REG);
         }
         printf("  ldp %s, %s, [%s], #16\n", FRAME_PTR, LINK_REG, STACK_REG);
