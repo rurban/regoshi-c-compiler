@@ -1024,13 +1024,13 @@ static bool use_unsigned_cmp(Node *node) {
 static void emit_load(Type *ty, int r, char *addr) {
     int load_sz = op_size(ty);
 #ifdef ARCH_ARM64
-    // addr is already formatted as [x29, #-N] or [rip+label] — don't add extra brackets
+    // ARM64 narrow loads always write to w register (32-bit), zero-extending
     if (ty->size == 1) {
-        printf("  %s %s, %s\n", ty->is_unsigned ? "ldrb" : "ldrsb", reg(r, 8), addr);
+        printf("  %s %s, %s\n", ty->is_unsigned ? "ldrb" : "ldrsb", reg(r, 4), addr);
         return;
     }
     if (ty->size == 2) {
-        printf("  %s %s, %s\n", ty->is_unsigned ? "ldrh" : "ldrsh", reg(r, 8), addr);
+        printf("  %s %s, %s\n", ty->is_unsigned ? "ldrh" : "ldrsh", reg(r, 4), addr);
         return;
     }
     if (ty->size == 4) {
@@ -1938,9 +1938,10 @@ static int gen(Node *node) {
 #endif
         } else if (to->size == 1) {
 #ifdef ARCH_ARM64
-            printf("  %s %s, %s\n", to->is_unsigned ? "and" : "sxtb", reg32[r], reg32[r]);
             if (to->is_unsigned)
                 printf("  and %s, %s, #0xff\n", reg32[r], reg32[r]);
+            else
+                printf("  sxtb %s, %s\n", reg32[r], reg32[r]);
 #else
             if (to->is_unsigned)
                 printf("  movzx %s, %s\n", reg32[r], reg8[r]);
@@ -1949,9 +1950,10 @@ static int gen(Node *node) {
 #endif
         } else if (to->size == 2) {
 #ifdef ARCH_ARM64
-            printf("  %s %s, %s\n", to->is_unsigned ? "and" : "sxth", reg32[r], reg32[r]);
             if (to->is_unsigned)
                 printf("  and %s, %s, #0xffff\n", reg32[r], reg32[r]);
+            else
+                printf("  sxth %s, %s\n", reg32[r], reg32[r]);
 #else
             if (to->is_unsigned)
                 printf("  movzx %s, %s\n", reg32[r], reg16[r]);

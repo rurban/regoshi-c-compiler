@@ -130,7 +130,7 @@ endif
 	rm -rf rcc-$(VERSION)-src
 
 clean:
-	rm -f $(OBJS) $(TARGET) $(TARGET).exe src/sysinc_paths.h src/gcc_predefined.h fred.txt *.s
+	rm -f $(OBJS) $(TARGET) $(TARGET).exe src/sysinc_paths.h src/gcc_predefined.h fred.txt *.s qemu*.core
 	if command -v git > /dev/null 2>&1; then \
 	  cd tinycc && git reset --hard && git clean -dxf tests/tests2; fi
 

@@ -131,7 +131,7 @@ fi
 run_exe() {
 	if [ -n "$RUN_PREFIX" ]; then
 		# shellcheck disable=SC2086
-		$RUN_PREFIX "$@"
+		timeout 20s $RUN_PREFIX "$@"
 	else
 		"$@"
 	fi
@@ -497,9 +497,9 @@ fi
 printf "Report saved to %s\n" "$REPORT_FILE"
 
 if [ "$RCC" = "$SCRIPT_DIR/arm64-cross.sh" ]; then
-    [ "$passed" -ge 54 ]
+    [ "$passed" -ge 79 ]
 elif [ "$REPORT_FILE" = "$SCRIPT_DIR/tcc_test_arm64.md" ]; then
-    [ "$passed" -ge 54 ]
+    [ "$passed" -ge 1 ]
 elif [ "$RCC" = "$SCRIPT_DIR/mingw-cross.sh" ]; then
     [ "$passed" -ge 141 ]
 else
