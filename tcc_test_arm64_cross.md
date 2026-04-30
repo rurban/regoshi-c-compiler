@@ -118,7 +118,7 @@ Generated: April 2026
 | 116_bound_setjmp2                        | SKIP         | Skipped                              |
 | 117_builtins                             | EXEC_FAIL    | non-zero exit                        |
 | 118_switch                               | PASS         | Output matches                       |
-| 119_random_stuff                         | COMPILE_FAIL | rcc returned non-zero                |
+| 119_random_stuff                         | EXEC_FAIL    | non-zero exit                        |
 | 120_alias                                | SKIP         | Skipped                              |
 | 121_struct_return                        | EXEC_FAIL    | non-zero exit                        |
 | 122_vla_reuse                            | SKIP         | Skipped                              |

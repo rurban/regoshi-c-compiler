@@ -2864,6 +2864,10 @@ static int gen(Node *node) {
         return r;
     }
     case ND_ASM: {
+#ifdef ARCH_ARM64
+        error_tok(node->tok, "inline asm not implemented for ARM64");
+        return -1;
+#else
         // Evaluate operands: outputs (memory addr) then inputs (register value)
         int op_regs[MAX_ASM_OPERANDS];
         for (int i = 0; i < node->asm_noperands; i++) op_regs[i] = -1;
@@ -2959,6 +2963,7 @@ static int gen(Node *node) {
         for (int i = 0; i < node->asm_noperands; i++)
             if (op_regs[i] >= 0) free_reg(op_regs[i]);
         return -1;
+#endif
     }
     case ND_VA_START: {
         int r = gen(node->lhs);
