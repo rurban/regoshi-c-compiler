@@ -1507,6 +1507,12 @@ static Type *declspec(Token **rest, Token *tok, VarAttr *attr) {
 
         Typedef *td = find_typedef(tok);
         if (td) {
+            // If we've already seen a built-in type specifier (int, char, etc.)
+            // or another typedef/struct/enum type, stop: the typedef name is
+            // likely the variable name, not a type specifier.
+            if (is_int || is_char || is_short || long_count > 0 || is_float ||
+                is_double || is_bool || is_void || is_signed || is_unsigned || ty)
+                break;
             ty = td->ty;
             tok = tok->next;
             continue;
@@ -2569,6 +2575,11 @@ static Node *compound_stmt_ex(Token **rest, Token *tok, LVar **out_locals) {
             continue;
         }
         if (is_typename(tok)) {
+            // A typedef name followed by ':' is a label, not a declaration.
+            if (find_typedef(tok) && equal(tok->next, ":")) {
+                cur = cur->next = stmt(&tok, tok);
+                continue;
+            }
             cur->next = declaration(&tok, tok);
             while (cur->next)
                 cur = cur->next;
