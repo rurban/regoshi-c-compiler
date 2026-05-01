@@ -548,21 +548,24 @@ static int gen_funcall(Node *node, int hidden_ret_reg) {
         arg_stack_idx[i] = -1;
         bool is_named = (i < named_count);
         if (arg_is_float[i]) {
+            // Types > 8 bytes (long double) go on stack, not in registers
+            if (arg_sizes[i] > 8) {
+                arg_stack_idx[i] = stack_args++;
+                continue;
+            }
             if (is_variadic && !is_named) {
 #if defined(__APPLE__)
                 // Apple ARM64: variadic args always on the stack
                 arg_stack_idx[i] = stack_args++;
 #else
-                // Linux AAPCS64: variadic floats in FP regs and GP copy
-                if (fp_reg_args < max_fp_args) {
+                // Linux AAPCS64: variadic floats in FP regs only
+                // (GP copy for unnamed FP args is optional; glibc does not require it)
+                if (fp_reg_args < max_fp_args)
                     arg_fp_idx[i] = fp_reg_args++;
-                    if (gp_reg_args < max_gp_args)
-                        arg_gp_idx[i] = gp_reg_args++;
-                } else if (gp_reg_args < max_gp_args) {
+                else if (gp_reg_args < max_gp_args)
                     arg_gp_idx[i] = gp_reg_args++;
-                } else {
+                else
                     arg_stack_idx[i] = stack_args++;
-                }
 #endif
             } else if (fp_reg_args < max_fp_args) {
                 arg_fp_idx[i] = fp_reg_args++;
@@ -1227,6 +1230,77 @@ static bool use_unsigned_cmp(Node *node) {
     return get_integer_type(size, lhs->is_unsigned || rhs->is_unsigned)->is_unsigned;
 }
 
+static int base_regnum_from_addr(const char *addr) {
+    int bn = -1, off = 0;
+    if (sscanf(addr, "[x%d]", &bn) == 1)
+        return bn;
+    if (sscanf(addr, "[x%d, #%d]", &bn, &off) == 2)
+        return bn;
+    return -1;
+}
+
+static bool base_reg_conflicts_with_dest(const char *addr, int r) {
+    // Check if base register in addr matches destination register r
+    // Returns true if the underlying ARM reg (xN) is the same as reg64[r]
+    int bn = -1, off = 0;
+    if (sscanf(addr, "[x%d]", &bn) == 1)
+        return strcmp(format("x%d", bn), reg64[r]) == 0;
+    if (sscanf(addr, "[x%d, #%d]", &bn, &off) == 2)
+        return strcmp(format("x%d", bn), reg64[r]) == 0;
+    return false;
+}
+
+static void emit_store(Type *ty, int r, char *addr) {
+    int sz = ty->size;
+    if (sz == 1)
+        printf("  strb %s, %s\n", reg(r, 4), addr);
+    else if (sz == 2)
+        printf("  strh %s, %s\n", reg(r, 4), addr);
+    else if (sz == 4)
+        printf("  str %s, %s\n", reg(r, 4), addr);
+    else
+        printf("  str %s, %s\n", reg(r, 8), addr);
+}
+
+static void emit_store_offset(Type *ty, int r, const char *base, int offset) {
+    int sz = ty->size;
+    int abs_off = offset < 0 ? -offset : offset;
+    // ARM64 unscaled offset range is -256..255; use temp register for larger
+    if (abs_off > 255) {
+        int ta = alloc_reg();
+        printf("  mov %s, #%d\n", reg64[ta], abs_off & 0xffff);
+        int v = abs_off >> 16;
+        int s = 16;
+        while (v) {
+            printf("  movk %s, #%d, lsl #%d\n", reg64[ta], v & 0xffff, s);
+            v >>= 16;
+            s += 16;
+        }
+        if (offset < 0)
+            printf("  sub %s, %s, %s\n", reg64[ta], base, reg64[ta]);
+        else
+            printf("  add %s, %s, %s\n", reg64[ta], base, reg64[ta]);
+        if (sz == 1)
+            printf("  strb %s, [%s]\n", reg(r, 4), reg64[ta]);
+        else if (sz == 2)
+            printf("  strh %s, [%s]\n", reg(r, 4), reg64[ta]);
+        else if (sz == 4)
+            printf("  str %s, [%s]\n", reg(r, 4), reg64[ta]);
+        else
+            printf("  str %s, [%s]\n", reg(r, 8), reg64[ta]);
+        free_reg(ta);
+    } else {
+        if (sz == 1)
+            printf("  strb %s, [%s, #%d]\n", reg(r, 4), base, offset);
+        else if (sz == 2)
+            printf("  strh %s, [%s, #%d]\n", reg(r, 4), base, offset);
+        else if (sz == 4)
+            printf("  str %s, [%s, #%d]\n", reg(r, 4), base, offset);
+        else
+            printf("  str %s, [%s, #%d]\n", reg(r, 8), base, offset);
+    }
+}
+
 static void emit_load(Type *ty, int r, char *addr) {
     int load_sz = op_size(ty);
 #ifdef ARCH_ARM64
@@ -1234,11 +1308,17 @@ static void emit_load(Type *ty, int r, char *addr) {
     // Handle negative offsets with large magnitude (ARM64 ldr/str 9-bit signed limit)
     int off = 0;
     char base[32];
-    char load_op[16];
-    char *dst_reg;
-    bool needs_split = false;
+
+    // ARM64: ldr wN,[xN] and ldr xN,[xN] are CONSTRAINED UNPREDICTABLE.
+    // Detect when base register matches destination and use a temp.
+    int ta = -1;
+    if (base_reg_conflicts_with_dest(addr, r)) {
+        ta = alloc_reg();
+        printf("  mov %s, %s\n", reg64[ta], reg64[r]);
+        addr = format("[%s]", reg64[ta]);
+    }
+
     if (sscanf(addr, "[%31[^,], #%d]", base, &off) == 2 && off < -255) {
-        needs_split = true;
         int tr = alloc_reg();
         if (-off <= 4095)
             printf("  sub %s, %s, #%d\n", reg64[tr], base, -off);
@@ -1264,21 +1344,26 @@ static void emit_load(Type *ty, int r, char *addr) {
             printf("  ldr %s, [%s]\n", reg(r, 8), reg64[tr]);
         }
         free_reg(tr);
+        if (ta >= 0) free_reg(ta);
         return;
     }
     if (ty->size == 1) {
         printf("  %s %s, %s\n", ty->is_unsigned ? "ldrb" : "ldrsb", reg(r, 4), addr);
+        if (ta >= 0) free_reg(ta);
         return;
     }
     if (ty->size == 2) {
         printf("  %s %s, %s\n", ty->is_unsigned ? "ldrh" : "ldrsh", reg(r, 4), addr);
+        if (ta >= 0) free_reg(ta);
         return;
     }
     if (ty->size == 4) {
         printf("  ldr %s, %s\n", reg(r, 4), addr);
+        if (ta >= 0) free_reg(ta);
         return;
     }
     printf("  ldr %s, %s\n", reg(r, 8), addr);
+    if (ta >= 0) free_reg(ta);
 #else
     if (load_sz < 4) load_sz = 4; // movsx/movzx dest must be wider than source
     if (ty->size == 1) {
@@ -1777,7 +1862,7 @@ static int gen(Node *node) {
             // store the value directly instead of copying bytes from the address in the register.
             if (node->rhs->ty && !(node->rhs->ty->kind == TY_STRUCT || node->rhs->ty->kind == TY_UNION || node->rhs->ty->kind == TY_ARRAY) && node->lhs->ty->size <= 8) {
 #ifdef ARCH_ARM64
-                printf("  str %s, [%s]\n", reg(src, node->lhs->ty->size), reg64[dst]);
+                emit_store(node->lhs->ty, src, format("[%s]", reg64[dst]));
 #else
                 printf("  mov [%s], %s\n", reg64[dst], reg(src, node->lhs->ty->size));
 #endif
@@ -1853,13 +1938,7 @@ static int gen(Node *node) {
         if (node->lhs->kind == ND_LVAR && node->lhs->var->is_local && node->lhs->var->ty->kind != TY_ARRAY) {
             int r2 = gen(node->rhs);
 #ifdef ARCH_ARM64
-            if (node->lhs->var->offset <= 255)
-                printf("  str %s, [%s, #-%d]\n", reg(r2, node->lhs->ty->size), FRAME_PTR, node->lhs->var->offset);
-            else {
-                int ta = emit_stack_addr(node->lhs->var->offset);
-                printf("  str %s, [%s]\n", reg(r2, node->lhs->ty->size), reg64[ta]);
-                free_reg(ta);
-            }
+            emit_store_offset(node->lhs->ty, r2, FRAME_PTR, -node->lhs->var->offset);
 #else
             printf("  mov [rbp-%d], %s\n", node->lhs->var->offset, reg(r2, node->lhs->ty->size));
 #endif
@@ -2043,7 +2122,7 @@ static int gen(Node *node) {
         int r1 = gen_addr(node->lhs);
         int r2 = gen(node->rhs);
 #ifdef ARCH_ARM64
-        printf("  str %s, [%s]\n", reg(r2, node->lhs->ty->size), reg64[r1]);
+        emit_store(node->lhs->ty, r2, format("[%s]", reg64[r1]));
 #else
         printf("  mov [%s], %s\n", reg64[r1], reg(r2, node->lhs->ty->size));
 #endif
@@ -2120,19 +2199,19 @@ static int gen(Node *node) {
         int r2 = alloc_reg();
         int sz = node->lhs->ty->size;
 #ifdef ARCH_ARM64
-        // Load current value
-        printf("  ldr %s, [%s]\n", reg(r2, sz), reg64[r]);
+        // Load current value (correct load width for type)
+        emit_load(node->lhs->ty, r2, format("[%s]", reg64[r]));
         int delta = 1;
         if (node->lhs->ty->kind == TY_PTR || node->lhs->ty->kind == TY_ARRAY)
             delta = node->lhs->ty->base->size;
         // Update in-place: load into temp, add/sub, store back
         int r3 = alloc_reg();
-        printf("  ldr %s, [%s]\n", reg(r3, sz), reg64[r]);
+        emit_load(node->lhs->ty, r3, format("[%s]", reg64[r]));
         if (node->kind == ND_POST_INC)
             printf("  add %s, %s, #%d\n", reg(r3, sz), reg(r3, sz), delta);
         else
             printf("  sub %s, %s, #%d\n", reg(r3, sz), reg(r3, sz), delta);
-        printf("  str %s, [%s]\n", reg(r3, sz), reg64[r]);
+        emit_store(node->lhs->ty, r3, format("[%s]", reg64[r]));
         free_reg(r3);
 #else
         printf("  mov %s, %s [%s]\n", reg(r2, sz), ptr_size(sz), reg64[r]);

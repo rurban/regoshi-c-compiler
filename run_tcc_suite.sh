@@ -548,7 +548,7 @@ if [ "$REPORT_FILE" = "$SCRIPT_DIR/tcc_test_arm64.md" ]; then
 elif [ "$RCC" = "$SCRIPT_DIR/darwin-cross.sh" ]; then
     [ "$passed" -ge 94 ]
 elif [ "$RCC" = "$SCRIPT_DIR/arm64-cross.sh" ]; then
-    [ "$passed" -ge 123 ]
+    [ "$passed" -ge 126 ]
 elif [ "$RCC" = "$SCRIPT_DIR/mingw-cross.sh" ]; then
     [ "$passed" -ge 141 ]
 else

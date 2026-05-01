@@ -3,9 +3,9 @@ Generated: May 2026
 
 ## Summary
  - **Total**:     141
- - **Passed**:    124
- - **Failed**:    17
- - **Pass Rate**: 87%
+ - **Passed**:    126
+ - **Failed**:    15
+ - **Pass Rate**: 89%
 
 ## Detailed Results
 | Test                                     | Status       | Message                              |
@@ -50,13 +50,13 @@ Generated: May 2026
 | 37_sprintf                               | PASS         | Output matches                       |
 | 38_multiple_array_index                  | PASS         | Output matches                       |
 | 39_typedef                               | PASS         | Output matches                       |
-| 40_stdio                                 | EXEC_FAIL    | non-zero exit                        |
+| 40_stdio                                 | PASS         | Output matches                       |
 | 41_hashif                                | PASS         | Output matches                       |
 | 42_function_pointer                      | PASS         | Output matches                       |
 | 43_void_param                            | PASS         | Output matches                       |
 | 44_scoped_declarations                   | PASS         | Output matches                       |
 | 45_empty_for                             | PASS         | Output matches                       |
-| 46_grep                                  | EXEC_FAIL    | non-zero exit                        |
+| 46_grep                                  | PASS         | Output matches                       |
 | 47_switch_return                         | PASS         | Output matches                       |
 | 48_nested_break                          | PASS         | Output matches                       |
 | 49_bracket_evaluation                    | PASS         | Output matches                       |
@@ -88,10 +88,10 @@ Generated: May 2026
 | 87_dead_code                             | PASS         | Output matches                       |
 | 88_codeopt                               | PASS         | Output matches                       |
 | 89_nocode_wanted                         | PASS         | Output matches                       |
-| 90_struct-init                           | EXEC_FAIL    | non-zero exit                        |
+| 90_struct-init                           | MISMATCH     | Output does not match .expect        |
 | 91_ptr_longlong_arith32                  | PASS         | Output matches                       |
 | 92_enum_bitfield                         | PASS         | Output matches                       |
-| 93_integer_promotion                     | PASS         | Output matches                       |
+| 93_integer_promotion                     | MISMATCH     | Output does not match .expect        |
 | 94_generic                               | PASS         | Output matches                       |
 | 95_bitfields                             | MISMATCH     | Output does not match .expect        |
 | 95_bitfields_ms                          | SKIP         | Skipped                              |
@@ -109,7 +109,7 @@ Generated: May 2026
 | 107_stack_safe                           | PASS         | Output matches                       |
 | 108_constructor                          | PASS         | Output matches                       |
 | 109_float_struct_calling                 | PASS         | Output matches                       |
-| 110_average                              | MISMATCH     | Output does not match .expect        |
+| 110_average                              | PASS         | Output matches                       |
 | 111_conversion                           | PASS         | Output matches                       |
 | 112_backtrace                            | SKIP         | Skipped                              |
 | 113_btdll                                | SKIP         | Skipped                              |
