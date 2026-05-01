@@ -3,9 +3,9 @@ Generated: May 2026
 
 ## Summary
  - **Total**:     141
- - **Passed**:    121
- - **Failed**:    20
- - **Pass Rate**: 85%
+ - **Passed**:    122
+ - **Failed**:    19
+ - **Pass Rate**: 86%
 
 ## Detailed Results
 | Test                                     | Status       | Message                              |
@@ -136,7 +136,7 @@ Generated: May 2026
 | 134_double_to_signed                     | PASS         | Output matches                       |
 | 135_func_arg_struct_compare              | PASS         | Output matches                       |
 | 136_atomic_gcc_style                     | SKIP         | Skipped                              |
-| 137_funcall_struct_args                  | MISMATCH     | Output does not match .expect        |
+| 137_funcall_struct_args                  | PASS         | Output matches                       |
 | test_bitfields                           | PASS         | exit=0                               |
 | test_builtins                            | PASS         | exit=0                               |
 | test_elif2                               | PASS         | exit=0                               |

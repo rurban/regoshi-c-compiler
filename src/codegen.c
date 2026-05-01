@@ -4065,7 +4065,10 @@ void codegen(Program *prog) {
             for (LVar *var = fn->params; var; var = var->param_next) {
                 if (is_flonum(var->ty)) {
                     if (fp_param < 8) {
-                        printf("  str %s, [%s, #-%d]\n", fpreg[fp_param], FRAME_PTR, var->offset);
+                        if (var->ty->size == 4)
+                            printf("  str s%d, [%s, #-%d]\n", fp_param, FRAME_PTR, var->offset);
+                        else
+                            printf("  str %s, [%s, #-%d]\n", fpreg[fp_param], FRAME_PTR, var->offset);
                         fp_param++;
                     }
                 } else if (gp_param < 8) {
