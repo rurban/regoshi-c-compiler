@@ -3,9 +3,9 @@ Generated: May 2026
 
 ## Summary
  - **Total**:     137
- - **Passed**:    137
- - **Failed**:    0
- - **Pass Rate**: 100%
+ - **Passed**:    135
+ - **Failed**:    2
+ - **Pass Rate**: 98%
 
 ## Detailed Results
 | Test                                     | Status       | Message                              |
@@ -43,7 +43,7 @@ Generated: May 2026
 | 30_hanoi                                 | PASS         | Output matches                       |
 | 31_args                                  | PASS         | Output matches                       |
 | 32_led                                   | PASS         | Output matches                       |
-| 33_ternary_op                            | PASS         | Output matches                       |
+| 33_ternary_op                            | COMPILE_FAIL | rcc returned non-zero                |
 | 34_array_assignment                      | PASS         | Output matches                       |
 | 35_sizeof                                | PASS         | Output matches                       |
 | 36_array_initialisers                    | PASS         | Output matches                       |
@@ -101,7 +101,7 @@ Generated: May 2026
 | 99_fastcall                              | SKIP         | Skipped                              |
 | 100_c99array-decls                       | PASS         | Output matches                       |
 | 101_cleanup                              | PASS         | Output matches                       |
-| 102_alignas                              | PASS         | Output matches                       |
+| 102_alignas                              | COMPILE_FAIL | rcc returned non-zero                |
 | 103_implicit_memmove                     | PASS         | Output matches                       |
 | 104_inline                               | PASS         | Output matches                       |
 | 105_local_extern                         | PASS         | Output matches                       |

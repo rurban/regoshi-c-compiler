@@ -275,6 +275,9 @@ typedef enum {
     ND_NOT, // Logical not
     ND_ZERO_INIT, // Zero-fill a local variable (lhs=ND_LVAR)
     ND_ASM, // inline asm statement
+    ND_VA_START, // "va_start"
+    ND_VA_COPY, // "va_copy"
+    ND_VA_ARG, // "va_arg"
 } NodeKind;
 
 typedef struct Node Node;
@@ -394,6 +397,7 @@ Program *parse(Token *tok);
 //
 // CodeGen
 //
+bool va_arg_need_copy(Type *ty);
 void codegen(Program *prog);
 
 // Optimizer (CTFE)

@@ -20,6 +20,9 @@ static int current_fn_stack_size = 0; // fn->stack_size of the function being ge
 static int fn_struct_ret_off = 0; // next free offset within the struct-ret-buf area
 static int fn_struct_ret_total = 0; // high-water mark of struct-ret-buf space used
 static int rcc_label_count = 0;
+static int va_gp_start;
+static int va_fp_start;
+static int va_st_start;
 static int break_stack[128];
 static int continue_stack[128];
 static int ctrl_depth = 0;
@@ -153,6 +156,18 @@ static void emit_alloca(void) {
 }
 
 static char *var_label(LVar *var);
+
+bool va_arg_need_copy(Type *ty) {
+    if (ty->size > 8 && ty->size <= 16) {
+        if (ty->kind == TY_STRUCT || ty->kind == TY_UNION) {
+            for (Member *m = ty->members; m; m = m->next) {
+                if (is_flonum(m->ty))
+                    return true;
+            }
+        }
+    }
+    return false;
+}
 
 static int gen_funcall(Node *node, int hidden_ret_reg) {
     Node *argv[64];
@@ -1831,6 +1846,54 @@ static int gen(Node *node) {
             if (op_regs[i] >= 0) free_reg(op_regs[i]);
         return -1;
     }
+    case ND_VA_START: {
+        int r = gen(node->lhs);
+        printf("  mov dword ptr [%s], %d\n", reg64[r], va_gp_start);
+        printf("  mov dword ptr [%s + 4], %d\n", reg64[r], va_fp_start);
+        printf("  lea rdx, [rbp+%d]\n", va_st_start);
+        printf("  mov [%s + 8], rdx\n", reg64[r]);
+        printf("  lea rdx, [rbp-176]\n");
+        printf("  mov [%s + 16], rdx\n", reg64[r]);
+        free_reg(r);
+        return -1;
+    }
+    case ND_VA_COPY: {
+        int rd = gen(node->lhs);
+        printf("  push %s\n", reg64[rd]);
+        free_reg(rd);
+        int rs = gen(node->rhs);
+        int rpop = alloc_reg();
+        printf("  pop %s\n", reg64[rpop]);
+        printf("  mov rcx, %s\n", reg64[rs]);
+        printf("  mov [%s], rcx\n", reg64[rpop]);
+        printf("  mov rcx, [%s + 8]\n", reg64[rs]);
+        printf("  mov [%s + 8], rcx\n", reg64[rpop]);
+        printf("  mov rcx, [%s + 16]\n", reg64[rs]);
+        printf("  mov [%s + 16], rcx\n", reg64[rpop]);
+        free_reg(rs);
+        free_reg(rpop);
+        return -1;
+    }
+    case ND_VA_ARG: {
+        int r = gen(node->lhs);
+        Type *ty = node->ty->base;
+        int gp_inc = ty->size > 8 ? 2 : 1;
+        printf("  cmp dword ptr [%s], %d\n", reg64[r], 48 - gp_inc * 8);
+        printf("  ja .L.va_overflow.%d\n", rcc_label_count);
+        printf("  mov ecx, dword ptr [%s]\n", reg64[r]);
+        printf("  add rcx, [%s + 16]\n", reg64[r]);
+        printf("  add dword ptr [%s], %d\n", reg64[r], gp_inc * 8);
+        printf("  jmp .L.va_done.%d\n", rcc_label_count);
+        printf(".L.va_overflow.%d:\n", rcc_label_count);
+        printf("  mov rcx, [%s + 8]\n", reg64[r]);
+        int aligned_sz = (ty->size + 7) & ~7;
+        printf("  lea rdx, [rcx + %d]\n", aligned_sz);
+        printf("  mov [%s + 8], rdx\n", reg64[r]);
+        printf(".L.va_done.%d:\n", rcc_label_count);
+        printf("  mov %s, rcx\n", reg64[r]);
+        rcc_label_count++;
+        return r;
+    }
     default:
         break;
     }
@@ -2496,6 +2559,24 @@ void codegen(Program *prog) {
 #endif
         }
 
+        // Save arg registers if function is variadic
+        if (fn->is_variadic) {
+            int gp_count = param_index;
+            int va_fp = param_xmm_index;
+            va_gp_start = gp_count * 8;
+            va_fp_start = va_fp * 16 + 48;
+            va_st_start = 16 + stack_param_index * 8 + 16; // rbp-relative
+
+            switch (gp_count) {
+            case 0: printf("  mov [rbp-176], rdi\n"); /* fallthrough */
+            case 1: printf("  mov [rbp-168], rsi\n"); /* fallthrough */
+            case 2: printf("  mov [rbp-160], rdx\n"); /* fallthrough */
+            case 3: printf("  mov [rbp-152], rcx\n"); /* fallthrough */
+            case 4: printf("  mov [rbp-144], r8\n"); /* fallthrough */
+            case 5: printf("  mov [rbp-136], r9\n");
+            }
+        }
+
         for (Node *n = fn->body; n; n = n->next) {
             int r = gen(n);
             if (r != -1) free_reg(r);
@@ -2521,6 +2602,8 @@ void codegen(Program *prog) {
         // Calculate stack frame size
         // Total space below rbp must cover: locals + spills + shadow (32)
         int need = fn->stack_size + fn_struct_ret_total + 32;
+        if (fn->is_variadic)
+            need += 176;
         // Reserve space for register spill slots (deepest at rbp-120)
         if (spill_count > 0 && need < 120)
             need = 120;

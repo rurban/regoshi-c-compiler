@@ -1655,14 +1655,7 @@ char *preprocess(char *filename, char *p) {
         define_macro("__builtin_alloca", false, NULL, 0, "alloca");
     if (!find_macro("__builtin_unreachable"))
         define_macro("__builtin_unreachable", true, NULL, 0, "while(1){}");
-    if (!find_macro("__builtin_va_start"))
-        define_macro("__builtin_va_start", true, (char *[]){"v", "l"}, 2, "");
-    if (!find_macro("__builtin_va_end"))
-        define_macro("__builtin_va_end", true, (char *[]){"v"}, 1, "");
-    if (!find_macro("__builtin_va_arg"))
-        define_macro("__builtin_va_arg", true, (char *[]){"v", "t"}, 2, "0");
-    if (!find_macro("__builtin_va_copy"))
-        define_macro("__builtin_va_copy", true, (char *[]){"d", "s"}, 2, "");
+    // __builtin_va_* are handled as parser builtins, not macros
     if (!find_macro("__GNUC__"))
         define_macro("__GNUC__", false, NULL, 0, "4");
     if (!find_macro("__GNUC_MINOR__"))
@@ -1673,8 +1666,7 @@ char *preprocess(char *filename, char *p) {
         define_macro("__STDC_VERSION__", false, NULL, 0, "201112L");
     if (!find_macro("__extension__"))
         define_macro("__extension__", false, NULL, 0, "");
-    if (!find_macro("__builtin_va_list"))
-        define_macro("__builtin_va_list", false, NULL, 0, "void*");
+    // __builtin_va_list is injected as a typedef at parse time
     // Don't define __asm__ or __volatile__ as macros — the parser
     // handles __asm__, __asm, and asm directly.  Expanding them here
     // would strip the leading underscores and break the token-based

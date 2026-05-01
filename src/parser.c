@@ -3330,6 +3330,48 @@ static Node *unary(Token **rest, Token *tok) {
         *rest = skip(tok, ")");
         return new_num(offset, start);
     }
+    if (equal(tok, "__builtin_va_start")) {
+        Node *node = new_node(ND_VA_START, tok);
+        tok = skip(tok->next, "(");
+        node->lhs = assign(&tok, tok);
+        tok = skip(tok, ",");
+        assign(&tok, tok);
+        *rest = skip(tok, ")");
+        return node;
+    }
+    if (equal(tok, "__builtin_va_copy")) {
+        Node *node = new_node(ND_VA_COPY, tok);
+        tok = skip(tok->next, "(");
+        node->lhs = assign(&tok, tok);
+        tok = skip(tok, ",");
+        node->rhs = assign(&tok, tok);
+        *rest = skip(tok, ")");
+        return node;
+    }
+    if (equal(tok, "__builtin_va_end")) {
+        tok = skip(tok->next, "(");
+        Node *node = assign(&tok, tok);
+        *rest = skip(tok, ")");
+        return node;
+    }
+    if (equal(tok, "__builtin_va_arg")) {
+        Node *node = new_node(ND_VA_ARG, tok);
+        tok = skip(tok->next, "(");
+
+        Node *ap_arg = assign(&tok, tok);
+        add_type(ap_arg);
+        node->lhs = ap_arg;
+        tok = skip(tok, ",");
+
+        VarAttr attr = {0};
+        Type *ty = type_name(&tok, tok);
+        (void)attr;
+        *rest = skip(tok, ")");
+
+        node->ty = pointer_to(ty);
+        node = new_unary(ND_DEREF, node, tok);
+        return node;
+    }
     if (equal(tok, "++")) {
         Token *start = tok;
         Node *lhs = unary(&tok, tok->next);
@@ -4067,6 +4109,19 @@ static char *parse_toplevel_asm(Token **rest, Token *tok) {
 }
 
 Program *parse(Token *tok) {
+    Token *head = tokenize("rcc_builtins",
+                           "typedef struct {"
+                           "  unsigned int gp_offset;"
+                           "  unsigned int fp_offset;"
+                           "  void *overflow_arg_area;"
+                           "  void *reg_save_area;"
+                           "} __builtin_va_list[1];");
+    Token *t = head;
+    while (t->next && t->next->kind != TK_EOF)
+        t = t->next;
+    t->next = tok;
+    tok = head;
+
     globals = NULL;
     str_lits = NULL;
     TLItem item_head = {};
