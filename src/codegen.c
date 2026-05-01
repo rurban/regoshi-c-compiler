@@ -514,7 +514,8 @@ static int gen_funcall(Node *node, int hidden_ret_reg) {
     int stack_reserve = stack_args > 0 ? shadow_space + stack_args * 8 + stack_pad : 0;
 #elif defined(ARCH_ARM64)
     // AAPCS64: 8 GP + 8 FP arg registers
-    // Variadic functions put all args (including floats) in GP regs or stack
+    // Linux: variadic floats go in both FP and GP regs
+    // Apple: variadic args always on stack
     int gp_reg_args = 0;
     int fp_reg_args = 0;
     int stack_args = 0;
@@ -522,6 +523,10 @@ static int gen_funcall(Node *node, int hidden_ret_reg) {
         ? node->lhs->ty->base
         : NULL;
     bool is_variadic = fn_type && fn_type->kind == TY_FUNC && fn_type->is_variadic;
+    int named_count = 0;
+    if (fn_type && fn_type->kind == TY_FUNC)
+        for (Type *t = fn_type->param_types; t; t = t->param_next)
+            named_count++;
     for (int i = 0; i < nargs; i++) {
         arg_regs[i] = -1;
         arg_sizes[i] = argv[i]->ty->size;
@@ -529,8 +534,25 @@ static int gen_funcall(Node *node, int hidden_ret_reg) {
         arg_gp_idx[i] = -1;
         arg_fp_idx[i] = -1;
         arg_stack_idx[i] = -1;
+        bool is_named = (i < named_count);
         if (arg_is_float[i]) {
-            if (fp_reg_args < max_fp_args) {
+            if (is_variadic && !is_named) {
+#if defined(__APPLE__)
+                // Apple ARM64: variadic args always on the stack
+                arg_stack_idx[i] = stack_args++;
+#else
+                // Linux AAPCS64: variadic floats in FP regs and GP copy
+                if (fp_reg_args < max_fp_args) {
+                    arg_fp_idx[i] = fp_reg_args++;
+                    if (gp_reg_args < max_gp_args)
+                        arg_gp_idx[i] = gp_reg_args++;
+                } else if (gp_reg_args < max_gp_args) {
+                    arg_gp_idx[i] = gp_reg_args++;
+                } else {
+                    arg_stack_idx[i] = stack_args++;
+                }
+#endif
+            } else if (fp_reg_args < max_fp_args) {
                 arg_fp_idx[i] = fp_reg_args++;
                 if (is_variadic && gp_reg_args < max_gp_args)
                     arg_gp_idx[i] = gp_reg_args++;
@@ -543,6 +565,12 @@ static int gen_funcall(Node *node, int hidden_ret_reg) {
             }
             continue;
         }
+#if defined(__APPLE__)
+        if (is_variadic && !is_named) {
+            arg_stack_idx[i] = stack_args++;
+            continue;
+        }
+#endif
         if ((argv[i]->ty->kind == TY_STRUCT || argv[i]->ty->kind == TY_UNION) && argv[i]->ty->size > 8) {
             // Large struct > 8 bytes passed by pointer via GP reg or stack
             if (gp_reg_args < max_gp_args)
