@@ -23,6 +23,7 @@ static int rcc_label_count = 0;
 static int va_gp_start;
 static int va_fp_start;
 static int va_st_start;
+static int va_reg_save_ofs; // offset of reg_save_area from rbp
 static int break_stack[128];
 static int continue_stack[128];
 static int ctrl_depth = 0;
@@ -1852,7 +1853,7 @@ static int gen(Node *node) {
         printf("  mov dword ptr [%s + 4], %d\n", reg64[r], va_fp_start);
         printf("  lea rdx, [rbp+%d]\n", va_st_start);
         printf("  mov [%s + 8], rdx\n", reg64[r]);
-        printf("  lea rdx, [rbp-176]\n");
+        printf("  lea rdx, [rbp-%d]\n", va_reg_save_ofs);
         printf("  mov [%s + 16], rdx\n", reg64[r]);
         free_reg(r);
         return -1;
@@ -1877,18 +1878,37 @@ static int gen(Node *node) {
     case ND_VA_ARG: {
         int r = gen(node->lhs);
         Type *ty = node->ty->base;
-        int gp_inc = ty->size > 8 ? 2 : 1;
-        printf("  cmp dword ptr [%s], %d\n", reg64[r], 48 - gp_inc * 8);
-        printf("  ja .L.va_overflow.%d\n", rcc_label_count);
-        printf("  mov ecx, dword ptr [%s]\n", reg64[r]);
-        printf("  add rcx, [%s + 16]\n", reg64[r]);
-        printf("  add dword ptr [%s], %d\n", reg64[r], gp_inc * 8);
-        printf("  jmp .L.va_done.%d\n", rcc_label_count);
+        bool is_fp = is_flonum(ty);
+        bool is_ptr_struct = (ty->kind == TY_STRUCT || ty->kind == TY_UNION) && ty->size > 8;
+        if (is_fp) {
+            printf("  cmp dword ptr [%s + 4], 160\n", reg64[r]);
+            printf("  ja .L.va_overflow.%d\n", rcc_label_count);
+            printf("  mov ecx, dword ptr [%s + 4]\n", reg64[r]);
+            printf("  add rcx, [%s + 16]\n", reg64[r]);
+            printf("  add dword ptr [%s + 4], 16\n", reg64[r]);
+            printf("  jmp .L.va_done.%d\n", rcc_label_count);
+        } else if (is_ptr_struct) {
+            printf("  cmp dword ptr [%s], 40\n", reg64[r]);
+            printf("  ja .L.va_overflow.%d\n", rcc_label_count);
+            printf("  mov ecx, dword ptr [%s]\n", reg64[r]);
+            printf("  add rcx, [%s + 16]\n", reg64[r]);
+            printf("  mov rcx, [rcx]\n");
+            printf("  add dword ptr [%s], 8\n", reg64[r]);
+            printf("  jmp .L.va_done.%d\n", rcc_label_count);
+        } else {
+            printf("  cmp dword ptr [%s], 40\n", reg64[r]);
+            printf("  ja .L.va_overflow.%d\n", rcc_label_count);
+            printf("  mov ecx, dword ptr [%s]\n", reg64[r]);
+            printf("  add rcx, [%s + 16]\n", reg64[r]);
+            printf("  add dword ptr [%s], 8\n", reg64[r]);
+            printf("  jmp .L.va_done.%d\n", rcc_label_count);
+        }
         printf(".L.va_overflow.%d:\n", rcc_label_count);
         printf("  mov rcx, [%s + 8]\n", reg64[r]);
-        int aligned_sz = (ty->size + 7) & ~7;
-        printf("  lea rdx, [rcx + %d]\n", aligned_sz);
+        printf("  lea rdx, [rcx + 8]\n");
         printf("  mov [%s + 8], rdx\n", reg64[r]);
+        if (is_ptr_struct)
+            printf("  mov rcx, [rcx]\n");
         printf(".L.va_done.%d:\n", rcc_label_count);
         printf("  mov %s, rcx\n", reg64[r]);
         rcc_label_count++;
@@ -2425,7 +2445,6 @@ void codegen(Program *prog) {
         char *param_regs8[] = {"cl", "dl", "r8b", "r9b"};
         char *param_xmm[] = {"xmm0", "xmm1", "xmm2", "xmm3"};
         int max_param_regs = 4;
-        int stack_param_index = 0;
 #else
         char *param_regs64[] = {"rdi", "rsi", "rdx", "rcx", "r8", "r9"};
         char *param_regs32[] = {"edi", "esi", "edx", "ecx", "r8d", "r9d"};
@@ -2434,9 +2453,9 @@ void codegen(Program *prog) {
         char *param_xmm[] = {"xmm0", "xmm1", "xmm2", "xmm3", "xmm4", "xmm5", "xmm6", "xmm7"};
         int max_param_regs = 6;
         int max_param_xmm = 8;
+#endif
         int param_xmm_index = 0;
         int stack_param_index = 0;
-#endif
         int param_index = fn->ty->return_ty && (fn->ty->return_ty->kind == TY_STRUCT || fn->ty->return_ty->kind == TY_UNION) ? 1 : 0;
         for (LVar *var = fn->params; var; var = var->param_next) {
 #ifdef _WIN32
@@ -2449,6 +2468,7 @@ void codegen(Program *prog) {
                         printf("  movsd qword ptr [rbp-%d], %s\n", var->offset, param_xmm[param_index]);
                     }
                     param_index++;
+                    param_xmm_index++;
                 }
             } else if (param_index < max_param_regs) {
                 char *preg = var->ty->size == 1 ? param_regs8[param_index]
@@ -2563,17 +2583,34 @@ void codegen(Program *prog) {
         if (fn->is_variadic) {
             int gp_count = param_index;
             int va_fp = param_xmm_index;
+            va_reg_save_ofs = current_fn_stack_size + 176;
             va_gp_start = gp_count * 8;
             va_fp_start = va_fp * 16 + 48;
-            va_st_start = 16 + stack_param_index * 8 + 16; // rbp-relative
+            va_st_start = 16 + stack_param_index * 8;
 
             switch (gp_count) {
-            case 0: printf("  mov [rbp-176], rdi\n"); /* fallthrough */
-            case 1: printf("  mov [rbp-168], rsi\n"); /* fallthrough */
-            case 2: printf("  mov [rbp-160], rdx\n"); /* fallthrough */
-            case 3: printf("  mov [rbp-152], rcx\n"); /* fallthrough */
-            case 4: printf("  mov [rbp-144], r8\n"); /* fallthrough */
-            case 5: printf("  mov [rbp-136], r9\n");
+            case 0: printf("  mov [rbp-%d], rdi\n", va_reg_save_ofs); /* fallthrough */
+            case 1: printf("  mov [rbp-%d], rsi\n", va_reg_save_ofs - 8); /* fallthrough */
+            case 2: printf("  mov [rbp-%d], rdx\n", va_reg_save_ofs - 16); /* fallthrough */
+            case 3: printf("  mov [rbp-%d], rcx\n", va_reg_save_ofs - 24); /* fallthrough */
+            case 4: printf("  mov [rbp-%d], r8\n", va_reg_save_ofs - 32); /* fallthrough */
+            case 5: printf("  mov [rbp-%d], r9\n", va_reg_save_ofs - 40);
+            }
+            if (va_fp < 8) {
+                printf("  test al, al\n");
+                printf("  je .L.va_no_xmm.%d\n", rcc_label_count);
+                switch (va_fp) {
+                case 0: printf("  movaps [rbp-%d], xmm0\n", va_reg_save_ofs - 48); /* fallthrough */
+                case 1: printf("  movaps [rbp-%d], xmm1\n", va_reg_save_ofs - 64); /* fallthrough */
+                case 2: printf("  movaps [rbp-%d], xmm2\n", va_reg_save_ofs - 80); /* fallthrough */
+                case 3: printf("  movaps [rbp-%d], xmm3\n", va_reg_save_ofs - 96); /* fallthrough */
+                case 4: printf("  movaps [rbp-%d], xmm4\n", va_reg_save_ofs - 112); /* fallthrough */
+                case 5: printf("  movaps [rbp-%d], xmm5\n", va_reg_save_ofs - 128); /* fallthrough */
+                case 6: printf("  movaps [rbp-%d], xmm6\n", va_reg_save_ofs - 144); /* fallthrough */
+                case 7: printf("  movaps [rbp-%d], xmm7\n", va_reg_save_ofs - 160);
+                }
+                printf(".L.va_no_xmm.%d:\n", rcc_label_count);
+                rcc_label_count++;
             }
         }
 
@@ -2603,7 +2640,7 @@ void codegen(Program *prog) {
         // Total space below rbp must cover: locals + spills + shadow (32)
         int need = fn->stack_size + fn_struct_ret_total + 32;
         if (fn->is_variadic)
-            need += 176;
+            need = va_reg_save_ofs;
         // Reserve space for register spill slots (deepest at rbp-120)
         if (spill_count > 0 && need < 120)
             need = 120;

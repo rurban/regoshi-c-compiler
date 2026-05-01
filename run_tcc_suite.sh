@@ -144,8 +144,6 @@ print_change() {
 SKIP_TESTS="
 60_errors_and_warnings
 73_arm64
-78_vla_label
-79_vla_continue
 96_nodata_wanted
 98_al_ax_extend
 99_fastcall
@@ -155,8 +153,6 @@ SKIP_TESTS="
 115_bound_setjmp
 116_bound_setjmp2
 120_alias
-122_vla_reuse
-123_vla_bug
 124_atomic_counter
 125_atomic_misc
 126_bound_global
