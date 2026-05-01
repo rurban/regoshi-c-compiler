@@ -60,6 +60,7 @@ static char *read_file(char *path) {
 
 void help(void) {
     printf("rcc %s %s - Copyright 2026 Hosokawa-t and Reini Urban\n", VERSION, MACHINE);
+    printf("License LGPL-2.1-or-later: GNU LGPL version 2.1 or later <https://www.gnu.org/licenses/lgpl-2.1>\n");
     printf("rcc [options...] [-o outfile] [-c] infile(s)...\n");
     printf("Options:\n"
            "-I path       add include path\n"
