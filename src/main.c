@@ -54,8 +54,12 @@ static char *read_file(char *path) {
     return buf;
 }
 
+#ifndef MACHINE
+#define MACHINE "unknown"
+#endif
+
 void help(void) {
-    printf("rcc %s - Copyright 2026 Hosokawa-t and Reini Urban\n", VERSION);
+    printf("rcc %s %s - Copyright 2026 Hosokawa-t and Reini Urban\n", VERSION, MACHINE);
     printf("rcc [options...] [-o outfile] [-c] infile(s)...\n");
     printf("Options:\n"
            "-I path       add include path\n"
@@ -130,7 +134,7 @@ int main(int argc, char **argv) {
             return 0;
         }
         if (!strcmp(argv[i], "--version")) {
-            printf("rcc %s\n", VERSION);
+            printf("rcc %s %s\n", VERSION, MACHINE);
             return 0;
         }
         if (!strcmp(argv[i], "-print-search-dirs")) {

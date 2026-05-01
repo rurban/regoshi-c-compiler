@@ -37,6 +37,7 @@ endif
 endif
 DEF_INCDIR = -DRCC_INCDIR='"$(RCC_INCDIR)"'
 VERSION ?= $(shell git describe --long --tags --always 2>/dev/null || echo "v1.2-dev")
+MACHINE ?= $(shell $(CC) -dumpmachine 2>/dev/null || echo "unknown")
 
 $(TARGET): $(OBJS) $(MINGW_O)
 	$(CC) $(CFLAGS) -o $@ $^
@@ -47,7 +48,7 @@ src/sysinc_paths.h:
 $(MINGW_O): lib/mingw.c
 	$(CC) $(CFLAGS) -c $< -o $@
 src/main$(OBJ_EXT): src/main.c src/sysinc_paths.h
-	$(CC) $(CFLAGS) -c $< -o $@ -DGCC=\"$(CC)\" $(DEF_INCDIR) -DVERSION=\"$(VERSION)\"
+	$(CC) $(CFLAGS) -c $< -o $@ -DGCC=\"$(CC)\" $(DEF_INCDIR) -DVERSION=\"$(VERSION)\" -DMACHINE=\"$(MACHINE)\"
 src/preprocess$(OBJ_EXT): src/preprocess.c src/sysinc_paths.h
 	$(CC) $(CFLAGS) -c $< -o $@ $(DEF_INCDIR)
 %$(OBJ_EXT): %.c
