@@ -1551,10 +1551,6 @@ char *preprocess(char *filename, char *p) {
     define_pre("__unix__", "1");
     define_pre("__LP64__", "1");
 #endif
-    define_pre("__x86_64__", "1");
-    define_pre("__x86_64", "1");
-    define_pre("_amd64__", "1");
-    define_pre("_amd64", "1");
     define_macro("__builtin_expect", true, builtin_expect_params, 2, "x");
     define_pre("__builtin_abort", "abort");
     define_pre("__builtin_malloc", "malloc");
