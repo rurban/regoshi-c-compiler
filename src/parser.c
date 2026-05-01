@@ -70,6 +70,7 @@ static PendingGoto *pending_gotos;
 static Node *conditional(Token **rest, Token *tok);
 
 static bool equal(Token *tok, char *op) {
+    if (!tok || !tok->loc) return false;
     int len = (int)strlen(op);
     return tok->len == len && memcmp(tok->loc, op, len) == 0;
 }
@@ -4109,6 +4110,8 @@ static char *parse_toplevel_asm(Token **rest, Token *tok) {
 }
 
 Program *parse(Token *tok) {
+    char *saved_input = current_input;
+    char *saved_filename = current_filename;
     Token *head = tokenize("rcc_builtins",
                            "typedef struct {"
                            "  unsigned int gp_offset;"
@@ -4116,6 +4119,8 @@ Program *parse(Token *tok) {
                            "  void *overflow_arg_area;"
                            "  void *reg_save_area;"
                            "} __builtin_va_list[1];");
+    current_input = saved_input;
+    current_filename = saved_filename;
     Token *t = head;
     while (t->next && t->next->kind != TK_EOF)
         t = t->next;

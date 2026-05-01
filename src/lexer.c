@@ -5,8 +5,8 @@
 #include <ctype.h>
 
 // Input string
-static char *current_input;
-static char *current_filename;
+char *current_input;
+char *current_filename;
 static int current_line_offset = 0;
 static int line_num = 1;
 
@@ -77,12 +77,28 @@ void error_at(char *loc, char *fmt, ...) {
 // cppcheck-suppress va_end_missing
 // cppcheck-suppress uninitvar
 void error_tok(Token *tok, char *fmt, ...) {
+    if (!tok) {
+        va_list ap;
+        va_start(ap, fmt);
+        verror_at(NULL, 0, fmt, ap);
+        return;
+    }
     va_list ap;
     va_start(ap, fmt);
     verror_at(tok->loc, tok->len, fmt, ap);
 }
 
 void warn_tok(Token *tok, char *fmt, ...) {
+    if (!tok) {
+        // warn without location info
+        va_list ap;
+        va_start(ap, fmt);
+        fprintf(stderr, "warning: ");
+        vfprintf(stderr, fmt, ap);
+        fprintf(stderr, "\n");
+        va_end(ap);
+        return;
+    }
     // Compute line number
     char *line = tok->loc;
     while (current_input < line && line[-1] != '\n')

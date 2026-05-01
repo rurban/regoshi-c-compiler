@@ -55,6 +55,10 @@ void error_at(char *loc, char *fmt, ...);
 void error_tok(Token *tok, char *fmt, ...);
 void warn_tok(Token *tok, char *fmt, ...);
 
+// Lexer state (for token injection)
+extern char *current_input;
+extern char *current_filename;
+
 // Allocator / Utils
 void *arena_alloc(size_t size);
 char *format(char *fmt, ...);

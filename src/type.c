@@ -387,8 +387,10 @@ static void add_type_internal(Node *node) {
             return;
         }
         // Pointer/integer mismatch: warn and use the pointer type
-        if (tty && ety && ((tty->kind == TY_PTR && is_integer(ety)) || (ety->kind == TY_PTR && is_integer(tty))))
-            warn_tok(node->tok, "pointer/integer mismatch in conditional expression");
+        if (tty && ety && ((tty->kind == TY_PTR && is_integer(ety)) || (ety->kind == TY_PTR && is_integer(tty)))) {
+            if (node->tok)
+                warn_tok(node->tok, "pointer/integer mismatch in conditional expression");
+        }
         node->ty = tty ? tty : ety;
         return;
     }
