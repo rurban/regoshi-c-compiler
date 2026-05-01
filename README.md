@@ -130,7 +130,8 @@ make bench
 The original windows repo is at https://github.com/DocDamage/realtime-c-compiler with
 [those](tcc_test_report_mingw1.1.md) test results (61/129 passed tcc tests), and [those](https://github.com/rurban/rcc/blob/old-mingw/bench/bench_report_mingw.md) benchmarks. Tested in the `old-mingw` branch via github actions.
 
-This fork passes now [137/137 tests](tcc_test_linux.md) on linux, [137/137 tests](tcc_test_mingw_cross.md.md) on mingw-cross, and [101/104 tests](tcc_test_mingw.md) on windows native. macOS linking and arm64 port still in work (109/138 tests pass on arm64-elf).
+This fork passes now [137/137 tcc tests](tcc_test_linux.md) on linux, [137/137 tests](tcc_test_mingw_cross.md.md) on mingw-cross, and [101/104 tests](tcc_test_mingw.md) on windows native. macOS linking and arm64 port still in work (109/138 tests pass on arm64-elf).
+For the c-testsuite it passes 213/220.
 
 ## License
 
