@@ -393,7 +393,7 @@ static int gen_funcall(Node *node, int hidden_ret_reg) {
     int stack_args = 0;
     for (int i = 0; i < nargs; i++) {
         arg_regs[i] = -1;
-        arg_sizes[i] = argv[i]->ty->size;
+        arg_sizes[i] = (argv[i]->ty->kind == TY_ARRAY) ? 8 : argv[i]->ty->size;
         arg_is_float[i] = is_flonum(argv[i]->ty);
         arg_gp_idx[i] = -1;
         arg_fp_idx[i] = -1;
@@ -446,7 +446,7 @@ static int gen_funcall(Node *node, int hidden_ret_reg) {
             arg_regs[i] = gen_addr(argv[i]);
         else
             arg_regs[i] = gen(argv[i]);
-        arg_sizes[i] = argv[i]->ty->size;
+        arg_sizes[i] = (argv[i]->ty->kind == TY_ARRAY) ? 8 : argv[i]->ty->size;
         arg_is_float[i] = is_flonum(argv[i]->ty);
     }
 
@@ -2396,13 +2396,13 @@ void codegen(Program *prog) {
                 if ((var->ty->kind == TY_STRUCT || var->ty->kind == TY_UNION) && var->ty->size > 8) {
                     int c = ++rcc_label_count;
                     printf("  mov r11, %s\n", preg);
-                    printf("  mov rcx, %d\n", var->ty->size);
+                    printf("  mov r10, %d\n", var->ty->size);
                     printf(".L.pcopy.%d:\n", c);
-                    printf("  cmp rcx, 0\n");
+                    printf("  cmp r10, 0\n");
                     printf("  je .L.pcopy_end.%d\n", c);
-                    printf("  mov al, byte ptr [r11 + rcx - 1]\n");
-                    printf("  mov byte ptr [rbp-%d + rcx - 1], al\n", var->offset);
-                    printf("  sub rcx, 1\n");
+                    printf("  mov al, byte ptr [r11 + r10 - 1]\n");
+                    printf("  mov byte ptr [rbp-%d + r10 - 1], al\n", var->offset);
+                    printf("  sub r10, 1\n");
                     printf("  jmp .L.pcopy.%d\n", c);
                     printf(".L.pcopy_end.%d:\n", c);
                 } else {
@@ -2457,13 +2457,14 @@ void codegen(Program *prog) {
                                                 : param_regs64[param_index];
                 if ((var->ty->kind == TY_STRUCT || var->ty->kind == TY_UNION) && var->ty->size > 8) {
                     int c = ++rcc_label_count;
-                    printf("  mov rcx, %d\n", var->ty->size);
+                    printf("  mov r11, %s\n", preg);
+                    printf("  mov r10, %d\n", var->ty->size);
                     printf(".L.pcopy.%d:\n", c);
-                    printf("  cmp rcx, 0\n");
+                    printf("  cmp r10, 0\n");
                     printf("  je .L.pcopy_end.%d\n", c);
-                    printf("  mov al, byte ptr [%s + rcx - 1]\n", preg);
-                    printf("  mov byte ptr [rbp-%d + rcx - 1], al\n", var->offset);
-                    printf("  sub rcx, 1\n");
+                    printf("  mov al, byte ptr [r11 + r10 - 1]\n");
+                    printf("  mov byte ptr [rbp-%d + r10 - 1], al\n", var->offset);
+                    printf("  sub r10, 1\n");
                     printf("  jmp .L.pcopy.%d\n", c);
                     printf(".L.pcopy_end.%d:\n", c);
                 } else {
@@ -2473,13 +2474,13 @@ void codegen(Program *prog) {
             } else {
                 if ((var->ty->kind == TY_STRUCT || var->ty->kind == TY_UNION) && var->ty->size > 8) {
                     int c = ++rcc_label_count;
-                    printf("  mov rcx, %d\n", var->ty->size);
+                    printf("  mov r10, %d\n", var->ty->size);
                     printf(".L.pcopy.%d:\n", c);
-                    printf("  cmp rcx, 0\n");
+                    printf("  cmp r10, 0\n");
                     printf("  je .L.pcopy_end.%d\n", c);
-                    printf("  mov al, byte ptr [rbp+%d + rcx - 1]\n", 16 + stack_param_index * 8);
-                    printf("  mov byte ptr [rbp-%d + rcx - 1], al\n", var->offset);
-                    printf("  sub rcx, 1\n");
+                    printf("  mov al, byte ptr [rbp+%d + r10 - 1]\n", 16 + stack_param_index * 8);
+                    printf("  mov byte ptr [rbp-%d + r10 - 1], al\n", var->offset);
+                    printf("  sub r10, 1\n");
                     printf("  jmp .L.pcopy.%d\n", c);
                     printf(".L.pcopy_end.%d:\n", c);
                 } else {
