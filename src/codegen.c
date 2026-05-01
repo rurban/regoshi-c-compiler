@@ -434,6 +434,11 @@ static int gen_funcall(Node *node, int hidden_ret_reg) {
         // Same for r11.
     }
 
+    int callee_reg = -1;
+    if (!call_target) {
+        callee_reg = gen(node->lhs);
+    }
+
 #ifdef _WIN32
     int reg_nargs = nargs < max_reg_args - (has_hidden_retbuf ? 1 : 0) ? nargs : max_reg_args - (has_hidden_retbuf ? 1 : 0);
     for (int i = 0; i < reg_nargs; i++) {
@@ -608,9 +613,8 @@ static int gen_funcall(Node *node, int hidden_ret_reg) {
             emit_direct_call(call_target);
         }
     } else {
-        int callee = gen(node->lhs);
-        printf("  call %s\n", reg64[callee]);
-        free_reg(callee);
+        printf("  call %s\n", reg64[callee_reg]);
+        free_reg(callee_reg);
     }
 
     if (stack_reserve > 0)

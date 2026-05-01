@@ -133,6 +133,7 @@ struct Type {
     int pack_align; // #pragma pack(n) alignment, 0 = default
     unsigned char bitfield_mode;
     char *cleanup_func; // __attribute__((__cleanup__(func))) on the type
+    char *name; // for parameter types: the parameter name
 };
 
 static inline bool ty_const(const Type *t) { return t->qual & QUAL_CONST; }

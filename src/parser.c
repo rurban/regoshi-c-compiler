@@ -159,6 +159,8 @@ static Node *new_num(int64_t val, Token *tok) {
         node->ty = (val >= 0 && val <= 0xFFFFFFFFLL) ? ty_uint : ty_ullong;
     else if (val >= -2147483648LL && val <= 2147483647LL)
         node->ty = ty_int;
+    else if (tok->loc[0] == '0' && tok->len > 1 && val >= 0 && val <= 4294967295LL)
+        node->ty = ty_uint;
     else
         node->ty = ty_llong;
     return node;
@@ -788,6 +790,56 @@ static bool eval_double_const_expr(Node *node, double *val) {
     }
 }
 
+static Type *declarator(Token **rest, Token *tok, Type *ty, char **name);
+
+static Type *declarator_params(Token **rest, Token *tok, Type *ty) {
+    Type param_head = {};
+    Type *pcur = &param_head;
+    bool is_variadic = false;
+
+    if (equal(tok, "void") && equal(tok->next, ")")) {
+        tok = tok->next->next;
+    } else {
+        while (!equal(tok, ")")) {
+            if (pcur != &param_head)
+                tok = skip(tok, ",");
+            if (equal(tok, "...")) {
+                is_variadic = true;
+                tok = tok->next;
+                break;
+            }
+            if (equal(tok, ";")) {
+                tok = tok->next;
+                continue;
+            }
+
+            VarAttr attr = {};
+            Type *base = declspec(&tok, tok, &attr);
+            char *pname = NULL;
+            Type *pty = declarator(&tok, tok, copy_type(base), &pname);
+            tok = skip_attributes(tok);
+
+            if (pty->kind == TY_ARRAY)
+                pty = pointer_to(pty->base);
+            else if (pty->kind == TY_FUNC)
+                pty = pointer_to(pty);
+
+            Type *pt = arena_alloc(sizeof(Type));
+            *pt = *pty;
+            pt->param_next = NULL;
+            pt->name = pname;
+            pcur = pcur->param_next = pt;
+        }
+        tok = skip(tok, ")");
+    }
+
+    ty = func_type(ty);
+    ty->param_types = param_head.param_next;
+    ty->is_variadic = is_variadic;
+    *rest = tok;
+    return ty;
+}
+
 static Type *type_suffix(Token **rest, Token *tok, Type *ty) {
     int dims[16];
     int ndims = 0;
@@ -815,6 +867,21 @@ static Type *type_suffix(Token **rest, Token *tok, Type *ty) {
     // Apply dimensions from innermost (rightmost in source) to outermost
     for (int i = ndims - 1; i >= 0; i--)
         ty = array_of(ty, dims[i]);
+
+    if (equal(tok, "(")) {
+        Token *next = tok->next;
+        // Detect old-style (K&R) parameter lists: identifier-only params.
+        // If the first token inside () is an identifier (not a type name)
+        // followed by ) or ,, leave it for the caller (parse/declaration)
+        // to handle, so K&R function definitions are not mis-parsed here.
+        if (next->kind == TK_IDENT && !is_typename(next) &&
+            (equal(next->next, ")") || equal(next->next, ","))) {
+            *rest = tok;
+            return ty;
+        }
+        return declarator_params(rest, tok->next, ty);
+    }
+
     *rest = tok;
     return ty;
 }
@@ -838,76 +905,20 @@ static Type *declarator(Token **rest, Token *tok, Type *ty, char **name) {
            equal(inner, "__thiscall") || equal(inner, "__vectorcall"))
         inner = inner->next;
     inner = skip_attributes(inner);
-    if (equal(tok, "(") && (equal(inner, "*") || equal(inner, "["))) {
+    if (equal(tok, "(")) {
         Token *start = tok->next;
-        Type dummy = {};
-        char *dummy_name = NULL;
-        // Dummy parse to skip past inner declarator
-        Token *after_inner;
-        declarator(&after_inner, start, &dummy, &dummy_name);
-        // Inner might have parsed function params; skip them to find ')'
-        while (equal(after_inner, "(")) {
-            int depth = 1;
-            after_inner = after_inner->next;
-            while (depth > 0 && after_inner->kind != TK_EOF) {
-                if (equal(after_inner, "(")) depth++;
-                else if (equal(after_inner, ")"))
-                    depth--;
-                after_inner = after_inner->next;
-            }
+        // Find the matching ) for the initial (
+        Token *after_paren = start;
+        int depth = 1;
+        while (depth > 0 && after_paren->kind != TK_EOF) {
+            if (equal(after_paren, "(")) depth++;
+            else if (equal(after_paren, ")"))
+                depth--;
+            after_paren = after_paren->next;
         }
-        if (!equal(after_inner, ")"))
-            error_tok(after_inner, "expected ')'");
-        tok = after_inner->next;
-
-        // Parse suffixes after the closing paren
-        Type *suffixed = ty;
-        if (equal(tok, "(")) {
-            tok = tok->next;
-            Type param_head = {};
-            Type *pcur = &param_head;
-            bool is_variadic = false;
-            if (equal(tok, "void") && equal(tok->next, ")")) {
-                tok = tok->next->next;
-            } else {
-                while (!equal(tok, ")")) {
-                    if (pcur != &param_head)
-                        tok = skip(tok, ",");
-                    if (equal(tok, "...")) {
-                        is_variadic = true;
-                        tok = tok->next;
-                        break;
-                    }
-                    if (equal(tok, ";")) {
-                        tok = tok->next;
-                        continue;
-                    }
-
-                    VarAttr attr = {};
-                    Type *base = declspec(&tok, tok, &attr);
-                    Type *pty = declarator(&tok, tok, copy_type(base), NULL);
-                    if (pty->kind == TY_ARRAY)
-                        pty = pointer_to(pty->base);
-                    else if (pty->kind == TY_FUNC)
-                        pty = pointer_to(pty);
-                    Type *pt = arena_alloc(sizeof(Type));
-                    *pt = *pty;
-                    pt->param_next = NULL;
-                    pcur = pcur->param_next = pt;
-                }
-                tok = skip(tok, ")");
-            }
-            suffixed = func_type(ty);
-            suffixed->param_types = param_head.param_next;
-            suffixed->is_variadic = is_variadic;
-        } else {
-            suffixed = type_suffix(&tok, tok, ty);
-        }
-
-        // Set rest now before re-parsing; the re-parse starts from the
-        // inner declarator and does not advance past the suffixes.
+        tok = after_paren;
+        Type *suffixed = type_suffix(&tok, tok, ty);
         *rest = tok;
-        // Re-parse inner declarator with the suffixed type
         return declarator(&tok, start, suffixed, name);
     }
 
@@ -2407,9 +2418,8 @@ static Node *declaration(Token **rest, Token *tok) {
         if (!name)
             error_tok(tok, "expected variable name");
 
-        if (equal(tok, "(")) {
-            tok = skip_balanced(tok);
-            Type *fty = func_type(ty);
+        if (ty->kind == TY_FUNC) {
+            Type *fty = ty;
             LVar *fn_sym = find_global_name(name);
             if (!fn_sym) {
                 fn_sym = new_var(name, pointer_to(fty), false);
@@ -4092,226 +4102,255 @@ Program *parse(Token *tok) {
             continue;
         }
 
-        char *name = NULL;
-        Type *ty = declarator(&tok, tok, copy_type(base), &name);
-        tok = skip_attributes(tok);
+        for (;;) {
+            char *name = NULL;
+            Type *ty = declarator(&tok, tok, copy_type(base), &name);
+            tok = skip_attributes(tok);
 
-        if (!name) {
-            tok = skip(tok, ";");
-            continue;
-        }
+            if (!name) {
+                tok = skip(tok, ";");
+                break;
+            }
 
-        if (equal(tok, "(")) {
-            bool is_variadic = false;
-            Type *fty = func_type(ty);
-            Type *fn_symbol_ty = pointer_to(fty);
-            locals = NULL;
-            stack_offset = 80;
-            label_scopes = NULL;
-            pending_gotos = NULL;
-            current_switch = NULL;
-            current_loop = NULL;
-            parser_current_fn = name;
+            bool is_func = ty->kind == TY_FUNC || equal(tok, "(");
 
-            tok = tok->next;
-            LVar *params;
-            if (!equal(tok, ")") && !equal(tok, "...") && !is_typename(tok)) {
-                // K&R function definition: param list has identifiers, not types
-                LVar head = {};
-                LVar *cur = &head;
-                while (!equal(tok, ")")) {
-                    if (cur != &head)
-                        tok = skip(tok, ",");
-                    if (tok->kind != TK_IDENT)
-                        error_tok(tok, "expected parameter name");
-                    LVar *var = new_var(tok->name, ty_int, true);
+            if (is_func) {
+                Type *fty;
+                bool is_variadic = false;
+                LVar *params = NULL;
+
+                if (ty->kind == TY_FUNC) {
+                    fty = ty;
+                    is_variadic = ty->is_variadic;
+                    locals = NULL;
+                    stack_offset = 80;
+                    LVar head = {};
+                    LVar *cur = &head;
+                    int param_index = 0;
+                    for (Type *pt = ty->param_types; pt; pt = pt->param_next) {
+                        char *pname = pt->name ? pt->name : format("__param%d", param_index++);
+                        cur = cur->param_next = new_var(pname, pt, true);
+                    }
+                    params = head.param_next;
+                } else {
+                    fty = func_type(ty);
+                    locals = NULL;
+                    stack_offset = 80;
+                    label_scopes = NULL;
+                    pending_gotos = NULL;
+                    current_switch = NULL;
+                    current_loop = NULL;
+                    parser_current_fn = name;
+
                     tok = tok->next;
-                    cur = cur->param_next = var;
-                }
-                params = head.param_next;
-                tok = skip(tok, ")");
-                tok = skip_attributes(tok);
-                current_fn_scope_locals = params;
-                // Parse K&R parameter declarations between ) and {
-                while (!equal(tok, "{")) {
-                    VarAttr dattr = {};
-                    Type *dty = declspec(&tok, tok, &dattr);
-                    for (;;) {
-                        char *dname = NULL;
-                        Type *ddecl = declarator(&tok, tok, copy_type(dty), &dname);
-                        if (dname) {
-                            for (LVar *p = params; p; p = p->param_next) {
-                                if (strcmp(p->name, dname) == 0) {
-                                    p->ty = ddecl;
-                                    break;
+                    if (!equal(tok, ")") && !equal(tok, "...") && !is_typename(tok)) {
+                        // K&R function definition: param list has identifiers, not types
+                        LVar head = {};
+                        LVar *cur = &head;
+                        while (!equal(tok, ")")) {
+                            if (cur != &head)
+                                tok = skip(tok, ",");
+                            if (tok->kind != TK_IDENT)
+                                error_tok(tok, "expected parameter name");
+                            LVar *var = new_var(tok->name, ty_int, true);
+                            tok = tok->next;
+                            cur = cur->param_next = var;
+                        }
+                        params = head.param_next;
+                        tok = skip(tok, ")");
+                        tok = skip_attributes(tok);
+                        current_fn_scope_locals = params;
+                        // Parse K&R parameter declarations between ) and {
+                        while (!equal(tok, "{")) {
+                            VarAttr dattr = {};
+                            Type *dty = declspec(&tok, tok, &dattr);
+                            for (;;) {
+                                char *dname = NULL;
+                                Type *ddecl = declarator(&tok, tok, copy_type(dty), &dname);
+                                if (dname) {
+                                    for (LVar *p = params; p; p = p->param_next) {
+                                        if (strcmp(p->name, dname) == 0) {
+                                            p->ty = ddecl;
+                                            break;
+                                        }
+                                    }
                                 }
+                                if (!equal(tok, ","))
+                                    break;
+                                tok = tok->next;
+                            }
+                            tok = skip(tok, ";");
+                        }
+                        for (LVar *p = params; p; p = p->param_next) {
+                            if (!p->ty)
+                                p->ty = ty_int;
+                        }
+                    } else {
+                        params = parse_params(&tok, tok, &is_variadic);
+                        tok = skip(tok, ")");
+                        tok = skip_attributes(tok);
+                        current_fn_scope_locals = params;
+                    }
+
+                    // Build parameter type list
+                    fty->is_variadic = is_variadic;
+                    Type param_head = {};
+                    Type *pcur = &param_head;
+                    for (LVar *p = params; p; p = p->param_next) {
+                        Type *pt = arena_alloc(sizeof(Type));
+                        *pt = *p->ty;
+                        pt->param_next = NULL;
+                        pcur = pcur->param_next = pt;
+                    }
+                    fty->param_types = param_head.param_next;
+                }
+
+                label_scopes = NULL;
+                pending_gotos = NULL;
+                current_switch = NULL;
+                current_loop = NULL;
+                parser_current_fn = name;
+                current_fn_scope_locals = params;
+                current_block_depth = 0;
+                suppress_fn_scope_update = false;
+
+                if (fty->return_ty && (fty->return_ty->kind == TY_STRUCT || fty->return_ty->kind == TY_UNION)) {
+                    LVar *retbuf = new_var("", pointer_to(fty->return_ty), true);
+                    retbuf->cleanup_func = NULL;
+                }
+
+                // For typedefs like 'typedef int functype(int);', register the type
+                if (attr.is_typedef) {
+                    add_typedef(name, fty);
+                    if (!equal(tok, ";") && !equal(tok, ","))
+                        error_tok(tok, "expected ';' or ',' after typedef");
+                } else {
+                    // Register function symbol
+                    Type *fn_symbol_ty = pointer_to(fty);
+                    LVar *existing = find_global_name(name);
+                    if (!existing) {
+                        LVar *fn_sym = new_var(name, fn_symbol_ty, false);
+                        fn_sym->is_extern = attr.is_extern || (!attr.is_inline && !attr.is_static);
+                        fn_sym->is_function = true;
+                        fn_sym->is_inline = attr.is_inline;
+                        fn_sym->is_weak = attr.is_weak;
+                        fn_sym->is_static = attr.is_static;
+                        // A declaration without inline (and without static) makes the
+                        // function an external symbol even if a prior inline def exists.
+                        if (!attr.is_inline && !attr.is_static)
+                            fn_sym->has_init = true; // reuse has_init as "has non-inline decl"
+                    } else {
+                        existing->ty = fn_symbol_ty;
+                        // Update flags on redeclaration
+                        if (attr.is_inline)
+                            existing->is_inline = true;
+                        if (attr.is_weak)
+                            existing->is_weak = true;
+                        if (attr.is_static)
+                            existing->is_static = true;
+                        if (attr.is_extern)
+                            existing->is_extern = true;
+                        if (!attr.is_inline && !attr.is_static)
+                            existing->has_init = true; // non-inline extern decl seen
+                    }
+                }
+
+                if (equal(tok, "{")) {
+                    if (attr.is_typedef)
+                        error_tok(tok, "typedef cannot have function body");
+
+                    LVar *fn_locals = NULL;
+                    Node *body = compound_stmt_ex(&tok, tok, &fn_locals);
+                    // Implicit return 0 for main if no explicit return
+                    if (strcmp(name, "main") == 0) {
+                        Node *last = body->body;
+                        if (last) {
+                            while (last->next)
+                                last = last->next;
+                            if (last->kind != ND_RETURN) {
+                                Node *ret = new_node(ND_RETURN, tok);
+                                ret->lhs = new_num(0, tok);
+                                last->next = ret;
                             }
                         }
-                        if (!equal(tok, ","))
-                            break;
-                        tok = tok->next;
                     }
-                    tok = skip(tok, ";");
+                    Function *fn = arena_alloc(sizeof(Function));
+                    fn->name = name;
+                    fn->asm_name = pending_asm_name;
+                    fn->ty = fty;
+                    fn->params = params;
+                    fn->locals = fn_locals;
+                    fn->body = body->body;
+                    fn->stack_size = align_to(stack_offset, 16);
+                    fn->is_variadic = is_variadic;
+                    fn->is_constructor = pending_constructor;
+                    fn->is_destructor = pending_destructor;
+                    LVar *fn_sym2 = find_global_name(name);
+                    fn->is_inline = attr.is_inline;
+                    // is_static is sticky: if any decl was static the fn is static
+                    fn->is_static = attr.is_static || (fn_sym2 && fn_sym2->is_static);
+                    // is_extern: explicit extern on this def, OR any non-inline extern
+                    // declaration seen (has_init flag).
+                    fn->is_extern = attr.is_extern || (fn_sym2 && fn_sym2->has_init);
+                    fn->is_weak = attr.is_weak || (fn_sym2 && fn_sym2->is_weak);
+                    pending_constructor = false;
+                    pending_destructor = false;
+                    pending_asm_name = NULL;
+                    TLItem *item = arena_alloc(sizeof(TLItem));
+                    item->kind = TL_FUNC;
+                    item->fn = fn;
+                    item_cur = item_cur->next = item;
+                    current_fn_scope_locals = NULL;
+                    current_block_depth = 0;
+                    suppress_fn_scope_update = false;
+                    break;
                 }
-                for (LVar *p = params; p; p = p->param_next) {
-                    if (!p->ty)
-                        p->ty = ty_int;
-                }
-            } else {
-                params = parse_params(&tok, tok, &is_variadic);
-                tok = skip(tok, ")");
-                tok = skip_attributes(tok);
-                current_fn_scope_locals = params;
-            }
-            current_block_depth = 0;
-            suppress_fn_scope_update = false;
 
-            if (fty->return_ty && (fty->return_ty->kind == TY_STRUCT || fty->return_ty->kind == TY_UNION)) {
-                LVar *retbuf = new_var("", pointer_to(fty->return_ty), true);
-                retbuf->cleanup_func = NULL;
-            }
-
-            // Build parameter type list
-            fty->is_variadic = is_variadic;
-            Type param_head = {};
-            Type *pcur = &param_head;
-            for (LVar *p = params; p; p = p->param_next) {
-                Type *pt = arena_alloc(sizeof(Type));
-                *pt = *p->ty;
-                pt->param_next = NULL;
-                pcur->param_next = pt;
-                pcur = pt;
-            }
-            fty->param_types = param_head.param_next;
-
-            // For typedefs like 'typedef int functype(int);', register the type
-            if (attr.is_typedef) {
-                add_typedef(name, fty);
                 if (equal(tok, ";")) {
+                    tok = tok->next;
+                    break;
+                }
+                if (equal(tok, ",")) {
                     tok = tok->next;
                     continue;
                 }
-                error_tok(tok, "expected ';' after typedef");
-            }
-
-            // Register function symbol
-            LVar *existing = find_global_name(name);
-            if (!existing) {
-                LVar *fn_sym = new_var(name, fn_symbol_ty, false);
-                fn_sym->is_extern = attr.is_extern || (!attr.is_inline && !attr.is_static);
-                fn_sym->is_function = true;
-                fn_sym->is_inline = attr.is_inline;
-                fn_sym->is_weak = attr.is_weak;
-                fn_sym->is_static = attr.is_static;
-                // A declaration without inline (and without static) makes the
-                // function an external symbol even if a prior inline def exists.
-                if (!attr.is_inline && !attr.is_static)
-                    fn_sym->has_init = true; // reuse has_init as "has non-inline decl"
+                error_tok(tok, "expected ';', ',', or '{'");
             } else {
-                existing->ty = fn_symbol_ty;
-                // Update flags on redeclaration
-                if (attr.is_inline)
-                    existing->is_inline = true;
-                if (attr.is_weak)
-                    existing->is_weak = true;
-                if (attr.is_static)
-                    existing->is_static = true;
-                if (attr.is_extern)
-                    existing->is_extern = true;
-                if (!attr.is_inline && !attr.is_static)
-                    existing->has_init = true; // non-inline extern decl seen
-            }
-
-            if (equal(tok, ";")) {
-                tok = tok->next;
-                continue;
-            }
-            if (!equal(tok, "{"))
-                error_tok(tok, "expected function body");
-
-            LVar *fn_locals = NULL;
-            Node *body = compound_stmt_ex(&tok, tok, &fn_locals);
-            // Implicit return 0 for main if no explicit return
-            if (strcmp(name, "main") == 0) {
-                Node *last = body->body;
-                if (last) {
-                    while (last->next)
-                        last = last->next;
-                    if (last->kind != ND_RETURN) {
-                        Node *ret = new_node(ND_RETURN, tok);
-                        ret->lhs = new_num(0, tok);
-                        last->next = ret;
+                if (attr.is_typedef) {
+                    add_typedef(name, ty);
+                } else {
+                    if (equal(tok, "="))
+                        ty = infer_array_type(ty, tok->next);
+                    LVar *var = find_global_name(name);
+                    if (var) {
+                        if (var->ty->kind == TY_ARRAY && ty->kind == TY_ARRAY && var->ty->size > 0)
+                            ty = var->ty;
+                        else
+                            var->ty = ty;
+                    } else {
+                        var = new_var(name, ty, false);
+                    }
+                    var->is_extern = attr.is_extern;
+                    if (pending_asm_name)
+                        var->asm_name = pending_asm_name;
+                    pending_asm_name = NULL;
+                    if (equal(tok, "=")) {
+                        tok = tok->next;
+                        global_initializer(&tok, tok, var);
                     }
                 }
-            }
-            Function *fn = arena_alloc(sizeof(Function));
-            fn->name = name;
-            fn->asm_name = pending_asm_name;
-            fn->ty = fty;
-            fn->params = params;
-            fn->locals = fn_locals;
-            fn->body = body->body;
-            fn->stack_size = align_to(stack_offset, 16);
-            fn->is_variadic = is_variadic;
-            fn->is_constructor = pending_constructor;
-            fn->is_destructor = pending_destructor;
-            LVar *fn_sym2 = find_global_name(name);
-            fn->is_inline = attr.is_inline;
-            // is_static is sticky: if any decl was static the fn is static
-            fn->is_static = attr.is_static || (fn_sym2 && fn_sym2->is_static);
-            // is_extern: explicit extern on this def, OR any non-inline extern
-            // declaration seen (has_init flag).
-            fn->is_extern = attr.is_extern || (fn_sym2 && fn_sym2->has_init);
-            fn->is_weak = attr.is_weak || (fn_sym2 && fn_sym2->is_weak);
-            pending_constructor = false;
-            pending_destructor = false;
-            pending_asm_name = NULL;
-            TLItem *item = arena_alloc(sizeof(TLItem));
-            item->kind = TL_FUNC;
-            item->fn = fn;
-            item_cur = item_cur->next = item;
-            current_fn_scope_locals = NULL;
-            current_block_depth = 0;
-            suppress_fn_scope_update = false;
-            continue;
-        }
 
-        for (;;) {
-            if (attr.is_typedef) {
-                add_typedef(name, ty);
-            } else {
-                if (equal(tok, "="))
-                    ty = infer_array_type(ty, tok->next);
-                LVar *var = find_global_name(name);
-                if (var) {
-                    if (var->ty->kind == TY_ARRAY && ty->kind == TY_ARRAY && var->ty->size > 0)
-                        ty = var->ty;
-                    else
-                        var->ty = ty;
-                } else {
-                    var = new_var(name, ty, false);
-                }
-                var->is_extern = attr.is_extern;
-                if (pending_asm_name)
-                    var->asm_name = pending_asm_name;
-                pending_asm_name = NULL;
-                if (equal(tok, "=")) {
+                if (equal(tok, ";")) {
                     tok = tok->next;
-                    global_initializer(&tok, tok, var);
+                    break;
                 }
+                if (equal(tok, ",")) {
+                    tok = tok->next;
+                    continue;
+                }
+                error_tok(tok, "expected ';' or ','");
             }
-
-            if (!equal(tok, ","))
-                break;
-            tok = tok->next;
-            name = NULL;
-            ty = declarator(&tok, tok, copy_type(base), &name);
-            tok = skip_attributes(tok);
-            if (!name)
-                error_tok(tok, "expected variable name");
         }
-
-        tok = skip(tok, ";");
     }
 
     Program *prog = arena_alloc(sizeof(Program));

@@ -424,9 +424,17 @@ static void add_type_internal(Node *node) {
         node->ty = integer_promotion(node->lhs->ty);
         return;
     case ND_FUNCALL:
-        if (node->lhs && node->lhs->ty && node->lhs->ty->kind == TY_PTR &&
-            node->lhs->ty->base && node->lhs->ty->base->kind == TY_FUNC) {
-            node->ty = node->lhs->ty->base->return_ty;
+        if (node->lhs && node->lhs->ty) {
+            if (node->lhs->ty->kind == TY_PTR &&
+                node->lhs->ty->base && node->lhs->ty->base->kind == TY_FUNC) {
+                node->ty = node->lhs->ty->base->return_ty;
+            } else if (node->lhs->ty->kind == TY_FUNC) {
+                node->ty = node->lhs->ty->return_ty;
+            } else if (node->funcname) {
+                node->ty = ty_int;
+            } else {
+                node->ty = ty_int;
+            }
         } else if (node->funcname) {
             node->ty = ty_int;
         } else {

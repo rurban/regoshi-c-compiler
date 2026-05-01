@@ -18,7 +18,7 @@ cd c-testsuite || exit
 echo "c-testsuite with ../rcc -O1 -lm"
 env CC="../rcc" CFLAGS="-O1 -lm" ./single-exec posix | scripts/tapsummary | tee ../c-testsuite.tap.txt
 
-MAX_FAILS=7
+MAX_FAILS=4
 fails=$(grep -m1 '^fail ' ../c-testsuite.tap.txt | awk '{print $2}')
 if [ -z "$fails" ]; then
     echo "ERROR: could not determine test fail count"
