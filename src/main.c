@@ -278,7 +278,7 @@ int main(int argc, char **argv) {
             snprintf(cmd, sizeof(cmd), GCC " -c -o %s", out_path);
         } else {
 #ifdef __APPLE__
-            snprintf(cmd, sizeof(cmd), "ld -o %s -lSystem -syslibroot /Library/Developer/CommandLineTools/SDKs/MacOSX.sdk -arch arm64 -e _main", out_path);
+            snprintf(cmd, sizeof(cmd), "ld -o %s -lSystem -syslibroot /Library/Developer/CommandLineTools/SDKs/MacOSX.sdk -arch arm64 -e _main -platform_version macos 11.0 11.0", out_path);
 #else
             snprintf(cmd, sizeof(cmd), GCC " -no-pie -o %s", out_path);
 #endif
