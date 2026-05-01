@@ -43,6 +43,10 @@ if [ "$RCC" = "./rcc-arm64" ] || [ "$RCC" = "./arm64-cross.sh" ]; then
 	RCC="$SCRIPT_DIR/arm64-cross.sh"
 	REPORT_FILE="$SCRIPT_DIR/tcc_test_arm64_cross.md"
 fi
+if [ "$RCC" = "./rcc-darwin" ] || [ "$RCC" = "./darwin-cross.sh" ]; then
+	RCC="$SCRIPT_DIR/darwin-cross.sh"
+	REPORT_FILE="$SCRIPT_DIR/tcc_test_darwin_cross.md"
+fi
 if [ "$(uname -m)" = "aarch64" ] || [ "$(uname -m)" = "arm64" ]; then
     REPORT_FILE="$SCRIPT_DIR/tcc_test_arm64.md"
 fi
@@ -110,6 +114,7 @@ TMPDIR="${TMPDIR:-/tmp}"
 TMP_OUT="$TMPDIR/rcc_test_$$.out"
 TMP_EXE="$TMPDIR/rcc_test_$$"
 is_arm64=''
+is_darwin=''
 RUN_PREFIX=''
 if [ -z "${ARM64_SYSROOT+x}" ]; then
     for p in /usr/aarch64-linux-gnu /usr/aarch64-redhat-linux/sys-root/fc43 /usr/aarch64-linux-gnu/sys-root /usr/aarch64-linux-gnu; do
@@ -131,6 +136,9 @@ elif [ "$RCC" = "$SCRIPT_DIR/arm64-cross.sh" ]; then
 		RUN_PREFIX="qemu-aarch64"
 	fi
 	is_arm64=1
+elif [ "$RCC" = "$SCRIPT_DIR/darwin-cross.sh" ]; then
+	# Darwin Mach-O can't execute on Linux — compile+link only
+	is_darwin=1
 elif [ "$(uname -m)" = "aarch64" ] || [ "$(uname -m)" = "arm64" ]; then
 	is_arm64=1
 fi
@@ -326,6 +334,26 @@ while IFS= read -r src; do
 		cd - >/dev/null || exit
 		src="$TEST_DIR/129_scopes.c"
 		RCC="$orig_RCC"
+	fi
+
+        # 2a. Darwin: compile+link only (can't execute Mach-O on Linux)
+	if [ "$is_darwin" = "1" ]; then
+	    # shellcheck disable=SC2059
+	    if [ -f "$expect_file" ]; then
+		add_row "$base" "COMPILE_OK" "linked, (execution skipped)"
+		printf "${GREEN}PASS (compile OK)${RESET}\n"
+		passed=$((passed + 1))
+		print_change "$base" "PASS"
+	    else
+		add_row "$base" "COMPILE_OK" "linked ok (no expect, no exec)"
+		printf "${GRAY}PASS (no expect, compile OK)${RESET}\n"
+		passed=$((passed + 1))
+		print_change "$base" "PASS"
+	    fi
+            if [ -n "$fixed_up" ]; then
+		mv "$upstream_expect".orig "$upstream_expect"
+            fi
+	    continue
         fi
 
 	# 2. Execute (append runtime output after compile warnings)

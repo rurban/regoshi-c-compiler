@@ -16,6 +16,7 @@ a.out
 .clang-tidy
 rcc
 rcc-arm64
+rcc-darwin
 actual.txt
 fred.txt
 err.log

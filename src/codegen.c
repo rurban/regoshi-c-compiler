@@ -118,13 +118,25 @@ static char *func_asm_name(char *name) {
     return name;
 }
 
+// Mach-O symbols get a leading underscore
+static const char *sym_name(const char *name) {
+#if defined(__APPLE__)
+    if (name[0] == '.' || name[0] == '/')
+        return name;
+    if (name[0] == '_') return name;
+    return format("_%s", name);
+#else
+    return name;
+#endif
+}
+
 static void emit_direct_call(char *name) {
     if (is_asm_reserved(name))
         name = format(".L_rcc_%s", name);
 #ifdef ARCH_ARM64
-    printf("  bl %s\n", func_asm_name(name));
+    printf("  bl %s\n", sym_name(func_asm_name(name)));
 #else
-    printf("  call %s\n", func_asm_name(name));
+    printf("  call %s\n", sym_name(func_asm_name(name)));
 #endif
 }
 
@@ -1116,6 +1128,19 @@ static void emit_mov_imm64(const char *reg, uint64_t val) {
     }
 }
 
+// Emit adrp+add pair for label address, with platform-appropriate syntax
+// Linux: adrp reg, label / add reg, reg, :lo12:label
+// Darwin: adrp reg, label@PAGE / add reg, reg, label@PAGEOFF
+static void emit_adrp_add(const char *reg, const char *label) {
+#if defined(__APPLE__)
+    printf("  adrp %s, %s@PAGE\n", reg, label);
+    printf("  add %s, %s, %s@PAGEOFF\n", reg, reg, label);
+#else
+    printf("  adrp %s, %s\n", reg, label);
+    printf("  add %s, %s, :lo12:%s\n", reg, reg, label);
+#endif
+}
+
 // Emit load/store-safe address for [x29, #-offset] when offset > 255
 // Returns register holding the address (must be freed by caller)
 static int emit_stack_addr(int offset) {
@@ -1326,10 +1351,9 @@ static int gen_addr(Node *node) {
             }
         } else {
             if (node->var->is_weak)
-                printf(".weak %s\n", var_label(node->var));
+                printf(".weak %s\n", sym_name(var_label(node->var)));
 #ifdef ARCH_ARM64
-            printf("  adrp %s, %s\n", reg64[r], var_label(node->var));
-            printf("  add %s, %s, :lo12:%s\n", reg64[r], reg64[r], var_label(node->var));
+            emit_adrp_add(reg64[r], sym_name(var_label(node->var)));
 #else
             printf("  lea %s, [rip + %s]\n", reg64[r], var_label(node->var));
 #endif
@@ -1516,7 +1540,7 @@ static int gen(Node *node) {
         int r = alloc_reg();
         int id = add_float_literal(node->fval, 8); // Always store as double
 #ifdef ARCH_ARM64
-        printf("  adrp x11, .LF%d\n  add x11, x11, :lo12:.LF%d\n", id, id);
+        emit_adrp_add("x11", format(".LF%d", id));
         printf("  ldr d0, [x11]\n");
         printf("  fmov %s, d0\n", reg64[r]);
 #else
@@ -1555,15 +1579,15 @@ static int gen(Node *node) {
 #endif
             else
 #ifdef ARCH_ARM64
-                printf("  adrp %s, %s\n  add %s, %s, :lo12:%s\n", reg64[r], label, reg64[r], reg64[r], label);
+                emit_adrp_add(reg64[r], label);
 #else
                 printf("  lea %s, [rip + %s]\n", reg64[r], label);
 #endif
         } else if (!node->var->is_local && node->var->is_function) {
             if (node->var->is_weak)
-                printf(".weak %s\n", label);
+                printf(".weak %s\n", sym_name(label));
 #ifdef ARCH_ARM64
-            printf("  adrp %s, %s\n  add %s, %s, :lo12:%s\n", reg64[r], label, reg64[r], reg64[r], label);
+            emit_adrp_add(reg64[r], sym_name(label));
 #else
             printf("  lea %s, [rip + %s]\n", reg64[r], label);
 #endif
@@ -1588,7 +1612,7 @@ static int gen(Node *node) {
                 } else {
                     if (node->var->ty->size == 4) {
 #ifdef ARCH_ARM64
-                        printf("  adrp x11, %s\n  add x11, x11, :lo12:%s\n", label, label);
+                        emit_adrp_add("x11", label);
                         printf("  ldr s0, [x11]\n");
                         printf("  fcvt d0, s0\n");
 #else
@@ -1597,7 +1621,7 @@ static int gen(Node *node) {
 #endif
                     } else {
 #ifdef ARCH_ARM64
-                        printf("  adrp x11, %s\n  add x11, x11, :lo12:%s\n", label, label);
+                        emit_adrp_add("x11", label);
                         printf("  ldr d0, [x11]\n");
 #else
                         printf("  movsd xmm0, qword ptr [rip + %s]\n", label);
@@ -1621,7 +1645,7 @@ static int gen(Node *node) {
 #ifdef ARCH_ARM64
                 // Global variable: load address via ADRP+ADD, then deref
                 int ta = alloc_reg();
-                printf("  adrp %s, %s\n  add %s, %s, :lo12:%s\n", reg64[ta], label, reg64[ta], reg64[ta], label);
+                emit_adrp_add(reg64[ta], label);
                 emit_load(node->ty, r, format("[%s]", reg64[ta]));
                 free_reg(ta);
 #else
@@ -2391,7 +2415,7 @@ static int gen(Node *node) {
     case ND_STR: {
         int r = alloc_reg();
 #ifdef ARCH_ARM64
-        printf("  adrp %s, .LC%d\n  add %s, %s, :lo12:.LC%d\n", reg64[r], node->str_id, reg64[r], reg64[r], node->str_id);
+        emit_adrp_add(reg64[r], format(".LC%d", node->str_id));
 #else
         printf("  lea %s, [rip + .LC%d]\n", reg64[r], node->str_id);
 #endif
@@ -2899,8 +2923,7 @@ static int gen(Node *node) {
     case ND_LABEL_VAL: {
         int r = alloc_reg();
 #ifdef ARCH_ARM64
-        printf("  adrp %s, .L.label.%s.%s\n  add %s, %s, :lo12:.L.label.%s.%s\n",
-               reg64[r], current_fn, node->label_name, reg64[r], reg64[r], current_fn, node->label_name);
+        emit_adrp_add(reg64[r], format(".L.label.%s.%s", current_fn, node->label_name));
 #else
         printf("  lea %s, [rip + .L.label.%s.%s]\n", reg64[r], current_fn, node->label_name);
 #endif
@@ -3638,7 +3661,7 @@ void codegen(Program *prog) {
             if (var->ty->align > 1)
                 printf("  .balign %d\n", var->ty->align);
             if (!var->is_static)
-                printf(".globl %s\n", label);
+                printf(".globl %s\n", sym_name(label));
             printf("%s:\n", safe_label);
             if (reserved)
                 printf(".set %s, %s\n", label, safe_label);
@@ -3953,14 +3976,14 @@ void codegen(Program *prog) {
             fn_label = format(".L_rcc_%s", fn->name);
         bool fn_exported = !fn->is_static && (!fn->is_inline || fn->is_extern || has_noninline_decl || had_extern_decl);
         if (fn->is_weak)
-            printf(".weak %s\n", fn->name);
+            printf(".weak %s\n", sym_name(fn->name));
         else if (fn_exported)
-            printf(".globl %s\n", fn->name);
+            printf(".globl %s\n", sym_name(fn->name));
         if (fn_label != fn->name)
             printf("%s = %s\n", fn->name, fn_label);
         else if (fn->asm_name && (fn_exported || fn->is_weak))
             printf("%s = %s\n", fn->name, fn->asm_name);
-        printf("%s:\n", fn_label);
+        printf("%s:\n", fn_exported ? sym_name(fn_label) : fn_label);
 
         // Stack frame: stp fp,lr; mov fp,sp; sub sp,sp,#frame_size
         printf("  stp %s, %s, [%s, #-16]!\n", FRAME_PTR, LINK_REG, STACK_REG);
@@ -4179,9 +4202,9 @@ void codegen(Program *prog) {
             fn_label = format(".L_rcc_%s", fn->name);
         bool fn_exported = !fn->is_static && (!fn->is_inline || fn->is_extern || has_noninline_decl || had_extern_decl);
         if (fn->is_weak) {
-            printf(".weak %s\n", fn->name);
+            printf(".weak %s\n", sym_name(fn->name));
         } else if (fn_exported) {
-            printf(".globl %s\n", fn->name);
+            printf(".globl %s\n", sym_name(fn->name));
         }
         // When the function name collides with a reserved name (e.g. register),
         // emit an alias from the real name to the safe label so that references
@@ -4190,7 +4213,7 @@ void codegen(Program *prog) {
             printf("%s = %s\n", fn->name, fn_label);
         else if (fn->asm_name && (fn_exported || fn->is_weak))
             printf("%s = %s\n", fn->name, fn->asm_name);
-        printf("%s:\n", fn_label);
+        printf("%s:\n", fn_exported ? sym_name(fn_label) : fn_label);
         printf("  push rbp\n");
         printf("  mov rbp, rsp\n");
 
