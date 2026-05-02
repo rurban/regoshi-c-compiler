@@ -3,9 +3,9 @@ Generated: May 2026
 
 ## Summary
  - **Total**:     141
- - **Passed**:    140
- - **Failed**:    1
- - **Pass Rate**: 99%
+ - **Passed**:    141
+ - **Failed**:    0
+ - **Pass Rate**: 100%
 
 ## Detailed Results
 | Test                                     | Status       | Message                              |
@@ -77,7 +77,7 @@ Generated: May 2026
 | 76_dollars_in_identifiers                | PASS         | Output matches                       |
 | 77_push_pop_macro                        | PASS         | Output matches                       |
 | 78_vla_label                             | PASS         | Output matches                       |
-| 79_vla_continue                          | MISMATCH     | Output does not match .expect        |
+| 79_vla_continue                          | PASS         | Output matches                       |
 | 80_flexarray                             | PASS         | Output matches                       |
 | 81_types                                 | PASS         | Output matches                       |
 | 82_attribs_position                      | PASS         | Output matches                       |

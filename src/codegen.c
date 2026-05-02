@@ -125,6 +125,17 @@ static void emit_cleanup_range(LVar *begin, LVar *end) {
     }
 }
 
+// Restore RSP past any VLAs leaving scope (enables VLA reuse on re-entry).
+// Locals list is newest-first; the last VLA in range is the outermost one.
+static void emit_vla_dealloc(LVar *begin, LVar *end) {
+    LVar *outermost_vla = NULL;
+    for (LVar *v = begin; v && v != end; v = v->next)
+        if (v->ty->kind == TY_VLA)
+            outermost_vla = v;
+    if (outermost_vla)
+        printf("  mov rsp, [rbp-%d]\n", outermost_vla->offset);
+}
+
 /* Other platforms still have it. windows deprecated it.
    Use a unique name to avoid conflicts with CRT import stubs. */
 static void emit_alloca(void) {
@@ -1770,25 +1781,19 @@ static int gen(Node *node) {
         if (ctrl_depth == 0)
             error("stray break");
         emit_cleanup_range(node->cleanup_begin, node->cleanup_end);
+        emit_vla_dealloc(node->cleanup_begin, node->cleanup_end);
         printf("  jmp .L.end.%d\n", break_stack[ctrl_depth - 1]);
         return -1;
     case ND_CONTINUE:
         if (ctrl_depth == 0)
             error("stray continue");
         emit_cleanup_range(node->cleanup_begin, node->cleanup_end);
+        emit_vla_dealloc(node->cleanup_begin, node->cleanup_end);
         printf("  jmp .L.continue.%d\n", continue_stack[ctrl_depth - 1]);
         return -1;
     case ND_GOTO:
         emit_cleanup_range(node->cleanup_begin, node->cleanup_end);
-        // Restore RSP past any VLAs leaving scope (VLA reuse: same address on re-entry)
-        {
-            LVar *outermost_vla = NULL;
-            for (LVar *v = node->cleanup_begin; v && v != node->cleanup_end; v = v->next)
-                if (v->ty->kind == TY_VLA)
-                    outermost_vla = v;
-            if (outermost_vla)
-                printf("  mov rsp, [rbp-%d]\n", outermost_vla->offset);
-        }
+        emit_vla_dealloc(node->cleanup_begin, node->cleanup_end);
         printf("  jmp .L.label.%s.%s\n", current_fn, node->label_name);
         return -1;
     case ND_GOTO_IND: {
