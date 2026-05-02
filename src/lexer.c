@@ -74,6 +74,7 @@ void error_at(char *loc, char *fmt, ...) {
     va_list ap;
     va_start(ap, fmt);
     verror_at(loc, 1, fmt, ap);
+    exit(1);
 }
 
 // cppcheck-suppress va_end_missing
@@ -83,11 +84,12 @@ void error_tok(Token *tok, char *fmt, ...) {
         va_list ap;
         va_start(ap, fmt);
         verror_at(NULL, 0, fmt, ap);
-        return;
+        exit(1);
     }
     va_list ap;
     va_start(ap, fmt);
     verror_at(tok->loc, tok->len, fmt, ap);
+    exit(1);
 }
 
 void warn_tok(Token *tok, char *fmt, ...) {
