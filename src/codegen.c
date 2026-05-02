@@ -504,12 +504,22 @@ static int gen_funcall(Node *node, int hidden_ret_reg) {
             arg_regs[i] = gen(argv[i]);
     }
 
+    // Bitmask of scratch registers still needed for register-passed args.
+    // Stack arg computation below may free and reuse these via the spill
+    // mechanism; re-marking them as in-use forces a proper spill/restore
+    // instead of a silent overwrite that would lose the pre-computed value.
+    int reg_arg_mask = 0;
+    for (int i = 0; i < nargs; i++)
+        if (arg_regs[i] >= 0 && arg_stack_idx[i] < 0)
+            reg_arg_mask |= (1 << arg_regs[i]);
+
     if (stack_reserve > 0)
         printf("  sub rsp, %d\n", stack_reserve);
 
     for (int i = nargs - 1; i >= 0; i--) {
         if (arg_stack_idx[i] < 0)
             continue;
+        used_regs |= reg_arg_mask; // keep pre-computed reg args live
         // x87: long double args go on stack as 80-bit extended precision
         if (argv[i]->ty->kind == TY_LDOUBLE) {
             // gen_addr fails for computed long double (e.g. ld1/ld2).
@@ -520,6 +530,7 @@ static int gen_funcall(Node *node, int hidden_ret_reg) {
             printf("  fld qword ptr [rsp+%d]\n", shadow_space + arg_stack_idx[i] * 8);
             printf("  fstp tbyte ptr [rsp+%d]\n", shadow_space + arg_stack_idx[i] * 8);
             free_reg(r);
+            used_regs |= reg_arg_mask; // restore any bits cleared by free_reg
             continue;
         }
         int r;
@@ -549,6 +560,7 @@ static int gen_funcall(Node *node, int hidden_ret_reg) {
             printf("  mov qword ptr [rsp+%d], %s\n", shadow_space + arg_stack_idx[i] * 8, reg64[r]);
         }
         free_reg(r);
+        used_regs |= reg_arg_mask; // restore any bits cleared by free_reg
     }
 #endif
 
@@ -604,31 +616,39 @@ static int gen_funcall(Node *node, int hidden_ret_reg) {
         free_reg(arg_regs[i]);
     }
 #else
-    for (int i = 0; i < nargs; i++) {
-        if (arg_stack_idx[i] >= 0)
-            continue;
-        if (arg_is_float[i]) {
-            printf("  movq %s, %s\n", argxmm[arg_fp_idx[i]], reg64[arg_regs[i]]);
-        } else if (arg_sizes[i] == 1) {
-            if (argv[i]->ty && !argv[i]->ty->is_unsigned)
-                printf("  movsx %s, %s\n", argreg32[arg_gp_idx[i]], reg8[arg_regs[i]]);
-            else
-                printf("  movzx %s, %s\n", argreg64[arg_gp_idx[i]], reg8[arg_regs[i]]);
-        } else if (arg_sizes[i] == 2) {
-            if (argv[i]->ty && !argv[i]->ty->is_unsigned)
-                printf("  movsx %s, %s\n", argreg32[arg_gp_idx[i]], reg16[arg_regs[i]]);
-            else
-                printf("  movzx %s, %s\n", argreg64[arg_gp_idx[i]], reg16[arg_regs[i]]);
-        } else if (arg_sizes[i] == 4) {
-            if (argv[i]->ty->is_unsigned)
-                printf("  mov %s, %s\n", argreg32[arg_gp_idx[i]], reg(arg_regs[i], 4));
-            else
-                printf("  movsxd %s, %s\n", argreg64[arg_gp_idx[i]], reg(arg_regs[i], 4));
-        } else {
-            printf("  mov %s, %s\n", argreg64[arg_gp_idx[i]], reg(arg_regs[i], 8));
+    // Two-pass placement: reg64[7]=="rsi"==argreg64[1], so any arg whose scratch
+    // register is rsi must be placed before the arg that writes to rsi, otherwise
+    // the write clobbers the source value.  Pass 0: rsi-sourced args.  Pass 1: rest.
+    for (int pass = 0; pass < 2; pass++) {
+        for (int i = 0; i < nargs; i++) {
+            if (arg_stack_idx[i] >= 0)
+                continue;
+            bool rsi_src = (!arg_is_float[i] && arg_regs[i] == 7);
+            if (pass == 0 && !rsi_src) continue;
+            if (pass == 1 && rsi_src) continue;
+            if (arg_is_float[i]) {
+                printf("  movq %s, %s\n", argxmm[arg_fp_idx[i]], reg64[arg_regs[i]]);
+            } else if (arg_sizes[i] == 1) {
+                if (argv[i]->ty && !argv[i]->ty->is_unsigned)
+                    printf("  movsx %s, %s\n", argreg32[arg_gp_idx[i]], reg8[arg_regs[i]]);
+                else
+                    printf("  movzx %s, %s\n", argreg64[arg_gp_idx[i]], reg8[arg_regs[i]]);
+            } else if (arg_sizes[i] == 2) {
+                if (argv[i]->ty && !argv[i]->ty->is_unsigned)
+                    printf("  movsx %s, %s\n", argreg32[arg_gp_idx[i]], reg16[arg_regs[i]]);
+                else
+                    printf("  movzx %s, %s\n", argreg64[arg_gp_idx[i]], reg16[arg_regs[i]]);
+            } else if (arg_sizes[i] == 4) {
+                if (argv[i]->ty->is_unsigned)
+                    printf("  mov %s, %s\n", argreg32[arg_gp_idx[i]], reg(arg_regs[i], 4));
+                else
+                    printf("  movsxd %s, %s\n", argreg64[arg_gp_idx[i]], reg(arg_regs[i], 4));
+            } else {
+                printf("  mov %s, %s\n", argreg64[arg_gp_idx[i]], reg(arg_regs[i], 8));
+            }
+            free_reg(arg_regs[i]);
         }
-        free_reg(arg_regs[i]);
-    }
+    } // end two-pass
 #endif
 
     printf("  mov eax, %d\n", xmm_args);

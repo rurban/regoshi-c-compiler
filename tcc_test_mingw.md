@@ -1,11 +1,11 @@
 # TCC Test Suite Report for RCC
-Generated on: 05/02/2026 07:16:47
+Generated on: 05/02/2026 08:47:00
 
 ## Summary
-- **Total Tests**: 104
-- **Passed**: 101
+- **Total Tests**: 109
+- **Passed**: 106
 - **Failed**: 3
-- **Pass Rate**: 97.12%
+- **Pass Rate**: 97.25%
 
 ## Detailed Results
 | Test | Status | Message |
@@ -76,8 +76,8 @@ Generated on: 05/02/2026 07:16:47
 | 75_array_in_struct_init | PASS | Output matches |
 | 76_dollars_in_identifiers | PASS | Output matches |
 | 77_push_pop_macro | PASS | Output matches |
-| 78_vla_label | SKIP | Skipped |
-| 79_vla_continue | SKIP | Skipped |
+| 78_vla_label | PASS | Output matches |
+| 79_vla_continue | PASS | Output matches |
 | 80_flexarray | PASS | Output matches |
 | 81_types | PASS | Output matches |
 | 82_attribs_position | PASS | Output matches |
@@ -121,8 +121,8 @@ Generated on: 05/02/2026 07:16:47
 | 119_random_stuff | MISMATCH | Output does not match .expect |
 | 120_alias | SKIP | Skipped |
 | 121_struct_return | PASS | Output matches |
-| 122_vla_reuse | SKIP | Skipped |
-| 123_vla_bug | SKIP | Skipped |
+| 122_vla_reuse | PASS | Output matches |
+| 123_vla_bug | PASS | Output matches |
 | 124_atomic_counter | SKIP | Skipped |
 | 125_atomic_misc | SKIP | Skipped |
 | 126_bound_global | SKIP | Skipped |
@@ -132,7 +132,7 @@ Generated on: 05/02/2026 07:16:47
 | 130_large_argument | PASS | Output matches |
 | 131_return_struct_in_reg | PASS | Output matches |
 | 132_bound_test | PASS | Output matches |
-| 133_old_func | SKIP | Skipped |
+| 133_old_func | PASS | Output matches |
 | 134_double_to_signed | PASS | Output matches |
 | 135_func_arg_struct_compare | PASS | Output matches |
 | 136_atomic_gcc_style | SKIP | Skipped |
