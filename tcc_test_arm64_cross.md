@@ -3,9 +3,9 @@ Generated: May 2026
 
 ## Summary
  - **Total**:     141
- - **Passed**:    130
- - **Failed**:    11
- - **Pass Rate**: 92%
+ - **Passed**:    133
+ - **Failed**:    8
+ - **Pass Rate**: 94%
 
 ## Detailed Results
 | Test                                     | Status       | Message                              |
@@ -76,8 +76,8 @@ Generated: May 2026
 | 75_array_in_struct_init                  | PASS         | Output matches                       |
 | 76_dollars_in_identifiers                | PASS         | Output matches                       |
 | 77_push_pop_macro                        | PASS         | Output matches                       |
-| 78_vla_label                             | COMPILE_FAIL | rcc returned non-zero                |
-| 79_vla_continue                          | COMPILE_FAIL | rcc returned non-zero                |
+| 78_vla_label                             | PASS         | Output matches                       |
+| 79_vla_continue                          | PASS         | Output matches                       |
 | 80_flexarray                             | EXEC_FAIL    | non-zero exit                        |
 | 81_types                                 | PASS         | Output matches                       |
 | 82_attribs_position                      | PASS         | Output matches                       |
@@ -122,7 +122,7 @@ Generated: May 2026
 | 120_alias                                | SKIP         | Skipped                              |
 | 121_struct_return                        | PASS         | Output matches                       |
 | 122_vla_reuse                            | COMPILE_FAIL | rcc returned non-zero                |
-| 123_vla_bug                              | COMPILE_FAIL | rcc returned non-zero                |
+| 123_vla_bug                              | PASS         | Output matches                       |
 | 124_atomic_counter                       | SKIP         | Skipped                              |
 | 125_atomic_misc                          | SKIP         | Skipped                              |
 | 126_bound_global                         | SKIP         | Skipped                              |

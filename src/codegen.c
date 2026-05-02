@@ -242,15 +242,67 @@ static void emit_cleanup_range(LVar *begin, LVar *end) {
     }
 }
 
-// Restore RSP past any VLAs leaving scope (enables VLA reuse on re-entry).
+#ifdef ARCH_ARM64
+// ARM64: emit load from [fp, #-offset] into x16 (uses x17 for large offsets)
+static void arm64_load_from_fp_minus(int offset, const char *dst) {
+    if (offset <= 255)
+        printf("  ldr %s, [%s, #-%d]\n", dst, FRAME_PTR, offset);
+    else if (offset <= 4095) {
+        printf("  sub x17, %s, #%d\n", FRAME_PTR, offset);
+        printf("  ldr %s, [x17]\n", dst);
+    } else {
+        int v = offset;
+        printf("  mov x17, #%d\n", v & 0xffff);
+        v >>= 16;
+        int s = 16;
+        while (v) {
+            printf("  movk x17, #%d, lsl #%d\n", v & 0xffff, s);
+            v >>= 16;
+            s += 16;
+        }
+        printf("  sub x17, %s, x17\n", FRAME_PTR);
+        printf("  ldr %s, [x17]\n", dst);
+    }
+}
+
+// ARM64: emit store src to [fp, #-offset] (uses x17 for large offsets)
+static void arm64_store_to_fp_minus(const char *src, int offset) {
+    if (offset <= 255)
+        printf("  str %s, [%s, #-%d]\n", src, FRAME_PTR, offset);
+    else if (offset <= 4095) {
+        printf("  sub x17, %s, #%d\n", FRAME_PTR, offset);
+        printf("  str %s, [x17]\n", src);
+    } else {
+        int v = offset;
+        printf("  mov x17, #%d\n", v & 0xffff);
+        v >>= 16;
+        int s = 16;
+        while (v) {
+            printf("  movk x17, #%d, lsl #%d\n", v & 0xffff, s);
+            v >>= 16;
+            s += 16;
+        }
+        printf("  sub x17, %s, x17\n", FRAME_PTR);
+        printf("  str %s, [x17]\n", src);
+    }
+}
+#endif
+
+// Restore SP past any VLAs leaving scope (enables VLA reuse on re-entry).
 // Locals list is newest-first; the last VLA in range is the outermost one.
 static void emit_vla_dealloc(LVar *begin, LVar *end) {
     LVar *outermost_vla = NULL;
     for (LVar *v = begin; v && v != end; v = v->next)
         if (v->ty->kind == TY_VLA)
             outermost_vla = v;
-    if (outermost_vla)
+    if (outermost_vla) {
+#ifdef ARCH_ARM64
+        arm64_load_from_fp_minus(outermost_vla->offset, "x16");
+        printf("  mov sp, x16\n");
+#else
         printf("  mov rsp, [rbp-%d]\n", outermost_vla->offset);
+#endif
+    }
 }
 
 /* Other platforms still have it. windows deprecated it.
@@ -1758,10 +1810,20 @@ static int gen(Node *node) {
         int r = alloc_reg();
         char *label = var_label(node->var);
         if (node->var->ty->kind == TY_VLA) {
-            if (node->var->is_local)
+            if (node->var->is_local) {
+#ifdef ARCH_ARM64
+                arm64_load_from_fp_minus(node->var->offset - 8, reg64[r]);
+#else
                 printf("  mov %s, [rbp-%d]\n", reg64[r], node->var->offset - 8);
-            else
+#endif
+            } else {
+#ifdef ARCH_ARM64
+                emit_adrp_add(reg64[r], asm_sym_name(var_sym_label(node->var)));
+                printf("  ldr %s, [%s]\n", reg64[r], reg64[r]);
+#else
                 printf("  mov %s, [rip + %s]\n", reg64[r], label);
+#endif
+            }
         } else if (node->var->ty->kind == TY_ARRAY) {
             if (node->var->is_local)
 #ifdef ARCH_ARM64
@@ -2735,6 +2797,41 @@ static int gen(Node *node) {
     }
     case ND_ALLOCA:
     case ND_ALLOCA_ZINIT: {
+#ifdef ARCH_ARM64
+        if (node->kind == ND_ALLOCA_ZINIT && node->lhs && node->lhs->kind == ND_NUM && node->lhs->val == 0) {
+            arm64_load_from_fp_minus(node->var->offset, "x16");
+            printf("  mov sp, x16\n");
+            return -1;
+        }
+        int r = gen(node->lhs);
+        // Save current SP into VLA save slot
+        printf("  mov x16, sp\n");
+        arm64_store_to_fp_minus("x16", node->var->offset);
+        // Round size up to 16-byte alignment, keep in x16 (scratch, not in pool)
+        printf("  add %s, %s, #15\n", reg64[r], reg64[r]);
+        printf("  and %s, %s, #-16\n", reg64[r], reg64[r]);
+        printf("  mov x16, %s\n", reg64[r]); // size → x16 (scratch, won't clobber pool)
+        free_reg(r);
+        printf("  sub sp, sp, x16\n");
+        if (node->kind == ND_ALLOCA_ZINIT) {
+            printf(".L.alloca.zero.%d:\n", rcc_label_count);
+            printf("  subs x16, x16, #8\n"); // subs sets flags; sub does not
+            printf("  b.lt .L.alloca.done.%d\n", rcc_label_count);
+            printf("  str xzr, [sp, x16]\n");
+            printf("  b .L.alloca.zero.%d\n", rcc_label_count);
+        } else {
+            printf(".L.alloca.probe.%d:\n", rcc_label_count);
+            printf("  subs x16, x16, #4096\n"); // subs sets flags; sub does not
+            printf("  b.lt .L.alloca.done.%d\n", rcc_label_count);
+            printf("  ldrb w17, [sp, x16]\n"); // w17 = scratch, not in pool
+            printf("  b .L.alloca.probe.%d\n", rcc_label_count);
+        }
+        printf(".L.alloca.done.%d:\n", rcc_label_count);
+        rcc_label_count++;
+        // Save VLA data pointer
+        printf("  mov x16, sp\n");
+        arm64_store_to_fp_minus("x16", node->var->offset - 8);
+#else
         if (node->kind == ND_ALLOCA_ZINIT && node->lhs && node->lhs->kind == ND_NUM && node->lhs->val == 0) {
             printf("  mov rsp, [rbp-%d]\n", node->var->offset);
             return -1;
@@ -2768,6 +2865,7 @@ static int gen(Node *node) {
             printf("  mov [rbp-%d], rsp\n", node->var->offset - 8);
         else
             printf("  mov rax, rsp\n");
+#endif
         return -1;
     }
     case ND_BLOCK:
@@ -4639,6 +4737,25 @@ void codegen(Program *prog) {
                 emit_cleanup_var(var);
         if (has_cleanup)
             printf("  ldr x0, [%s, #-8]\n", FRAME_PTR);
+
+        // VLA or alloca may have moved sp; restore to fixed frame position
+        // before reading callee-saved regs (stored at sp+16..sp+n at frame entry)
+        if (fn->dealloc_vla || fn_uses_alloca) {
+            if (frame_size <= 4095)
+                printf("  sub %s, %s, #%d\n", STACK_REG, FRAME_PTR, frame_size);
+            else {
+                int fs = frame_size;
+                printf("  mov x16, #%d\n", fs & 0xffff);
+                fs >>= 16;
+                int s = 16;
+                while (fs) {
+                    printf("  movk x16, #%d, lsl #%d\n", fs & 0xffff, s);
+                    fs >>= 16;
+                    s += 16;
+                }
+                printf("  sub %s, %s, x16\n", STACK_REG, FRAME_PTR);
+            }
+        }
 
         // Restore callee-saved
         cs_off = 16;
