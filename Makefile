@@ -71,7 +71,7 @@ src/preprocess$(OBJ_EXT): src/preprocess.c src/sysinc_paths.h src/gcc_predefined
 	$(CC) $(CFLAGS) -c $< -o $@
 
 compile_commands.json: $(SRCS)
-	make clean
+	$(MAKE) clean
 	bear -- make
 
 ifeq ($(OS),Windows_NT)
@@ -84,6 +84,13 @@ endif
 
 test check: $(TARGET)
 	@$(TEST_RUNNER)
+
+test-all: $(TARGET)
+	$(MAKE) clean
+	$(MAKE)
+	@$(TEST_RUNNER)
+	./mingw-test.sh
+	./arm64-test.sh
 
 lint:
 	if command -v prek; then prek run -a; \
@@ -139,4 +146,4 @@ clean:
 TAGS: $(SRCS) src/rcc.h
 	etags -a --language=c src/*.c src/*.h
 
-.PHONY: clean test check lint bench install dist bench
+.PHONY: clean test check lint bench install dist bench test-all
