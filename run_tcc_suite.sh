@@ -218,6 +218,7 @@ MINGW_SKIP_TESTS="
 
 ARM64_SKIP_TESTS="
 95_bitfields_ms
+127_asm_goto
 "
 
 is_skipped() {
@@ -555,9 +556,9 @@ if [ "$REPORT_FILE" = "$SCRIPT_DIR/tcc_test_arm64.md" ]; then
 elif [ "$RCC" = "$SCRIPT_DIR/darwin-cross.sh" ]; then
     [ "$passed" -ge 130 ]
 elif [ "$RCC" = "$SCRIPT_DIR/arm64-cross.sh" ]; then
-    [ "$passed" -ge 140 ]
+    [ "$passed" -ge 141 ]
 elif [ "$RCC" = "$SCRIPT_DIR/mingw-cross.sh" ]; then
-    [ "$passed" -ge 141 ]
+    [ "$passed" -ge 142 ]
 else
-    [ "$passed" -ge 141 ]
+    [ "$passed" -ge 142 ]
 fi

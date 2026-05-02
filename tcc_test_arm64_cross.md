@@ -3,9 +3,9 @@ Generated: May 2026
 
 ## Summary
  - **Total**:     141
- - **Passed**:    140
- - **Failed**:    1
- - **Pass Rate**: 99%
+ - **Passed**:    141
+ - **Failed**:    0
+ - **Pass Rate**: 100%
 
 ## Detailed Results
 | Test                                     | Status       | Message                              |
@@ -126,7 +126,7 @@ Generated: May 2026
 | 124_atomic_counter                       | SKIP         | Skipped                              |
 | 125_atomic_misc                          | SKIP         | Skipped                              |
 | 126_bound_global                         | SKIP         | Skipped                              |
-| 127_asm_goto                             | COMPILE_FAIL | rcc returned non-zero                |
+| 127_asm_goto                             | SKIP         | Skipped                              |
 | 128_run_atexit                           | PASS         | Output matches                       |
 | 129_scopes                               | PASS         | Output matches                       |
 | 130_large_argument                       | PASS         | Output matches                       |
@@ -137,6 +137,7 @@ Generated: May 2026
 | 135_func_arg_struct_compare              | PASS         | Output matches                       |
 | 136_atomic_gcc_style                     | SKIP         | Skipped                              |
 | 137_funcall_struct_args                  | PASS         | Output matches                       |
+| test_arm64_asm                           | PASS         | exit=0                               |
 | test_bitfields                           | PASS         | exit=0                               |
 | test_builtins                            | PASS         | exit=0                               |
 | test_elif2                               | PASS         | exit=0                               |

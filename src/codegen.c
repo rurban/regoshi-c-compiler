@@ -3277,7 +3277,89 @@ static int gen(Node *node) {
     }
     case ND_ASM: {
 #ifdef ARCH_ARM64
-        error_tok(node->tok, "inline asm not implemented for ARM64");
+        // Evaluate operands: memory outputs/inputs then register inputs
+        int op_regs[MAX_ASM_OPERANDS];
+        for (int i = 0; i < node->asm_noperands; i++) op_regs[i] = -1;
+
+        for (int i = 0; i < node->asm_noperands; i++) {
+            AsmOperand *op = &node->asm_ops[i];
+            if (op->is_memory || (op->is_output && !op->is_rw)) {
+                int r = gen_addr(op->expr);
+                op_regs[i] = r;
+                op->reg = r;
+                snprintf(op->asm_str, sizeof(op->asm_str), "[%s]", reg64[r]);
+            } else {
+                int r = gen(op->expr);
+                op_regs[i] = r;
+                op->reg = r;
+                int sz = op->expr->ty ? op->expr->ty->size : 4;
+                snprintf(op->asm_str, sizeof(op->asm_str), "%s", reg(r, sz));
+            }
+        }
+
+        // Translate TCC-specific {$}N to ARM64 immediate #N
+        char adj[4096];
+        int alen = 0;
+        const char *tp = node->asm_template;
+        while (*tp && alen < (int)sizeof(adj) - 1) {
+            if (*tp == '{' && *(tp + 1) == '$' && *(tp + 2) == '}') {
+                adj[alen++] = '#';
+                tp += 3;
+            } else {
+                adj[alen++] = *tp++;
+            }
+        }
+        adj[alen] = '\0';
+
+        // Substitute %N and %l[name] in template
+        char out[4096];
+        int olen = 0;
+        const char *p = adj;
+        while (*p && olen < (int)sizeof(out) - 1) {
+            if (*p != '%') {
+                out[olen++] = *p++;
+                continue;
+            }
+            p++;
+            if (*p == '%') {
+                out[olen++] = '%';
+                p++;
+                continue;
+            }
+            char mod = 0;
+            if (*p == 'l') { mod = *p++; }
+            if (mod == 'l' && *p == '[') {
+                p++;
+                const char *end = strchr(p, ']');
+                if (!end) {
+                    out[olen++] = '%';
+                    if (mod) out[olen++] = mod;
+                    out[olen++] = '[';
+                    continue;
+                }
+                const char *prefix = ".L.label.";
+                for (const char *s = prefix; *s && olen < (int)sizeof(out) - 1;) out[olen++] = *s++;
+                for (const char *s = current_fn; *s && olen < (int)sizeof(out) - 1;) out[olen++] = *s++;
+                if (olen < (int)sizeof(out) - 1) out[olen++] = '.';
+                for (const char *s = p; s < end && olen < (int)sizeof(out) - 1;) out[olen++] = *s++;
+                p = end + 1;
+            } else if (*p >= '0' && *p <= '9') {
+                int n = *p - '0';
+                p++;
+                if (n < node->asm_noperands) {
+                    const char *s = node->asm_ops[n].asm_str;
+                    while (*s && olen < (int)sizeof(out) - 1) out[olen++] = *s++;
+                }
+            } else {
+                out[olen++] = '%';
+                if (mod) out[olen++] = mod;
+            }
+        }
+        out[olen] = '\0';
+        printf("%s\n", out);
+
+        for (int i = 0; i < node->asm_noperands; i++)
+            if (op_regs[i] >= 0) free_reg(op_regs[i]);
         return -1;
 #else
         // Evaluate operands: outputs (memory addr) then inputs (register value)

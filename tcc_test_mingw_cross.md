@@ -2,8 +2,8 @@
 Generated: May 2026
 
 ## Summary
- - **Total**:     141
- - **Passed**:    141
+ - **Total**:     142
+ - **Passed**:    142
  - **Failed**:    0
  - **Pass Rate**: 100%
 
@@ -137,6 +137,7 @@ Generated: May 2026
 | 135_func_arg_struct_compare              | PASS         | Output matches                       |
 | 136_atomic_gcc_style                     | SKIP         | Skipped                              |
 | 137_funcall_struct_args                  | PASS         | Output matches                       |
+| test_arm64_asm                           | PASS         | exit=0                               |
 | test_bitfields                           | PASS         | exit=0                               |
 | test_builtins                            | PASS         | exit=0                               |
 | test_elif2                               | PASS         | exit=0                               |
