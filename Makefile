@@ -56,7 +56,12 @@ $(TARGET): $(OBJS) $(MINGW_O)
 	$(CC) $(CFLAGS) -o $@ $^
 
 src/sysinc_paths.h:
-	./tools/get-sysinc-paths.sh $(CC) > $@
+	RCC_CC="$(CC)"; \
+	if [ "$(CC)" = "aarch64-linux-gnu-gcc" ] || [ -n "$(ARM64_SYSROOT)" ]; then \
+		./tools/get-sysinc-paths.sh "$(CC) --sysroot=$(ARM64_SYSROOT)" > $@; \
+	else \
+		./tools/get-sysinc-paths.sh $(CC) > $@; \
+	fi
 
 src/gcc_predefined.h:
 	$(CC) -dM -E - < /dev/null | awk -f tools/get-gcc-predefined.awk > $@

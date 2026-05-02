@@ -2,10 +2,10 @@
 Generated: May 2026
 
 ## Summary
- - **Total**:     141
- - **Passed**:    128
- - **Failed**:    13
- - **Pass Rate**: 90%
+ - **Total**:     137
+ - **Passed**:    130
+ - **Failed**:    7
+ - **Pass Rate**: 94%
 
 ## Detailed Results
 | Test                                     | Status       | Message                              |
@@ -72,12 +72,12 @@ Generated: May 2026
 | 70_floating_point_literals               | PASS         | Output matches                       |
 | 71_macro_empty_arg                       | PASS         | Output matches                       |
 | 72_long_long_constant                    | PASS         | Output matches                       |
-| 73_arm64                                 | COMPILE_FAIL | rcc returned non-zero                |
+| 73_arm64                                 | EXEC_FAIL    | non-zero exit                        |
 | 75_array_in_struct_init                  | PASS         | Output matches                       |
 | 76_dollars_in_identifiers                | PASS         | Output matches                       |
 | 77_push_pop_macro                        | PASS         | Output matches                       |
-| 78_vla_label                             | COMPILE_FAIL | rcc returned non-zero                |
-| 79_vla_continue                          | COMPILE_FAIL | rcc returned non-zero                |
+| 78_vla_label                             | SKIP         | Skipped                              |
+| 79_vla_continue                          | SKIP         | Skipped                              |
 | 80_flexarray                             | EXEC_FAIL    | non-zero exit                        |
 | 81_types                                 | PASS         | Output matches                       |
 | 82_attribs_position                      | PASS         | Output matches                       |
@@ -105,7 +105,7 @@ Generated: May 2026
 | 103_implicit_memmove                     | PASS         | Output matches                       |
 | 104_inline                               | MISMATCH     | Output does not match .expect        |
 | 105_local_extern                         | PASS         | Output matches                       |
-| 106_versym                               | COMPILE_FAIL | rcc returned non-zero                |
+| 106_versym                               | PASS         | Output matches                       |
 | 107_stack_safe                           | PASS         | Output matches                       |
 | 108_constructor                          | PASS         | Output matches                       |
 | 109_float_struct_calling                 | PASS         | Output matches                       |
@@ -118,11 +118,11 @@ Generated: May 2026
 | 116_bound_setjmp2                        | SKIP         | Skipped                              |
 | 117_builtins                             | PASS         | Output matches                       |
 | 118_switch                               | PASS         | Output matches                       |
-| 119_random_stuff                         | COMPILE_FAIL | rcc returned non-zero                |
+| 119_random_stuff                         | PASS         | Output matches                       |
 | 120_alias                                | SKIP         | Skipped                              |
 | 121_struct_return                        | PASS         | Output matches                       |
-| 122_vla_reuse                            | COMPILE_FAIL | rcc returned non-zero                |
-| 123_vla_bug                              | COMPILE_FAIL | rcc returned non-zero                |
+| 122_vla_reuse                            | SKIP         | Skipped                              |
+| 123_vla_bug                              | SKIP         | Skipped                              |
 | 124_atomic_counter                       | SKIP         | Skipped                              |
 | 125_atomic_misc                          | SKIP         | Skipped                              |
 | 126_bound_global                         | SKIP         | Skipped                              |
