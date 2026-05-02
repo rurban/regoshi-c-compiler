@@ -3,9 +3,9 @@ Generated: May 2026
 
 ## Summary
  - **Total**:     137
- - **Passed**:    94
- - **Failed**:    43
- - **Pass Rate**: 68%
+ - **Passed**:    96
+ - **Failed**:    41
+ - **Pass Rate**: 70%
 
 ## Detailed Results
 | Test                                     | Status       | Message                              |
@@ -50,8 +50,8 @@ Generated: May 2026
 | 37_sprintf                               | COMPILE_OK   | linked, (execution skipped)          |
 | 38_multiple_array_index                  | COMPILE_OK   | linked, (execution skipped)          |
 | 39_typedef                               | COMPILE_OK   | linked, (execution skipped)          |
-| 40_stdio                                 | COMPILE_FAIL | rcc returned non-zero                |
-| 41_hashif                                | COMPILE_FAIL | rcc returned non-zero                |
+| 40_stdio                                 | COMPILE_OK   | linked, (execution skipped)          |
+| 41_hashif                                | COMPILE_OK   | linked, (execution skipped)          |
 | 42_function_pointer                      | COMPILE_FAIL | rcc returned non-zero                |
 | 43_void_param                            | COMPILE_OK   | linked, (execution skipped)          |
 | 44_scoped_declarations                   | COMPILE_OK   | linked, (execution skipped)          |
