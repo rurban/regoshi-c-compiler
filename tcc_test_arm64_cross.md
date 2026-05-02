@@ -3,9 +3,9 @@ Generated: May 2026
 
 ## Summary
  - **Total**:     141
- - **Passed**:    138
- - **Failed**:    3
- - **Pass Rate**: 97%
+ - **Passed**:    139
+ - **Failed**:    2
+ - **Pass Rate**: 98%
 
 ## Detailed Results
 | Test                                     | Status       | Message                              |
@@ -93,7 +93,7 @@ Generated: May 2026
 | 92_enum_bitfield                         | PASS         | Output matches                       |
 | 93_integer_promotion                     | PASS         | Output matches                       |
 | 94_generic                               | PASS         | Output matches                       |
-| 95_bitfields                             | MISMATCH     | Output does not match .expect        |
+| 95_bitfields                             | PASS         | Output matches                       |
 | 95_bitfields_ms                          | SKIP         | Skipped                              |
 | 96_nodata_wanted                         | SKIP         | Skipped                              |
 | 97_utf8_string_literal                   | PASS         | Output matches                       |
@@ -166,3 +166,9 @@ Generated: May 2026
 | test_str                                 | PASS         | exit=0                               |
 | test_struct                              | PASS         | exit=0                               |
 | test_with_comment                        | PASS         | exit=0                               |
+Report saved to ./tcc_test_arm64_cross.md
+rm -f src/main.o src/lexer.o src/preprocess.o src/parser.o src/type.o src/codegen.o src/opt.o src/alloc.o src/unicode.o rcc rcc.exe src/sysinc_paths.h src/gcc_predefined.h \
+              fred.txt *.s qemu*.core src/*.darwin.o src/*.arm64.o
+if command -v git > /dev/null 2>&1; then \
+  cd tinycc && git reset --hard && git clean -dxf tests/tests2; fi
+HEAD is now at 9b8765d8 Revert commits from OpenCode-AI and a partial regression fix

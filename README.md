@@ -66,7 +66,7 @@ Not yet: VLA's, GNU alias, atomics, C23.
 Top-level `__asm__("...")` statements are supported and emitted in source order. Unlike GCC (which hoists all file-scope `asm` blocks to the top of the output at `-O2`/`-O3` unless `-fno-toplevel-reorder` is used), rcc always preserves their original position relative to functions.
 
 The tcc suite has 141/141 test passed (100%) on linux and mingw-cross,
-106/109 on windows native, 127/141 on arm64-darwin native.
+106/109 on windows native, 133/141 on arm64-darwin native.
 
 Three tcc bugs have been detected so far. Fixes in the work.
 
@@ -138,9 +138,9 @@ This fork passes now:
 - [141/141 tests](tcc_test_linux.md) on linux
 - [141/141 tests](tcc_test_mingw_cross.md.md) on mingw-cross
 - [106/109 tests](tcc_test_mingw.md) on windows native
-- [138/141 tests](tcc_test_arm64_cross.md.md) on arm64-cross (elf)
-- [133/141 tests](tcc_test_darwin_cross.md) on darwin-cross (compilation only)
-- [127/141 tests](tcc_test_arm64.md) on arm64-darwin native
+- [139/141 tests](tcc_test_arm64_cross.md) on arm64-cross (elf)
+- [134/141 tests](tcc_test_darwin_cross.md) on darwin-cross (compilation only)
+- [133/141 tests](tcc_test_arm64.md) on arm64-darwin native
   For the c-testsuite it passes 220/220.
 
 ## License

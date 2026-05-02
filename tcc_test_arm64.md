@@ -3,9 +3,9 @@ Generated: May 2026
 
 ## Summary
  - **Total**:     142
- - **Passed**:    131
- - **Failed**:    11
- - **Pass Rate**: 92%
+ - **Passed**:    133
+ - **Failed**:    9
+ - **Pass Rate**: 93%
 
 ## Detailed Results
 | Test                                     | Status       | Message                              |
@@ -93,8 +93,8 @@ Generated: May 2026
 | 92_enum_bitfield                         | PASS         | Output matches                       |
 | 93_integer_promotion                     | PASS         | Output matches                       |
 | 94_generic                               | PASS         | Output matches                       |
-| 95_bitfields                             | MISMATCH     | Output does not match .expect        |
-| 95_bitfields_ms                          | MISMATCH     | Output does not match .expect        |
+| 95_bitfields                             | PASS         | Output matches                       |
+| 95_bitfields_ms                          | PASS         | Output matches                       |
 | 96_nodata_wanted                         | SKIP         | Skipped                              |
 | 97_utf8_string_literal                   | PASS         | Output matches                       |
 | 98_al_ax_extend                          | SKIP         | Skipped                              |

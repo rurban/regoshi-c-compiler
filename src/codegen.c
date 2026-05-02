@@ -2220,19 +2220,15 @@ static int gen(Node *node) {
                 int eff_sz_rhs = unit_sz > 8 ? 8 : unit_sz;
                 BF_LOAD(eff_sz_rhs, ra, rt);
 #ifdef ARCH_ARM64
-                int tmp = alloc_reg();
-                emit_mov_imm64(reg64[tmp], ~mask);
-                printf("  and %s, %s, %s\n", reg64[rt], reg64[rt], reg64[tmp]);
-                // Repurpose tmp for bitfield mask before allocating rv,
-                // preventing tmp/rv aliasing when the spiller reuses tmp as rv.
-                emit_mov_imm64(reg64[tmp], (1ULL << bw) - 1);
+                emit_mov_imm64("x16", ~mask);
+                printf("  and %s, %s, x16\n", reg64[rt], reg64[rt]);
+                emit_mov_imm64("x16", (1ULL << bw) - 1);
                 int rv = alloc_reg();
                 printf("  mov %s, %s\n", reg64[rv], reg64[r2]);
-                printf("  and %s, %s, %s\n", reg64[rv], reg64[rv], reg64[tmp]);
+                printf("  and %s, %s, x16\n", reg64[rv], reg64[rv]);
                 if (bo > 0) printf("  lsl %s, %s, #%d\n", reg64[rv], reg64[rv], bo);
                 printf("  orr %s, %s, %s\n", reg64[rt], reg64[rt], reg64[rv]);
                 BF_STORE(eff_sz_rhs, ra, rt);
-                free_reg(tmp);
                 free_reg(rv);
                 free_reg(rt);
                 free_reg(ra);
@@ -2245,15 +2241,12 @@ static int gen(Node *node) {
             int rt = alloc_reg();
             int eff_sz = unit_sz > 8 ? 8 : unit_sz;
             BF_LOAD(eff_sz, ra, rt);
-            int tmp = alloc_reg();
-            emit_mov_imm64(reg64[tmp], ~mask);
-            printf("  and %s, %s, %s\n", reg64[rt], reg64[rt], reg64[tmp]);
-            // Repurpose tmp for bitfield mask before allocating rv,
-            // preventing tmp/rv aliasing when the spiller reuses tmp as rv.
-            emit_mov_imm64(reg64[tmp], (1ULL << bw) - 1);
+            emit_mov_imm64("x16", ~mask);
+            printf("  and %s, %s, x16\n", reg64[rt], reg64[rt]);
+            emit_mov_imm64("x16", (1ULL << bw) - 1);
             int rv = alloc_reg();
             printf("  mov %s, %s\n", reg64[rv], reg64[r2]);
-            printf("  and %s, %s, %s\n", reg64[rv], reg64[rv], reg64[tmp]);
+            printf("  and %s, %s, x16\n", reg64[rv], reg64[rv]);
             if (bo > 0) printf("  lsl %s, %s, #%d\n", reg64[rv], reg64[rv], bo);
             printf("  orr %s, %s, %s\n", reg64[rt], reg64[rt], reg64[rv]);
             BF_STORE(eff_sz, ra, rt);
