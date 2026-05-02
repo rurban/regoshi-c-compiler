@@ -55,9 +55,9 @@ struct Token {
 };
 
 // Error reporting
-void error(char *fmt, ...);
-void error_at(char *loc, char *fmt, ...);
-void error_tok(Token *tok, char *fmt, ...);
+__attribute__((noreturn)) void error(char *fmt, ...);
+__attribute__((noreturn)) void error_at(char *loc, char *fmt, ...);
+__attribute__((noreturn)) void error_tok(Token *tok, char *fmt, ...);
 void warn_tok(Token *tok, char *fmt, ...);
 
 // Lexer state (for token injection)

@@ -3,9 +3,9 @@ Generated: May 2026
 
 ## Summary
  - **Total**:     142
- - **Passed**:    128
- - **Failed**:    14
- - **Pass Rate**: 90%
+ - **Passed**:    130
+ - **Failed**:    12
+ - **Pass Rate**: 91%
 
 ## Detailed Results
 | Test                                     | Status       | Message                              |
@@ -78,7 +78,7 @@ Generated: May 2026
 | 77_push_pop_macro                        | PASS         | Output matches                       |
 | 78_vla_label                             | PASS         | Output matches                       |
 | 79_vla_continue                          | PASS         | Output matches                       |
-| 80_flexarray                             | EXEC_FAIL    | non-zero exit                        |
+| 80_flexarray                             | PASS         | Output matches                       |
 | 81_types                                 | PASS         | Output matches                       |
 | 82_attribs_position                      | PASS         | Output matches                       |
 | 83_utf8_in_identifiers                   | PASS         | Output matches                       |
@@ -88,7 +88,7 @@ Generated: May 2026
 | 87_dead_code                             | PASS         | Output matches                       |
 | 88_codeopt                               | PASS         | Output matches                       |
 | 89_nocode_wanted                         | PASS         | Output matches                       |
-| 90_struct-init                           | MISMATCH     | Output does not match .expect        |
+| 90_struct-init                           | PASS         | Output matches                       |
 | 91_ptr_longlong_arith32                  | PASS         | Output matches                       |
 | 92_enum_bitfield                         | PASS         | Output matches                       |
 | 93_integer_promotion                     | MISMATCH     | Output does not match .expect        |
