@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: LGPL-2.1-or-later
-// Derived from chibicc by Rui Ueyama.
+// Parts derived from chibicc by Rui Ueyama.
 #include "rcc.h"
 #include <ctype.h>
 #include <stdlib.h>
@@ -1469,230 +1469,179 @@ char *preprocess(char *filename, char *p) {
     clear_macros();
     static char *builtin_expect_params[] = {"x", "y"};
 
+#define define_pre(name, value) define_macro(name, false, NULL, 0, value)
     // Add builtin macros first - BEFORE calling preprocess_file
-    if (!find_macro("__has_include"))
-        define_macro("__has_include", false, NULL, 0, "1");
-    if (!find_macro("__has_include_next"))
-        define_macro("__has_include_next", false, NULL, 0, "1");
-    // GCC builtin type macros (required for <stdatomic.h> and other system headers)
-    if (!find_macro("__SIZE_TYPE__"))
-        define_macro("__SIZE_TYPE__", false, NULL, 0, "long unsigned int");
-    if (!find_macro("__PTRDIFF_TYPE__"))
-        define_macro("__PTRDIFF_TYPE__", false, NULL, 0, "long int");
-    if (!find_macro("__WCHAR_TYPE__"))
-        define_macro("__WCHAR_TYPE__", false, NULL, 0,
+    define_pre("__has_include", "1");
+    define_pre("__has_include_next", "1");
+
+#include "gcc_predefined.h"
+
+#if 0
+    // OLD: GCC builtin type macros (required for <stdatomic.h> and other system headers)
+    define_pre("__SIZE_TYPE__", "long unsigned int");
+    define_pre("__PTRDIFF_TYPE__", "long int");
+    define_macro("__WCHAR_TYPE__", false, NULL, 0,
 #ifdef _WIN32
                      "unsigned short"
 #else
                      "unsigned int"
 #endif
         );
-    if (!find_macro("__WINT_TYPE__"))
-        define_macro("__WINT_TYPE__", false, NULL, 0, "unsigned int");
+    define_pre("__WINT_TYPE__", "unsigned int");
     // GCC atomic memory order builtins (required for <stdatomic.h>)
-    if (!find_macro("__ATOMIC_RELAXED"))
-        define_macro("__ATOMIC_RELAXED", false, NULL, 0, "0");
-    if (!find_macro("__ATOMIC_CONSUME"))
-        define_macro("__ATOMIC_CONSUME", false, NULL, 0, "1");
-    if (!find_macro("__ATOMIC_ACQUIRE"))
-        define_macro("__ATOMIC_ACQUIRE", false, NULL, 0, "2");
-    if (!find_macro("__ATOMIC_RELEASE"))
-        define_macro("__ATOMIC_RELEASE", false, NULL, 0, "3");
-    if (!find_macro("__ATOMIC_ACQ_REL"))
-        define_macro("__ATOMIC_ACQ_REL", false, NULL, 0, "4");
-    if (!find_macro("__ATOMIC_SEQ_CST"))
-        define_macro("__ATOMIC_SEQ_CST", false, NULL, 0, "5");
+    define_pre("__ATOMIC_RELAXED", "0");
+    define_pre("__ATOMIC_CONSUME", "1");
+    define_pre("__ATOMIC_ACQUIRE", "2");
+    define_pre("__ATOMIC_RELEASE", "3");
+    define_pre("__ATOMIC_ACQ_REL", "4");
+    define_pre("__ATOMIC_SEQ_CST", "5");
     // Integer type width macros
-    if (!find_macro("__INT8_TYPE__"))
-        define_macro("__INT8_TYPE__", false, NULL, 0, "signed char");
-    if (!find_macro("__INT16_TYPE__"))
-        define_macro("__INT16_TYPE__", false, NULL, 0, "short int");
-    if (!find_macro("__INT32_TYPE__"))
-        define_macro("__INT32_TYPE__", false, NULL, 0, "int");
-    if (!find_macro("__INT64_TYPE__"))
-        define_macro("__INT64_TYPE__", false, NULL, 0, "long int");
-    if (!find_macro("__UINT8_TYPE__"))
-        define_macro("__UINT8_TYPE__", false, NULL, 0, "unsigned char");
-    if (!find_macro("__UINT16_TYPE__"))
-        define_macro("__UINT16_TYPE__", false, NULL, 0, "short unsigned int");
-    if (!find_macro("__UINT32_TYPE__"))
-        define_macro("__UINT32_TYPE__", false, NULL, 0, "unsigned int");
-    if (!find_macro("__UINT64_TYPE__"))
-        define_macro("__UINT64_TYPE__", false, NULL, 0, "long unsigned int");
-    if (!find_macro("__CHAR8_TYPE__"))
-        define_macro("__CHAR8_TYPE__", false, NULL, 0, "unsigned char");
-    if (!find_macro("__CHAR16_TYPE__"))
-        define_macro("__CHAR16_TYPE__", false, NULL, 0, "short unsigned int");
-    if (!find_macro("__CHAR32_TYPE__"))
-        define_macro("__CHAR32_TYPE__", false, NULL, 0, "unsigned int");
-    if (!find_macro("__INTMAX_TYPE__"))
-        define_macro("__INTMAX_TYPE__", false, NULL, 0, "long int");
-    if (!find_macro("__UINTMAX_TYPE__"))
-        define_macro("__UINTMAX_TYPE__", false, NULL, 0, "long unsigned int");
-    if (!find_macro("__INTPTR_TYPE__"))
-        define_macro("__INTPTR_TYPE__", false, NULL, 0, "long int");
-    if (!find_macro("__UINTPTR_TYPE__"))
-        define_macro("__UINTPTR_TYPE__", false, NULL, 0, "long unsigned int");
-    if (!find_macro("__INT_LEAST8_TYPE__"))
-        define_macro("__INT_LEAST8_TYPE__", false, NULL, 0, "signed char");
-    if (!find_macro("__INT_LEAST16_TYPE__"))
-        define_macro("__INT_LEAST16_TYPE__", false, NULL, 0, "short int");
-    if (!find_macro("__INT_LEAST32_TYPE__"))
-        define_macro("__INT_LEAST32_TYPE__", false, NULL, 0, "int");
-    if (!find_macro("__INT_LEAST64_TYPE__"))
-        define_macro("__INT_LEAST64_TYPE__", false, NULL, 0, "long int");
-    if (!find_macro("__UINT_LEAST8_TYPE__"))
-        define_macro("__UINT_LEAST8_TYPE__", false, NULL, 0, "unsigned char");
-    if (!find_macro("__UINT_LEAST16_TYPE__"))
-        define_macro("__UINT_LEAST16_TYPE__", false, NULL, 0, "short unsigned int");
-    if (!find_macro("__UINT_LEAST32_TYPE__"))
-        define_macro("__UINT_LEAST32_TYPE__", false, NULL, 0, "unsigned int");
-    if (!find_macro("__UINT_LEAST64_TYPE__"))
-        define_macro("__UINT_LEAST64_TYPE__", false, NULL, 0, "long unsigned int");
-    if (!find_macro("__INT_FAST8_TYPE__"))
-        define_macro("__INT_FAST8_TYPE__", false, NULL, 0, "signed char");
-    if (!find_macro("__INT_FAST16_TYPE__"))
-        define_macro("__INT_FAST16_TYPE__", false, NULL, 0, "long int");
-    if (!find_macro("__INT_FAST32_TYPE__"))
-        define_macro("__INT_FAST32_TYPE__", false, NULL, 0, "long int");
-    if (!find_macro("__INT_FAST64_TYPE__"))
-        define_macro("__INT_FAST64_TYPE__", false, NULL, 0, "long int");
-    if (!find_macro("__UINT_FAST8_TYPE__"))
-        define_macro("__UINT_FAST8_TYPE__", false, NULL, 0, "unsigned char");
-    if (!find_macro("__UINT_FAST16_TYPE__"))
-        define_macro("__UINT_FAST16_TYPE__", false, NULL, 0, "long unsigned int");
-    if (!find_macro("__UINT_FAST32_TYPE__"))
-        define_macro("__UINT_FAST32_TYPE__", false, NULL, 0, "long unsigned int");
-    if (!find_macro("__UINT_FAST64_TYPE__"))
-        define_macro("__UINT_FAST64_TYPE__", false, NULL, 0, "long unsigned int");
-    if (!find_macro("__SIG_ATOMIC_TYPE__"))
-        define_macro("__SIG_ATOMIC_TYPE__", false, NULL, 0, "int");
-    if (!find_macro("_Atomic"))
-        define_macro("_Atomic", false, NULL, 0, "");
+    define_pre("__INT8_TYPE__", "signed char");
+    define_pre("__INT16_TYPE__", "short int");
+    define_pre("__INT32_TYPE__", "int");
+    define_pre("__INT64_TYPE__", "long int");
+    define_pre("__UINT8_TYPE__", "unsigned char");
+    define_pre("__UINT16_TYPE__", "short unsigned int");
+    define_pre("__UINT32_TYPE__", "unsigned int");
+    define_pre("__UINT64_TYPE__", "long unsigned int");
+    define_pre("__CHAR8_TYPE__", "unsigned char");
+    define_pre("__CHAR16_TYPE__", "short unsigned int");
+    define_pre("__CHAR32_TYPE__", "unsigned int");
+    define_pre("__INTMAX_TYPE__", "long int");
+    define_pre("__UINTMAX_TYPE__", "long unsigned int");
+    define_pre("__INTPTR_TYPE__", "long int");
+    define_pre("__UINTPTR_TYPE__", "long unsigned int");
+    define_pre("__INT_LEAST8_TYPE__", "signed char");
+    define_pre("__INT_LEAST16_TYPE__", "short int");
+    define_pre("__INT_LEAST32_TYPE__", "int");
+    define_pre("__INT_LEAST64_TYPE__", "long int");
+    define_pre("__UINT_LEAST8_TYPE__", "unsigned char");
+    define_pre("__UINT_LEAST16_TYPE__", "short unsigned int");
+    define_pre("__UINT_LEAST32_TYPE__", "unsigned int");
+    define_pre("__UINT_LEAST64_TYPE__", "long unsigned int");
+    define_pre("__INT_FAST8_TYPE__", "signed char");
+    define_pre("__INT_FAST16_TYPE__", "long int");
+    define_pre("__INT_FAST32_TYPE__", "long int");
+    define_pre("__INT_FAST64_TYPE__", "long int");
+    define_pre("__UINT_FAST8_TYPE__", "unsigned char");
+    define_pre("__UINT_FAST16_TYPE__", "long unsigned int");
+    define_pre("__UINT_FAST32_TYPE__", "long unsigned int");
+    define_pre("__UINT_FAST64_TYPE__", "long unsigned int");
+    define_pre("__SIG_ATOMIC_TYPE__", "int");
+    define_pre("_Atomic", "");
 #ifdef _WIN32
-    if (!find_macro("_WIN32"))
-        define_macro("_WIN32", false, NULL, 0, "1");
-    if (!find_macro("__LLP64__"))
-        define_macro("__LLP64__", false, NULL, 0, "1");
+    define_pre("_WIN32", "1");
+    define_pre("__LLP64__", "1");
 #elif defined(__linux__)
-    if (!find_macro("__linux__"))
-        define_macro("__linux__", false, NULL, 0, "1");
+    define_pre("__linux__", "1");
 #elif defined(__APPLE__)
-    if (!find_macro("__APPLE__"))
-        define_macro("__APPLE__", false, NULL, 0, "1");
-    if (!find_macro("__MACH__"))
-        define_macro("__MACH__", false, NULL, 0, "1");
+    define_pre("__APPLE__", "1");
+    define_pre("__MACH__", "1");
 #elif defined(__FreeBSD__)
-    if (!find_macro("__FreeBSD__"))
-        define_macro("__FreeBSD__", false, NULL, 0, "1");
+    define_pre("__FreeBSD__", "1");
 #elif defined(__NetBSD__)
-    if (!find_macro("__NetBSD__"))
-        define_macro("__NetBSD__", false, NULL, 0, "1");
+    define_pre("__NetBSD__", "1");
 #elif defined(__OpenBSD__)
-    if (!find_macro("__OpenBSD__"))
-        define_macro("__OpenBSD__", false, NULL, 0, "1");
+    define_pre("__OpenBSD__", "1");
 #elif defined(__DragonFly__)
-    if (!find_macro("__DragonFly__"))
-        define_macro("__DragonFly__", false, NULL, 0, "1");
+    define_pre("__DragonFly__", "1");
 #endif
 #if !defined(_WIN32)
-    if (!find_macro("__unix"))
-        define_macro("__unix", false, NULL, 0, "1");
-    if (!find_macro("__unix__"))
-        define_macro("__unix__", false, NULL, 0, "1");
-    if (!find_macro("__LP64__"))
-        define_macro("__LP64__", false, NULL, 0, "1");
+    define_pre("__unix", "1");
+    define_pre("__unix__", "1");
+    define_pre("__LP64__", "1");
 #endif
-    if (!find_macro("__x86_64__"))
-        define_macro("__x86_64__", false, NULL, 0, "1");
-    if (!find_macro("__x86_64"))
-        define_macro("__x86_64", false, NULL, 0, "1");
-    if (!find_macro("__amd64__"))
-        define_macro("_amd64__", false, NULL, 0, "1");
-    if (!find_macro("__amd64"))
-        define_macro("_amd64", false, NULL, 0, "1");
-    if (!find_macro("__builtin_expect"))
-        define_macro("__builtin_expect", true, builtin_expect_params, 2, "x");
-    if (!find_macro("__builtin_abort"))
-        define_macro("__builtin_abort", false, NULL, 0, "abort");
-    if (!find_macro("__builtin_malloc"))
-        define_macro("__builtin_malloc", false, NULL, 0, "malloc");
-    if (!find_macro("__builtin_calloc"))
-        define_macro("__builtin_calloc", false, NULL, 0, "calloc");
-    if (!find_macro("__builtin_realloc"))
-        define_macro("__builtin_realloc", false, NULL, 0, "realloc");
-    if (!find_macro("__builtin_free"))
-        define_macro("__builtin_free", false, NULL, 0, "free");
-    if (!find_macro("__builtin_memcpy"))
-        define_macro("__builtin_memcpy", false, NULL, 0, "memcpy");
-    if (!find_macro("__builtin_memcmp"))
-        define_macro("__builtin_memcmp", false, NULL, 0, "memcmp");
-    if (!find_macro("__builtin_memmove"))
-        define_macro("__builtin_memmove", false, NULL, 0, "memmove");
-    if (!find_macro("__builtin_memset"))
-        define_macro("__builtin_memset", false, NULL, 0, "memset");
-    if (!find_macro("__builtin_strlen"))
-        define_macro("__builtin_strlen", false, NULL, 0, "strlen");
-    if (!find_macro("__builtin_strcpy"))
-        define_macro("__builtin_strcpy", false, NULL, 0, "strcpy");
-    if (!find_macro("__builtin_strncpy"))
-        define_macro("__builtin_strncpy", false, NULL, 0, "strncpy");
-    if (!find_macro("__builtin_strcmp"))
-        define_macro("__builtin_strcmp", false, NULL, 0, "strcmp");
-    if (!find_macro("__builtin_strncmp"))
-        define_macro("__builtin_strncmp", false, NULL, 0, "strncmp");
-    if (!find_macro("__builtin_strcat"))
-        define_macro("__builtin_strcat", false, NULL, 0, "strcat");
-    if (!find_macro("__builtin_strncat"))
-        define_macro("__builtin_strncat", false, NULL, 0, "strncat");
-    if (!find_macro("__builtin_strchr"))
-        define_macro("__builtin_strchr", false, NULL, 0, "strchr");
-    if (!find_macro("__builtin_strrchr"))
-        define_macro("__builtin_strrchr", false, NULL, 0, "strrchr");
-    if (!find_macro("__builtin_strdup"))
-        define_macro("__builtin_strdup", false, NULL, 0, "strdup");
-    if (!find_macro("__builtin_alloca"))
-        define_macro("__builtin_alloca", false, NULL, 0, "alloca");
-    if (!find_macro("__builtin_unreachable"))
-        define_macro("__builtin_unreachable", true, NULL, 0, "while(1){}");
+    define_pre("__x86_64__", "1");
+    define_pre("__x86_64", "1");
+    define_pre("_amd64__", "1");
+    define_pre("_amd64", "1");
+    define_macro("__builtin_expect", true, builtin_expect_params, 2, "x");
+    define_pre("__builtin_abort", "abort");
+    define_pre("__builtin_malloc", "malloc");
+    define_pre("__builtin_calloc", "calloc");
+    define_pre("__builtin_realloc", "realloc");
+    define_pre("__builtin_free", "free");
+    // define_pre("__builtin_memcpy", "memcpy");
+    // define_pre("__builtin_memcmp", "memcmp");
+    define_pre("__builtin_memmove", "memmove");
+    // define_pre("__builtin_memset", "memset");
+    // define_pre("__builtin_strlen", "strlen");
+    // define_pre("__builtin_strcpy", "strcpy");
+    define_pre("__builtin_strncpy", "strncpy");
+    // define_pre("__builtin_strcmp", "strcmp");
+    define_pre("__builtin_strncmp", "strncmp");
+    define_pre("__builtin_strcat", "strcat");
+    define_pre("__builtin_strncat", "strncat");
+    // define_pre("__builtin_strchr", "strchr");
+    define_pre("__builtin_strrchr", "strrchr");
+    define_pre("__builtin_strdup", "strdup");
+    define_pre("__builtin_alloca", "alloca");
+    define_macro("__builtin_unreachable", true, NULL, 0, "while(1){}");
     // __builtin_va_* are handled as parser builtins, not macros
-    if (!find_macro("__GNUC__"))
-        define_macro("__GNUC__", false, NULL, 0, "4");
-    if (!find_macro("__GNUC_MINOR__"))
-        define_macro("__GNUC_MINOR__", false, NULL, 0, "0");
-    if (!find_macro("__STDC__"))
-        define_macro("__STDC__", false, NULL, 0, "1");
-    if (!find_macro("__STDC_VERSION__"))
-        define_macro("__STDC_VERSION__", false, NULL, 0, "201112L");
-    if (!find_macro("__extension__"))
-        define_macro("__extension__", false, NULL, 0, "");
+    define_pre("__GNUC__", "4");
+    define_pre("__GNUC_MINOR__", "0");
+    define_pre("__STDC__", "1");
+    define_pre("__STDC_VERSION__", "201112L");
+    define_pre("__extension__", "");
     // __builtin_va_list is injected as a typedef at parse time
     // Don't define __asm__ or __volatile__ as macros — the parser
     // handles __asm__, __asm, and asm directly.  Expanding them here
     // would strip the leading underscores and break the token-based
     // is_asm_keyword() detection in the parser.
-    if (!find_macro("__BYTE_ORDER__"))
-        define_macro("__BYTE_ORDER__", false, NULL, 0, "1234");
-    if (!find_macro("__CHAR_BIT__"))
-        define_macro("__CHAR_BIT__", false, NULL, 0, "8");
-    if (!find_macro("__INT_MAX__"))
-        define_macro("__INT_MAX__", false, NULL, 0, "2147483647");
-    if (!find_macro("__LONG_MAX__"))
-        define_macro("__LONG_MAX__", false, NULL, 0, "2147483647L");
-    if (!find_macro("__LONG_LONG_MAX__"))
-        define_macro("__LONG_LONG_MAX__", false, NULL, 0, "9223372036854775807LL");
-    if (!find_macro("__SIZEOF_INT__"))
-        define_macro("__SIZEOF_INT__", false, NULL, 0, "4");
-    if (!find_macro("__SIZEOF_LONG__"))
-        define_macro("__SIZEOF_LONG__", false, NULL, 0, "4");
-    if (!find_macro("__SIZEOF_LONG_LONG__"))
-        define_macro("__SIZEOF_LONG_LONG__", false, NULL, 0, "8");
-    if (!find_macro("__SIZEOF_POINTER__"))
-        define_macro("__SIZEOF_POINTER__", false, NULL, 0, "8");
-    if (!find_macro("__SIZEOF_FLOAT__"))
-        define_macro("__SIZEOF_FLOAT__", false, NULL, 0, "4");
-    if (!find_macro("__SIZEOF_DOUBLE__"))
-        define_macro("__SIZEOF_DOUBLE__", false, NULL, 0, "8");
+    define_pre("__BYTE_ORDER__", "1234");
+    define_pre("__CHAR_BIT__", "8");
+    define_pre("__INT_MAX__", "2147483647");
+    define_pre("__LONG_MAX__", "2147483647L");
+    define_pre("__LONG_LONG_MAX__", "9223372036854775807LL");
+    define_pre("__SIZEOF_INT__", "4");
+    define_pre("__SIZEOF_LONG__", "4");
+    define_pre("__SIZEOF_LONG_LONG__", "8");
+    define_pre("__SIZEOF_POINTER__", "8");
+    define_pre("__SIZEOF_FLOAT__", "4");
+    define_pre("__SIZEOF_DOUBLE__", "8");
+#endif
+
+#ifdef _WIN32
+    if (!find_macro("__LLP64__"))
+        define_pre("__LLP64__", "1");
+#else
+    if (!find_macro("__LP64__"))
+        define_pre("__LP64__", "1");
+#endif
+    if (!find_macro("_Atomic"))
+        add_undef("_Atomic");
+    define_pre("_Atomic", "");
+    define_macro("__builtin_expect", true, builtin_expect_params, 2, "x");
+    define_pre("__builtin_abort", "abort");
+    define_pre("__builtin_malloc", "malloc");
+    define_pre("__builtin_calloc", "calloc");
+    define_pre("__builtin_realloc", "realloc");
+    define_pre("__builtin_free", "free");
+    /* those are detected and replaced by builtins. TODO: vice-versa */
+    define_pre("__builtin_memcpy", "memcpy");
+    define_pre("__builtin_memcmp", "memcmp");
+    define_pre("__builtin_memset", "memset");
+    define_pre("__builtin_strlen", "strlen");
+    define_pre("__builtin_strcpy", "strcpy");
+    define_pre("__builtin_strcmp", "strcmp");
+    /* those not. TODO why define them then? */
+    define_pre("__builtin_memmove", "memmove");
+    define_pre("__builtin_strncpy", "strncpy");
+    define_pre("__builtin_strncmp", "strncmp");
+    define_pre("__builtin_strcat", "strcat");
+    define_pre("__builtin_strncat", "strncat");
+    define_pre("__builtin_strchr", "strchr");
+    define_pre("__builtin_strrchr", "strrchr");
+    define_pre("__builtin_strdup", "strdup");
+    define_pre("__builtin_alloca", "alloca");
+    define_macro("__builtin_unreachable", true, NULL, 0, "while(1){}");
+    // __builtin_va_* are handled as parser builtins, not macros
+    define_pre("__extension__", "");
+    // __builtin_va_list is injected as a typedef at parse time
+    // Don't define __asm__ or __volatile__ as macros — the parser
+    // handles __asm__, __asm, and asm directly.  Expanding them here
+    // would strip the leading underscores and break the token-based
+    // is_asm_keyword() detection in the parser.
 
     SplicedInput spliced = splice_lines_with_counts(p);
     char *result = preprocess_file(canonical_path(filename), spliced.text, spliced.line_counts);

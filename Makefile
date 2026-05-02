@@ -46,11 +46,14 @@ $(TARGET): $(OBJS) $(MINGW_O)
 src/sysinc_paths.h:
 	./tools/get-sysinc-paths.sh $(CC) > $@
 
+src/gcc_predefined.h:
+	$(CC) -dM -E - < /dev/null | awk -f tools/get-gcc-predefined.awk > $@
+
 $(MINGW_O): lib/mingw.c
 	$(CC) $(CFLAGS) -c $< -o $@
 src/main$(OBJ_EXT): src/main.c src/sysinc_paths.h
 	$(CC) $(CFLAGS) -c $< -o $@ -DGCC=\"$(CC)\" $(DEF_INCDIR) -DVERSION=\"$(VERSION)\" -DMACHINE=\"$(MACHINE)\"
-src/preprocess$(OBJ_EXT): src/preprocess.c src/sysinc_paths.h
+src/preprocess$(OBJ_EXT): src/preprocess.c src/sysinc_paths.h src/gcc_predefined.h
 	$(CC) $(CFLAGS) -c $< -o $@ $(DEF_INCDIR)
 %$(OBJ_EXT): %.c
 	$(CC) $(CFLAGS) -c $< -o $@
@@ -117,7 +120,7 @@ endif
 	rm -rf rcc-$(VERSION)-src
 
 clean:
-	rm -f $(OBJS) $(TARGET) $(TARGET).exe src/sysinc_paths.h fred.txt *.s
+	rm -f $(OBJS) $(TARGET) $(TARGET).exe src/sysinc_paths.h src/gcc_predefined.h fred.txt *.s
 	if command -v git > /dev/null 2>&1; then \
 	  cd tinycc && git reset --hard && git clean -dxf tests/tests2; fi
 
