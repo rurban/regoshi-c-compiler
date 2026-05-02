@@ -12,6 +12,9 @@ Set-Location $ScriptDir
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 $OutputEncoding          = [System.Text.Encoding]::UTF8
 
+Write-Host "OutputEncoding : $([Console]::OutputEncoding.EncodingName)  (CodePage $([Console]::OutputEncoding.CodePage))" -ForegroundColor DarkCyan
+Write-Host "chcp           : $(& chcp)" -ForegroundColor DarkCyan
+
 $RCCFLAGS = ""
 if ($O1) { $RCCFLAGS = "-O1" }
 
@@ -108,8 +111,8 @@ foreach ($file in $TestFiles) {
     $upstreamExpect = Join-Path $TestDir "$base.expect"
     $fixedUp = $false
     if (Test-Path $fixupFile) {
-        $fixupContent = Get-Content $fixupFile -Raw
-        $upstreamContent = Get-Content $upstreamExpect -Raw -ErrorAction SilentlyContinue
+        $fixupContent = Get-Content $fixupFile -Raw -Encoding UTF8
+        $upstreamContent = Get-Content $upstreamExpect -Raw -Encoding UTF8 -ErrorAction SilentlyContinue
         if ($fixupContent -ne $upstreamContent) {
             Copy-Item $upstreamExpect "$upstreamExpect.orig" -Force
             Copy-Item $fixupFile $upstreamExpect -Force
@@ -211,7 +214,7 @@ foreach ($file in $TestFiles) {
     # 3. Verification
     $expectFile = if (Test-Path $fixupFile) { $fixupFile } else { $upstreamExpect }
     if (Test-Path $expectFile) {
-        $expectedRaw = Get-Content $expectFile -Raw
+        $expectedRaw = Get-Content $expectFile -Raw -Encoding UTF8
         $expectedOutput = if ($null -eq $expectedRaw) { "" } else { $expectedRaw.Trim() }
 
         # Normalize: CRLF→LF, strip trailing whitespace per line
@@ -243,6 +246,28 @@ foreach ($file in $TestFiles) {
             }
             $Failed++
             $actualOutput | Out-File $outputFile -Encoding utf8
+
+            # Diagnostics: hex dump of actual vs expected bytes (catches encoding bugs)
+            $actBytes = [System.Text.Encoding]::UTF8.GetBytes($normActual)
+            $expBytes = [System.Text.Encoding]::UTF8.GetBytes($normExpected)
+            Write-Host "  actual  hex: $(($actBytes | Select-Object -First 48 | ForEach-Object { '{0:X2}' -f $_ }) -join ' ')" -ForegroundColor DarkYellow
+            Write-Host "  expect  hex: $(($expBytes | Select-Object -First 48 | ForEach-Object { '{0:X2}' -f $_ }) -join ' ')" -ForegroundColor DarkYellow
+
+            # Diagnostics: emit the assembly for string literals so we can see
+            # whether the compiler encoded the bytes correctly.
+            $asmFile = Join-Path $TestDir "$base.s"
+            $asmArgs = @()
+            if ($RCCFLAGS) { $asmArgs += $RCCFLAGS }
+            $asmArgs += "-S"; $asmArgs += $src; $asmArgs += "-o"; $asmArgs += $asmFile
+            $null = Start-Process -FilePath $RCC -ArgumentList $asmArgs -PassThru -Wait -ErrorAction SilentlyContinue
+            if (Test-Path $asmFile) {
+                $asmLines = Get-Content $asmFile | Where-Object { $_ -match '^\s*\.(byte|2byte|4byte|ascii|string|LC\d)' }
+                if ($asmLines) {
+                    Write-Host "  --- string data from $base.s ---" -ForegroundColor DarkCyan
+                    $asmLines | Select-Object -First 40 | ForEach-Object { Write-Host "  $_" -ForegroundColor DarkCyan }
+                }
+                Remove-Item $asmFile -Force -ErrorAction SilentlyContinue
+            }
         }
     } else {
         # No expect file: Assume success if it runs
