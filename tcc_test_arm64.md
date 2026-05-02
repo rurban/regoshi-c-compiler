@@ -3,9 +3,9 @@ Generated: May 2026
 
 ## Summary
  - **Total**:     142
- - **Passed**:    130
- - **Failed**:    12
- - **Pass Rate**: 91%
+ - **Passed**:    131
+ - **Failed**:    11
+ - **Pass Rate**: 92%
 
 ## Detailed Results
 | Test                                     | Status       | Message                              |
@@ -91,7 +91,7 @@ Generated: May 2026
 | 90_struct-init                           | PASS         | Output matches                       |
 | 91_ptr_longlong_arith32                  | PASS         | Output matches                       |
 | 92_enum_bitfield                         | PASS         | Output matches                       |
-| 93_integer_promotion                     | MISMATCH     | Output does not match .expect        |
+| 93_integer_promotion                     | PASS         | Output matches                       |
 | 94_generic                               | PASS         | Output matches                       |
 | 95_bitfields                             | MISMATCH     | Output does not match .expect        |
 | 95_bitfields_ms                          | MISMATCH     | Output does not match .expect        |

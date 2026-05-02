@@ -138,7 +138,7 @@ This fork passes now:
 - [141/141 tests](tcc_test_linux.md) on linux
 - [141/141 tests](tcc_test_mingw_cross.md.md) on mingw-cross
 - [106/109 tests](tcc_test_mingw.md) on windows native
-- [133/141 tests](tcc_test_arm64_cross.md.md) on arm64-cross (elf)
+- [138/141 tests](tcc_test_arm64_cross.md.md) on arm64-cross (elf)
 - [133/141 tests](tcc_test_darwin_cross.md) on darwin-cross (compilation only)
 - [127/141 tests](tcc_test_arm64.md) on arm64-darwin native
   For the c-testsuite it passes 220/220.

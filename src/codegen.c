@@ -1467,8 +1467,21 @@ static void emit_load(Type *ty, int r, char *addr) {
     int ta = -1;
     if (base_reg_conflicts_with_dest(addr, r)) {
         ta = alloc_reg();
-        printf("  mov %s, %s\n", reg64[ta], reg64[r]);
-        addr = format("[%s]", reg64[ta]);
+        if (ta == r) {
+            // alloc_reg() spilled r and returned it.  Loading into r would
+            // overwrite the base address, and free_reg(ta) would unspill
+            // and clobber the loaded value.  Use x16 (scratch, not in pool)
+            // for the base copy instead.
+            used_regs &= ~(1 << ta);
+            if (spilled_regs & (1 << ta))
+                spilled_regs &= ~(1 << ta);
+            printf("  mov x16, %s\n", reg64[r]);
+            addr = "[x16]";
+            ta = -1;
+        } else {
+            printf("  mov %s, %s\n", reg64[ta], reg64[r]);
+            addr = format("[%s]", reg64[ta]);
+        }
     }
 
     if (sscanf(addr, "[%31[^,], #%d]", base, &off) == 2 && off < -255) {
@@ -2482,10 +2495,8 @@ static int gen(Node *node) {
             if (bw < load_bits) {
                 if (node->member->ty->is_unsigned || node->member->ty->is_enum) {
                     unsigned long long mask = (1ULL << bw) - 1;
-                    int tmp2 = alloc_reg();
-                    emit_mov_imm64(reg64[tmp2], mask);
-                    printf("  and %s, %s, %s\n", reg64[r], reg64[r], reg64[tmp2]);
-                    free_reg(tmp2);
+                    emit_mov_imm64("x16", mask);
+                    printf("  and %s, %s, x16\n", reg64[r], reg64[r]);
                 } else {
                     int shift = 64 - bw;
                     printf("  lsl %s, %s, #%d\n", reg64[r], reg64[r], shift);
@@ -2544,10 +2555,8 @@ static int gen(Node *node) {
             if (bw < load_bits) {
                 if (node->member->ty->is_unsigned || node->member->ty->is_enum) {
                     unsigned long long mask = (1ULL << bw) - 1;
-                    int t = alloc_reg();
-                    emit_mov_imm64(reg64[t], mask);
-                    printf("  and %s, %s, %s\n", reg64[r], reg64[r], reg64[t]);
-                    free_reg(t);
+                    emit_mov_imm64("x16", mask);
+                    printf("  and %s, %s, x16\n", reg64[r], reg64[r]);
                 } else {
                     int shift = 64 - bw;
                     printf("  lsl %s, %s, #%d\n", reg64[r], reg64[r], shift);
@@ -4042,6 +4051,10 @@ static int peep_pattern2(char **lines, int li, int lj) {
     if (peep_arm_str_fp(lines[li], sr, sizeof(sr), &off1) &&
         peep_arm_ldr_fp(lines[lj], dr, sizeof(dr), &off2) &&
         off1 == off2) {
+        // Reject mismatched sizes (e.g. str xN,[fp] / ldr wN,[fp]) because
+        // mov wN, xN is not a valid ARM64 instruction.
+        if (sr[0] != dr[0])
+            return 0;
         char *newl = format("  mov %s, %s", dr, sr);
         lines[lj] = strdup(newl);
         return 1;
