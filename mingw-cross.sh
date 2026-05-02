@@ -64,6 +64,11 @@ if [ ! -f "$HOME/.wine/drive_c/windows/system32/libwinpthread-1.dll" ]; then
        "$HOME/.wine/drive_c/windows/system32/" 2>/dev/null || true
 fi
 
+# Ensure libmingw helper object is built (needed for atexit/on_exit etc.)
+if [ ! -f "$scriptdir/lib/mingw.obj" ]; then
+    x86_64-w64-mingw32-gcc -c "$scriptdir/lib/mingw.c" -o "$scriptdir/lib/mingw.obj" || exit 1
+fi
+
 s_files=""
 for input in $inputs; do
 	TMP_S="$(mktemp -u /tmp/mingw_cross_XXXXXX.s)"
@@ -76,4 +81,4 @@ for input in $inputs; do
 done
 
 # shellcheck disable=SC2086
-x86_64-w64-mingw32-gcc -o "$output" $s_files "$scriptdir/lib/mingw.o" && rm -f $s_files
+x86_64-w64-mingw32-gcc -o "$output" $s_files "$scriptdir/lib/mingw.obj" && rm -f $s_files
