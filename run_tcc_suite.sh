@@ -233,7 +233,8 @@ $1
 $1
 "*) return 0 ;; esac
         fi
-	if [ "$RCC" = "$SCRIPT_DIR/arm64-cross.sh" ]; then
+	if [ "$RCC" = "$SCRIPT_DIR/arm64-cross.sh" ] || \
+           [ "$RCC" = "$SCRIPT_DIR/darwin-cross.sh" ]; then
 		case "$ARM64_SKIP_TESTS" in *"
 $1
 "*) return 0 ;; esac
@@ -553,7 +554,7 @@ printf "Report saved to %s\n" "$REPORT_FILE"
 if [ "$REPORT_FILE" = "$SCRIPT_DIR/tcc_test_arm64.md" ]; then
     [ "$passed" -ge 135 ]
 elif [ "$RCC" = "$SCRIPT_DIR/darwin-cross.sh" ]; then
-    [ "$passed" -ge 135 ]
+    [ "$passed" -ge 137 ]
 elif [ "$RCC" = "$SCRIPT_DIR/arm64-cross.sh" ]; then
     [ "$passed" -ge 142 ]
 elif [ "$RCC" = "$SCRIPT_DIR/mingw-cross.sh" ]; then

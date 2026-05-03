@@ -151,6 +151,20 @@ static void add_type_internal(Node *node) {
     for (Node *n = node->args; n; n = n->next)
         add_type_internal(n);
 
+    // Atomic nodes: propagate types (no type computation needed here,
+    // types are set by the parser in unary())
+    switch (node->kind) {
+    case ND_ATOMIC_LOAD:
+    case ND_ATOMIC_STORE:
+    case ND_ATOMIC_EXCHANGE:
+    case ND_ATOMIC_CAS:
+    case ND_ATOMIC_FENCE:
+    case ND_ATOMIC_FETCH_OP:
+        return;
+    default:
+        break;
+    }
+
     switch (node->kind) {
     case ND_ADD:
     case ND_SUB: {

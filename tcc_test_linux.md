@@ -3,9 +3,9 @@ Generated: May 2026
 
 ## Summary
  - **Total**:     145
- - **Passed**:    143
- - **Failed**:    2
- - **Pass Rate**: 98%
+ - **Passed**:    144
+ - **Failed**:    1
+ - **Pass Rate**: 99%
 
 ## Detailed Results
 | Test                                     | Status       | Message                              |
@@ -123,7 +123,7 @@ Generated: May 2026
 | 121_struct_return                        | PASS         | Output matches                       |
 | 122_vla_reuse                            | PASS         | Output matches                       |
 | 123_vla_bug                              | PASS         | Output matches                       |
-| 124_atomic_counter                       | COMPILE_FAIL | rcc returned non-zero                |
+| 124_atomic_counter                       | PASS         | Output matches                       |
 | 125_atomic_misc                          | COMPILE_FAIL | executable missing                   |
 | 126_bound_global                         | SKIP         | Skipped                              |
 | 127_asm_goto                             | PASS         | Output matches                       |
@@ -161,7 +161,7 @@ Generated: May 2026
 | test_ptr                                 | PASS         | exit=0                               |
 | test_real                                | PASS         | exit=0                               |
 | test_self_include2                       | PASS         | exit=1                               |
-| test_signextend                          | PASS         | exit=0                               |
+| test_signextend                          | PASS         | exit=1                               |
 | test_simple                              | PASS         | exit=1                               |
 | test_simple2                             | PASS         | exit=1                               |
 | test_str                                 | PASS         | exit=0                               |

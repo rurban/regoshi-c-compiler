@@ -3,9 +3,9 @@ Generated: May 2026
 
 ## Summary
  - **Total**:     144
- - **Passed**:    142
- - **Failed**:    2
- - **Pass Rate**: 98%
+ - **Passed**:    143
+ - **Failed**:    1
+ - **Pass Rate**: 99%
 
 ## Detailed Results
 | Test                                     | Status       | Message                              |
@@ -123,7 +123,7 @@ Generated: May 2026
 | 121_struct_return                        | PASS         | Output matches                       |
 | 122_vla_reuse                            | PASS         | Output matches                       |
 | 123_vla_bug                              | PASS         | Output matches                       |
-| 124_atomic_counter                       | COMPILE_FAIL | rcc returned non-zero                |
+| 124_atomic_counter                       | PASS         | Output matches                       |
 | 125_atomic_misc                          | COMPILE_FAIL | rcc returned non-zero                |
 | 126_bound_global                         | SKIP         | Skipped                              |
 | 127_asm_goto                             | SKIP         | Skipped                              |

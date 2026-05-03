@@ -3747,15 +3747,14 @@ static int gen(Node *node) {
         else
             emit_load(node->ty, r, format("[%s]", reg64[r_addr]));
 #else
-        printf("  mov %s, %s ptr [%s]\n", reg(r, sz < 4 ? 4 : sz), (sz == 1 ? "byte" : sz == 2 ? "word"
-                                                                        : sz == 4              ? "dword"
-                                                                                               : "qword"),
-               reg64[r_addr]);
         if (sz < 4) {
-            if (use_unsigned(node->ty))
-                zero_extend_to(r, sz, 4);
-            else
-                sign_extend_to(r, sz, 4);
+            printf("  %s %s, %s ptr [%s]\n",
+                   use_unsigned(node->ty) ? "movzx" : "movsx",
+                   reg(r, 4),
+                   sz == 1 ? "byte" : "word",
+                   reg64[r_addr]);
+        } else {
+            printf("  mov %s, %s ptr [%s]\n", reg(r, sz), sz == 4 ? "dword" : "qword", reg64[r_addr]);
         }
         if (ord == MEMORDER_SEQ_CST)
             printf("  mfence\n");
@@ -3771,6 +3770,7 @@ static int gen(Node *node) {
         int r_addr = gen(node->lhs);
         int r_val = gen(node->rhs);
         int sz = node->lhs->ty && node->lhs->ty->base ? node->lhs->ty->base->size : 4;
+        if (sz < 1 || sz > 8) sz = 4;
         int ord = node->atomic_ord;
 #ifdef ARCH_ARM64
         char *sz_suffix = (sz == 1) ? "b" : (sz == 2) ? "h"
@@ -3824,6 +3824,7 @@ static int gen(Node *node) {
                                                                        : "qword"),
                reg64[r_addr], reg(r_val, sz));
         if (sz < 4) {
+            printf("  mov %s, %s\n", reg(r_result, sz), reg(r_val, sz));
             if (use_unsigned(node->ty))
                 zero_extend_to(r_result, sz, 4);
             else
@@ -3887,10 +3888,17 @@ static int gen(Node *node) {
         free_reg(r_expected);
 #else
         int r_expected = alloc_reg();
-        printf("  mov %s, %s ptr [%s]\n", sz == 8 ? "rax" : "eax", (sz == 1 ? "byte" : sz == 2 ? "word"
-                                                                        : sz == 4              ? "dword"
-                                                                                               : "qword"),
-               reg64[r_expectedaddr]);
+        Type *elem_ty_x86 = node->lhs->ty && node->lhs->ty->base ? node->lhs->ty->base : ty_int;
+        if (sz < 4) {
+            printf("  %s %s, %s ptr [%s]\n",
+                   use_unsigned(elem_ty_x86) ? "movzx" : "movsx",
+                   sz == 8 ? "rax" : "eax",
+                   sz == 1 ? "byte" : "word",
+                   reg64[r_expectedaddr]);
+        } else {
+            printf("  mov %s, %s ptr [%s]\n", sz == 8 ? "rax" : "eax",
+                   sz == 4 ? "dword" : "qword", reg64[r_expectedaddr]);
+        }
         printf("  lock cmpxchg %s ptr [%s], %s\n", (sz == 1 ? "byte" : sz == 2 ? "word"
                                                         : sz == 4              ? "dword"
                                                                                : "qword"),
@@ -3900,7 +3908,9 @@ static int gen(Node *node) {
         printf("  mov %s ptr [%s], %s\n", (sz == 1 ? "byte" : sz == 2 ? "word"
                                                : sz == 4              ? "dword"
                                                                       : "qword"),
-               reg64[r_expectedaddr], sz == 8 ? "rax" : "eax");
+               reg64[r_expectedaddr], sz == 1 ? "al" : sz == 2 ? "ax"
+                   : sz == 4                                   ? "eax"
+                                                               : "rax");
         free_reg(r_expected);
 #endif
         free_reg(r_desired);

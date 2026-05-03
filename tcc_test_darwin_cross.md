@@ -2,10 +2,10 @@
 Generated: May 2026
 
 ## Summary
- - **Total**:     142
- - **Passed**:    135
- - **Failed**:    7
- - **Pass Rate**: 95%
+ - **Total**:     145
+ - **Passed**:    137
+ - **Failed**:    8
+ - **Pass Rate**: 94%
 
 ## Detailed Results
 | Test                                     | Status       | Message                              |
@@ -123,8 +123,8 @@ Generated: May 2026
 | 121_struct_return                        | COMPILE_OK   | linked, (execution skipped)          |
 | 122_vla_reuse                            | COMPILE_OK   | linked, (execution skipped)          |
 | 123_vla_bug                              | COMPILE_OK   | linked, (execution skipped)          |
-| 124_atomic_counter                       | SKIP         | Skipped                              |
-| 125_atomic_misc                          | SKIP         | Skipped                              |
+| 124_atomic_counter                       | COMPILE_OK   | linked, (execution skipped)          |
+| 125_atomic_misc                          | COMPILE_FAIL | rcc returned non-zero                |
 | 126_bound_global                         | SKIP         | Skipped                              |
 | 127_asm_goto                             | COMPILE_FAIL | rcc returned non-zero                |
 | 128_run_atexit                           | COMPILE_OK   | linked, (execution skipped)          |
@@ -135,7 +135,7 @@ Generated: May 2026
 | 133_old_func                             | COMPILE_OK   | linked, (execution skipped)          |
 | 134_double_to_signed                     | COMPILE_OK   | linked, (execution skipped)          |
 | 135_func_arg_struct_compare              | COMPILE_OK   | linked, (execution skipped)          |
-| 136_atomic_gcc_style                     | SKIP         | Skipped                              |
+| 136_atomic_gcc_style                     | COMPILE_OK   | linked, (execution skipped)          |
 | 137_funcall_struct_args                  | COMPILE_OK   | linked, (execution skipped)          |
 | test_arm64_asm                           | PASS         | exit=126                             |
 | test_bitfields                           | PASS         | exit=126                             |

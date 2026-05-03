@@ -3362,6 +3362,24 @@ static Node *primary(Token **rest, Token *tok) {
     return node;
 }
 
+static int parse_memory_order(Token **rest) {
+    Token *tok = *rest;
+    if (tok->kind == TK_NUM) {
+        *rest = tok->next;
+        return (int)tok->val;
+    }
+    EnumConst *ec = find_enum_const(tok);
+    if (ec) {
+        *rest = tok->next;
+        return (int)ec->val;
+    }
+    Node *node = assign(rest, tok);
+    add_type(node);
+    if (node->kind == ND_NUM)
+        return (int)node->val;
+    return MEMORDER_SEQ_CST;
+}
+
 
 static Node *unary(Token **rest, Token *tok) {
     if (equalc(tok, "__builtin_offsetof")) {
@@ -3452,9 +3470,7 @@ static Node *unary(Token **rest, Token *tok) {
         Node *node = new_node(ND_ATOMIC_FENCE, tok);
         node->atomic_ord = MEMORDER_SEQ_CST;
         tok = skip(tok->next, "(");
-        if (tok->kind == TK_NUM)
-            node->atomic_ord = (int)tok->val;
-        tok = tok->next;
+        node->atomic_ord = parse_memory_order(&tok);
         *rest = skip(tok, ")");
         return node;
     }
@@ -3463,9 +3479,7 @@ static Node *unary(Token **rest, Token *tok) {
         node->atomic_signal_fence = true;
         node->atomic_ord = MEMORDER_SEQ_CST;
         tok = skip(tok->next, "(");
-        if (tok->kind == TK_NUM)
-            node->atomic_ord = (int)tok->val;
-        tok = tok->next;
+        node->atomic_ord = parse_memory_order(&tok);
         *rest = skip(tok, ")");
         return node;
     }
@@ -3475,11 +3489,10 @@ static Node *unary(Token **rest, Token *tok) {
         node->atomic_ord = MEMORDER_SEQ_CST;
         tok = skip(tok->next, "(");
         node->lhs = assign(&tok, tok);
-        tok = skip(tok, ",");
-        if (!equalc(tok, ")")) {
-            if (tok->kind == TK_NUM)
-                node->atomic_ord = (int)tok->val;
+        add_type(node->lhs);
+        if (equalc(tok, ",")) {
             tok = tok->next;
+            node->atomic_ord = parse_memory_order(&tok);
         }
         *rest = skip(tok, ")");
         node->rhs = new_num(1, start);
@@ -3492,11 +3505,10 @@ static Node *unary(Token **rest, Token *tok) {
         node->atomic_ord = MEMORDER_SEQ_CST;
         tok = skip(tok->next, "(");
         node->lhs = assign(&tok, tok);
-        tok = skip(tok, ",");
-        if (!equalc(tok, ")")) {
-            if (tok->kind == TK_NUM)
-                node->atomic_ord = (int)tok->val;
+        add_type(node->lhs);
+        if (equalc(tok, ",")) {
             tok = tok->next;
+            node->atomic_ord = parse_memory_order(&tok);
         }
         *rest = skip(tok, ")");
         node->rhs = new_num(0, start);
@@ -3511,10 +3523,7 @@ static Node *unary(Token **rest, Token *tok) {
         tok = skip(tok, ",");
         Node *node = new_node(ND_ATOMIC_LOAD, start);
         node->lhs = ptr;
-        node->atomic_ord = MEMORDER_SEQ_CST;
-        if (tok->kind == TK_NUM)
-            node->atomic_ord = (int)tok->val;
-        tok = tok->next;
+        node->atomic_ord = parse_memory_order(&tok);
         *rest = skip(tok, ")");
         if (ptr->ty->base)
             node->ty = ptr->ty->base;
@@ -3533,11 +3542,8 @@ static Node *unary(Token **rest, Token *tok) {
         Node *node = new_node(ND_ATOMIC_STORE, start);
         node->lhs = ptr;
         node->rhs = val;
-        node->atomic_ord = MEMORDER_SEQ_CST;
         tok = skip(tok, ",");
-        if (tok->kind == TK_NUM)
-            node->atomic_ord = (int)tok->val;
-        tok = tok->next;
+        node->atomic_ord = parse_memory_order(&tok);
         *rest = skip(tok, ")");
         node->ty = ty_void;
         return node;
@@ -3553,11 +3559,8 @@ static Node *unary(Token **rest, Token *tok) {
         Node *node = new_node(ND_ATOMIC_EXCHANGE, start);
         node->lhs = ptr;
         node->rhs = val;
-        node->atomic_ord = MEMORDER_SEQ_CST;
         tok = skip(tok, ",");
-        if (tok->kind == TK_NUM)
-            node->atomic_ord = (int)tok->val;
-        tok = tok->next;
+        node->atomic_ord = parse_memory_order(&tok);
         *rest = skip(tok, ")");
         if (ptr->ty->base)
             node->ty = ptr->ty->base;
@@ -3584,22 +3587,13 @@ static Node *unary(Token **rest, Token *tok) {
         node->atomic_weak = false;
         if (equalc(tok, ",")) {
             tok = tok->next;
-            if (tok->kind == TK_NUM) {
-                node->atomic_weak = !!tok->val;
-                tok = tok->next;
-            }
+            node->atomic_weak = !!parse_memory_order(&tok);
             if (equalc(tok, ",")) {
                 tok = tok->next;
-                if (tok->kind == TK_NUM) {
-                    node->atomic_ord = (int)tok->val;
-                    tok = tok->next;
-                }
+                node->atomic_ord = parse_memory_order(&tok);
                 if (equalc(tok, ",")) {
                     tok = tok->next;
-                    if (tok->kind == TK_NUM) {
-                        node->atomic_ord2 = (int)tok->val;
-                        tok = tok->next;
-                    }
+                    node->atomic_ord2 = parse_memory_order(&tok);
                 }
             }
         }
@@ -3618,12 +3612,9 @@ static Node *unary(Token **rest, Token *tok) {
     Node *node = new_node(ND_ATOMIC_FETCH_OP, start); \
     node->lhs = ptr; \
     node->rhs = val; \
-    node->atomic_ord = MEMORDER_SEQ_CST; \
     node->atomic_fetch_op = (op_val); \
     tok = skip(tok, ","); \
-    if (tok->kind == TK_NUM) \
-        node->atomic_ord = (int)tok->val; \
-    tok = tok->next; \
+    node->atomic_ord = parse_memory_order(&tok); \
     *rest = skip(tok, ")"); \
     if (ptr->ty->base) \
         node->ty = ptr->ty->base; \
@@ -3659,8 +3650,7 @@ static Node *unary(Token **rest, Token *tok) {
         node->atomic_fetch_op = 0;
         node->atomic_is_store = true;
         tok = skip(tok, ",");
-        if (tok->kind == TK_NUM) node->atomic_ord = (int)tok->val;
-        tok = tok->next;
+        node->atomic_ord = parse_memory_order(&tok);
         *rest = skip(tok, ")");
         node->ty = ptr->ty->base ? ptr->ty->base : ty_int;
         return node;
@@ -3680,8 +3670,7 @@ static Node *unary(Token **rest, Token *tok) {
         node->atomic_fetch_op = 1;
         node->atomic_is_store = true;
         tok = skip(tok, ",");
-        if (tok->kind == TK_NUM) node->atomic_ord = (int)tok->val;
-        tok = tok->next;
+        node->atomic_ord = parse_memory_order(&tok);
         *rest = skip(tok, ")");
         node->ty = ptr->ty->base ? ptr->ty->base : ty_int;
         return node;
@@ -3701,8 +3690,7 @@ static Node *unary(Token **rest, Token *tok) {
         node->atomic_fetch_op = 2;
         node->atomic_is_store = true;
         tok = skip(tok, ",");
-        if (tok->kind == TK_NUM) node->atomic_ord = (int)tok->val;
-        tok = tok->next;
+        node->atomic_ord = parse_memory_order(&tok);
         *rest = skip(tok, ")");
         node->ty = ptr->ty->base ? ptr->ty->base : ty_int;
         return node;
@@ -3722,8 +3710,7 @@ static Node *unary(Token **rest, Token *tok) {
         node->atomic_fetch_op = 3;
         node->atomic_is_store = true;
         tok = skip(tok, ",");
-        if (tok->kind == TK_NUM) node->atomic_ord = (int)tok->val;
-        tok = tok->next;
+        node->atomic_ord = parse_memory_order(&tok);
         *rest = skip(tok, ")");
         node->ty = ptr->ty->base ? ptr->ty->base : ty_int;
         return node;
@@ -3743,8 +3730,7 @@ static Node *unary(Token **rest, Token *tok) {
         node->atomic_fetch_op = 4;
         node->atomic_is_store = true;
         tok = skip(tok, ",");
-        if (tok->kind == TK_NUM) node->atomic_ord = (int)tok->val;
-        tok = tok->next;
+        node->atomic_ord = parse_memory_order(&tok);
         *rest = skip(tok, ")");
         node->ty = ptr->ty->base ? ptr->ty->base : ty_int;
         return node;
@@ -3764,8 +3750,7 @@ static Node *unary(Token **rest, Token *tok) {
         node->atomic_fetch_op = 5;
         node->atomic_is_store = true;
         tok = skip(tok, ",");
-        if (tok->kind == TK_NUM) node->atomic_ord = (int)tok->val;
-        tok = tok->next;
+        node->atomic_ord = parse_memory_order(&tok);
         *rest = skip(tok, ")");
         node->ty = ptr->ty->base ? ptr->ty->base : ty_int;
         return node;
