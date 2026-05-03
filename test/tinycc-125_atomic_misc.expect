@@ -38,6 +38,9 @@ nand_fetch: SUCCESS
 1
 
 [test_atomic_error_1]
+./tinycc/tests/tests2/125_atomic_misc.c:128: error: pointer expected
+     __atomic_load_n(i, 5);
+     ^~~~~~~~~~~~~~~
 
 [test_atomic_error_2]
 

@@ -2,10 +2,10 @@
 Generated: May 2026
 
 ## Summary
- - **Total**:     145
+ - **Total**:     147
  - **Passed**:    135
- - **Failed**:    10
- - **Pass Rate**: 93%
+ - **Failed**:    12
+ - **Pass Rate**: 91%
 
 ## Detailed Results
 | Test                                     | Status       | Message                              |
@@ -119,12 +119,12 @@ Generated: May 2026
 | 117_builtins                             | PASS         | Output matches                       |
 | 118_switch                               | PASS         | Output matches                       |
 | 119_random_stuff                         | MISMATCH     | Output does not match .expect        |
-| 120_alias                                | SKIP         | Skipped                              |
+| 120_alias                                | COMPILE_FAIL | executable missing                   |
 | 121_struct_return                        | PASS         | Output matches                       |
 | 122_vla_reuse                            | PASS         | Output matches                       |
 | 123_vla_bug                              | PASS         | Output matches                       |
 | 124_atomic_counter                       | MISMATCH     | Output does not match .expect        |
-| 125_atomic_misc                          | SKIP         | Skipped                              |
+| 125_atomic_misc                          | MISMATCH     | Output differs                       |
 | 126_bound_global                         | SKIP         | Skipped                              |
 | 127_asm_goto                             | COMPILE_FAIL | executable missing                   |
 | 128_run_atexit                           | COMPILE_FAIL | executable missing                   |

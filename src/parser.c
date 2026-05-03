@@ -3520,6 +3520,8 @@ static Node *unary(Token **rest, Token *tok) {
         tok = skip(tok->next, "(");
         Node *ptr = assign(&tok, tok);
         add_type(ptr);
+        if (ptr->ty->kind != TY_PTR && ptr->ty->kind != TY_ARRAY)
+            error_tok(start, "pointer expected");
         tok = skip(tok, ",");
         Node *node = new_node(ND_ATOMIC_LOAD, start);
         node->lhs = ptr;
