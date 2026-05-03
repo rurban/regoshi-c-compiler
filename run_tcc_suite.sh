@@ -332,6 +332,10 @@ while IFS= read -r src; do
                 # Try to compile and run; capture both stdout and stderr
                 if "$RCC" $RCCFLAGS -D$tname -o "$TMP_EXE" \
                     "$src" >"$TMP_OUT".err 2>&1; then
+                    # Also include any warnings emitted during successful compilation
+                    if [ -s "$TMP_OUT".err ]; then
+                        sed 's/\x1b\[[0-9;]*m//g' "$TMP_OUT".err >>"$TMP_OUT"
+                    fi
                     run_exe "$TMP_EXE" >>"$TMP_OUT" 2>&1 || true
                 else
                     # Compilation failed: capture error output, strip ANSI codes

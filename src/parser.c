@@ -3551,6 +3551,11 @@ static Node *unary(Token **rest, Token *tok) {
         add_type(ptr);
         if (ptr->ty->kind != TY_PTR && ptr->ty->kind != TY_ARRAY)
             error_tok(start, "pointer expected");
+        else {
+            Type *base = ptr->ty->base;
+            if (!base || base->size == 0 || base->size > 8 || (base->size & (base->size - 1)))
+                error_tok(start, "integral or integer-sized pointer target type expected");
+        }
         tok = skip(tok, ",");
         Node *node = new_node(ND_ATOMIC_LOAD, start);
         node->lhs = ptr;
@@ -3570,6 +3575,24 @@ static Node *unary(Token **rest, Token *tok) {
         tok = skip(tok, ",");
         Node *val = assign(&tok, tok);
         add_type(val);
+        if (ptr->ty->kind == TY_PTR || ptr->ty->kind == TY_ARRAY) {
+            Type *base = ptr->ty->base;
+            if (base) {
+                if (ty_const(base))
+                    warn_tok(start, "assignment of read-only location");
+                if (equalc(start, "__atomic_store_n")) {
+                    if (!val->ty) {
+                    } else if (is_integer(base) && (val->ty->kind == TY_PTR || val->ty->kind == TY_ARRAY))
+                        warn_tok(start, "assignment makes integer from pointer without a cast");
+                    else if (base->kind == TY_PTR && (val->ty->kind == TY_PTR || val->ty->kind == TY_ARRAY)) {
+                        Type *bbase = base->base, *vbase = val->ty->base;
+                        if (bbase && vbase && bbase->kind != TY_VOID && vbase->kind != TY_VOID &&
+                            (bbase->kind != vbase->kind || bbase->size != vbase->size))
+                            warn_tok(start, "assignment from incompatible pointer type");
+                    }
+                }
+            }
+        }
         Node *node = new_node(ND_ATOMIC_STORE, start);
         node->lhs = ptr;
         node->rhs = val;
@@ -3587,6 +3610,11 @@ static Node *unary(Token **rest, Token *tok) {
         tok = skip(tok, ",");
         Node *val = assign(&tok, tok);
         add_type(val);
+        if (ptr->ty->kind == TY_PTR || ptr->ty->kind == TY_ARRAY) {
+            Type *base = ptr->ty->base;
+            if (base && ty_const(base))
+                warn_tok(start, "assignment of read-only location");
+        }
         Node *node = new_node(ND_ATOMIC_EXCHANGE, start);
         node->lhs = ptr;
         node->rhs = val;
@@ -3606,9 +3634,19 @@ static Node *unary(Token **rest, Token *tok) {
         add_type(ptr);
         tok = skip(tok, ",");
         Node *expected = assign(&tok, tok);
+        add_type(expected);
         tok = skip(tok, ",");
         Node *desired = assign(&tok, tok);
         add_type(desired);
+        if ((ptr->ty->kind == TY_PTR || ptr->ty->kind == TY_ARRAY) && ptr->ty->base) {
+            Type *base = ptr->ty->base;
+            if ((expected->ty->kind == TY_PTR || expected->ty->kind == TY_ARRAY) && expected->ty->base) {
+                if (expected->ty->base->size != base->size)
+                    error_tok(start, "pointer target type mismatch in argument 2");
+            } else {
+                error_tok(start, "pointer target type mismatch in argument 2");
+            }
+        }
         Node *node = new_node(ND_ATOMIC_CAS, start);
         node->lhs = ptr;
         node->body = expected;
@@ -3640,6 +3678,13 @@ static Node *unary(Token **rest, Token *tok) {
     tok = skip(tok, ","); \
     Node *val = assign(&tok, tok); \
     add_type(val); \
+    if (ptr->ty->kind == TY_PTR || ptr->ty->kind == TY_ARRAY) { \
+        Type *base = ptr->ty->base; \
+        if (!base || base->kind == TY_PTR || base->size == 0 || base->size > 8 || (base->size & (base->size - 1))) \
+            error_tok(start, "integral or integer-sized pointer target type expected"); \
+        else if (ty_const(base)) \
+            warn_tok(start, "assignment of read-only location"); \
+    } \
     Node *node = new_node(ND_ATOMIC_FETCH_OP, start); \
     node->lhs = ptr; \
     node->rhs = val; \
