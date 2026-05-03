@@ -88,6 +88,7 @@ static Macro *macros;
 static OnceFile *once_files;
 static int pp_counter;
 static Macro *cmdline_macros;
+static Macro *saved_macros; // cmdline + builtins snapshot for fast reset
 static MacroStack *macro_stack;
 
 static const char *user_include_paths[64];
@@ -99,10 +100,10 @@ void add_include_path(const char *path) {
 }
 
 static void clear_macros(void) {
-    macros = cmdline_macros;
+    macros = saved_macros ? saved_macros : cmdline_macros;
     macro_stack = NULL;
     memset(macro_htab, 0, sizeof(macro_htab));
-    for (Macro *m = cmdline_macros; m; m = m->next)
+    for (Macro *m = macros; m; m = m->next)
         macro_ht_add(m);
 }
 
@@ -1538,12 +1539,14 @@ static char *preprocess_file(char *filename, char *input, int *line_counts) {
 
 char *preprocess(char *filename, char *p) {
     clear_macros();
+    static bool macros_inited = false;
     static char *builtin_expect_params[] = {"x", "y"};
 
+    if (!macros_inited) {
 #define define_pre(name, value) define_macro(name, false, NULL, 0, value)
-    // Add builtin macros first - BEFORE calling preprocess_file
-    define_pre("__has_include", "1");
-    define_pre("__has_include_next", "1");
+        // Add builtin macros first - BEFORE calling preprocess_file
+        define_pre("__has_include", "1");
+        define_pre("__has_include_next", "1");
 
 #include "gcc_predefined.h"
 
@@ -1686,46 +1689,50 @@ char *preprocess(char *filename, char *p) {
 #endif
 
 #ifdef _WIN32
-    if (!find_macro("__LLP64__"))
-        define_pre("__LLP64__", "1");
+        if (!find_macro("__LLP64__"))
+            define_pre("__LLP64__", "1");
 #else
-    if (!find_macro("__LP64__"))
-        define_pre("__LP64__", "1");
+        if (!find_macro("__LP64__"))
+            define_pre("__LP64__", "1");
 #endif
-    if (!find_macro("_Atomic"))
-        add_undef("_Atomic");
-    define_pre("_Atomic", "");
-    define_macro("__builtin_expect", true, builtin_expect_params, 2, "x");
-    define_pre("__builtin_abort", "abort");
-    define_pre("__builtin_malloc", "malloc");
-    define_pre("__builtin_calloc", "calloc");
-    define_pre("__builtin_realloc", "realloc");
-    define_pre("__builtin_free", "free");
-    /* those are detected and replaced by builtins. TODO: vice-versa */
-    define_pre("__builtin_memcpy", "memcpy");
-    define_pre("__builtin_memcmp", "memcmp");
-    define_pre("__builtin_memset", "memset");
-    define_pre("__builtin_strlen", "strlen");
-    define_pre("__builtin_strcpy", "strcpy");
-    define_pre("__builtin_strcmp", "strcmp");
-    /* those not. TODO why define them then? */
-    define_pre("__builtin_memmove", "memmove");
-    define_pre("__builtin_strncpy", "strncpy");
-    define_pre("__builtin_strncmp", "strncmp");
-    define_pre("__builtin_strcat", "strcat");
-    define_pre("__builtin_strncat", "strncat");
-    define_pre("__builtin_strchr", "strchr");
-    define_pre("__builtin_strrchr", "strrchr");
-    define_pre("__builtin_strdup", "strdup");
-    define_pre("__builtin_alloca", "alloca");
-    define_macro("__builtin_unreachable", true, NULL, 0, "while(1){}");
-    // __builtin_va_* are handled as parser builtins, not macros
-    define_pre("__extension__", "");
-    // __builtin_va_list is injected as a typedef at parse time
-    // Don't define __asm__ or __volatile__ as macros — the parser
-    // handles __asm__, __asm, and asm directly.  Expanding them here
-    // would strip the leading underscores and break the token-based
-    // is_asm_keyword() detection in the parser.
+        if (!find_macro("_Atomic"))
+            add_undef("_Atomic");
+        define_pre("_Atomic", "");
+        define_macro("__builtin_expect", true, builtin_expect_params, 2, "x");
+        define_pre("__builtin_abort", "abort");
+        define_pre("__builtin_malloc", "malloc");
+        define_pre("__builtin_calloc", "calloc");
+        define_pre("__builtin_realloc", "realloc");
+        define_pre("__builtin_free", "free");
+        /* those are detected and replaced by builtins. TODO: vice-versa */
+        define_pre("__builtin_memcpy", "memcpy");
+        define_pre("__builtin_memcmp", "memcmp");
+        define_pre("__builtin_memset", "memset");
+        define_pre("__builtin_strlen", "strlen");
+        define_pre("__builtin_strcpy", "strcpy");
+        define_pre("__builtin_strcmp", "strcmp");
+        /* those not. TODO why define them then? */
+        define_pre("__builtin_memmove", "memmove");
+        define_pre("__builtin_strncpy", "strncpy");
+        define_pre("__builtin_strncmp", "strncmp");
+        define_pre("__builtin_strcat", "strcat");
+        define_pre("__builtin_strncat", "strncat");
+        define_pre("__builtin_strchr", "strchr");
+        define_pre("__builtin_strrchr", "strrchr");
+        define_pre("__builtin_strdup", "strdup");
+        define_pre("__builtin_alloca", "alloca");
+        define_macro("__builtin_unreachable", true, NULL, 0, "while(1){}");
+        // __builtin_va_* are handled as parser builtins, not macros
+        define_pre("__extension__", "");
+        // __builtin_va_list is injected as a typedef at parse time
+        // Don't define __asm__ or __volatile__ as macros — the parser
+        // handles __asm__, __asm, and asm directly.  Expanding them here
+        // would strip the leading underscores and break the token-based
+        // is_asm_keyword() detection in the parser.
+#undef define_pre
+        saved_macros = macros;
+        macros_inited = true;
+    }
 
     SplicedInput spliced = splice_lines_with_counts(p);
     char *result = preprocess_file(canonical_path(filename), spliced.text, spliced.line_counts);
