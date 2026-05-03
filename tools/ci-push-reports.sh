@@ -41,24 +41,31 @@ gh run watch --exit-status "$run_id" || {
 
 echo "Downloading artifacts..."
 downloaded=
-for artifact in windows-reports macos-reports; do
-    rm -rf "$artifact"
-    if gh run download "$run_id" -n "$artifact" -D . 2>/dev/null; then
-        echo "  -> $artifact"
-        downloaded=yes
-    else
-        echo "  -> $artifact not found (skipping)" >&2
-    fi
-done
+files="bench/bench_report_mingw.md tcc_test_mingw.md bench/bench_report_darwin.md tcc_test_arm64.md"
+# shellcheck disable=SC2086
+rm -f $files
+if gh run download "$run_id" -D . 2>/dev/null; then
+    downloaded=yes
+else
+    echo "  -> no artifacts found (skipping)" >&2
+fi
 
 if [ -z "$downloaded" ]; then
     echo "No artifacts were downloaded, nothing to do."
     exit 0
 fi
+for f in $files; do
+    if [ -f "$f" ]; then
+        echo "Downloaded $f"
+    else
+        git checkout "$f"
+    fi
+done
 
 echo "Staging downloaded report files..."
 git add bench/bench_report_mingw.md tcc_test_mingw.md 2>/dev/null || true
 git add bench/bench_report_darwin.md tcc_test_arm64.md 2>/dev/null || true
+rm -rf macos-reports windows-reports || true
 
 if git diff --cached --quiet; then
     echo "No report files changed, nothing to commit."
