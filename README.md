@@ -59,16 +59,16 @@ Linux:
 
 ## Supported C Features
 
-Structs, unions, enums, typedefs, arrays (multi-dimensional), pointers (including function pointers), `for`/`while`/`do-while`/`switch`/`goto`, `sizeof`, `_Bool`, `static`, `extern`, variadic `printf`, string literals, compound assignment operators, pre/post increment, ternary operator, comma operator, designated initializers, \_Generic, attribute `__cleanup__`, `__aligned__`, `__packed__`, `__constructor__`, `__destructor__`, Windows and SystemV long doubles (internally all using SSE), unicode identifiers and strings, minimal `"wchar.h"`, inline, weak, gcc, enum and ms bitfields, old K&R function definitions, VLA's.
+Structs, unions, enums, typedefs, arrays (multi-dimensional), pointers (including function pointers), `for`/`while`/`do-while`/`switch`/`goto`, `sizeof`, `_Bool`, `static`, `extern`, variadic `printf`, string literals, compound assignment operators, pre/post increment, ternary operator, comma operator, designated initializers, \_Generic, attribute `__cleanup__`, `__aligned__`, `__packed__`, `__constructor__`, `__destructor__`, Windows and SystemV long doubles (internally all using SSE), unicode identifiers and strings, minimal `"wchar.h"`, inline, weak, gcc, enum and ms bitfields, old K&R function definitions, VLA's, atomics.
 
-Not yet: GNU alias, atomics, C23.
+Not yet: GNU alias, C23.
 
 Top-level `__asm__("...")` statements in AT&T, Intel or ARM syntax are supported and emitted in source order. Unlike GCC (which hoists all file-scope `asm` blocks to the top of the output at `-O2`/`-O3` unless `-fno-toplevel-reorder` is used), rcc always preserves their original position relative to functions.
 
-The tcc suite has 142/142 test passed (100%) on linux and mingw-cross,
+The tcc suite has 143/145 test passed (98%) on linux and mingw-cross,
 107/109 on windows native, 134/143 on arm64-darwin native.
 
-Three tcc bugs have been detected so far. Fixes in the work.
+Three tcc core and test bugs have been detected so far. Fixes in the work.
 
 ## Build
 
@@ -131,16 +131,16 @@ make bench
 
 ## Unix fork
 
-The original windows repo is at https://github.com/DocDamage/realtime-c-compiler with
+The original windows repo is now at https://github.com/DocDamage/realtime-c-compiler with
 [those](tcc_test_report_mingw1.1.md) test results (61/129 passed tcc tests), and [those](https://github.com/rurban/rcc/blob/old-mingw/bench/bench_report_mingw.md) benchmarks. Tested in the `old-mingw` branch via github actions.
 
 This fork passes now:
 
-- [142/142 tests](tcc_test_linux.md) on linux
-- [142/142 tests](tcc_test_mingw_cross.md.md) on mingw-cross
+- [143/145 tests](tcc_test_linux.md) on linux
+- [143/145 tests](tcc_test_mingw_cross.md.md) on mingw-cross
 - [107/109 tests](tcc_test_mingw.md) on windows native
-- [141/141 tests](tcc_test_arm64_cross.md) on arm64-cross (elf)
-- [134/141 tests](tcc_test_darwin_cross.md) on darwin-cross (compilation only)
+- [142/144 tests](tcc_test_arm64_cross.md) on arm64-cross (elf)
+- [135/142 tests](tcc_test_darwin_cross.md) on darwin-cross (compilation only)
 - [134/143 tests](tcc_test_arm64.md) on arm64-darwin native
   For the c-testsuite it passes 220/220.
 

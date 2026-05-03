@@ -86,7 +86,17 @@ void init_builtins(void);
 // Type System
 typedef enum { QUAL_CONST = 1,
                QUAL_VOLATILE = 2,
-               QUAL_RESTRICT = 4 } TypeQual;
+               QUAL_RESTRICT = 4,
+               QUAL_ATOMIC = 8 } TypeQual;
+
+typedef enum {
+    MEMORDER_RELAXED = 0,
+    MEMORDER_CONSUME = 1,
+    MEMORDER_ACQUIRE = 2,
+    MEMORDER_RELEASE = 3,
+    MEMORDER_ACQ_REL = 4,
+    MEMORDER_SEQ_CST = 5,
+} MemoryOrder;
 
 typedef enum {
     TY_VOID,
@@ -153,6 +163,7 @@ struct Type {
 static inline bool ty_const(const Type *t) { return t->qual & QUAL_CONST; }
 static inline bool ty_volatile(const Type *t) { return t->qual & QUAL_VOLATILE; }
 static inline bool ty_restrict(const Type *t) { return t->qual & QUAL_RESTRICT; }
+static inline bool ty_atomic(const Type *t) { return t->qual & QUAL_ATOMIC; }
 
 typedef struct Typedef Typedef;
 struct Typedef {
@@ -296,6 +307,12 @@ typedef enum {
     ND_ALLOCA, // VLA stack allocation
     ND_ALLOCA_ZINIT, // VLA stack allocation + zero init
     ND_CHAIN, // Chain expressions (evaluate lhs, result is rhs)
+    ND_ATOMIC_LOAD, // __atomic_load
+    ND_ATOMIC_STORE, // __atomic_store (stores via expr statement)
+    ND_ATOMIC_EXCHANGE, // __atomic_exchange
+    ND_ATOMIC_CAS, // __atomic_compare_exchange
+    ND_ATOMIC_FENCE, // __atomic_thread_fence / __atomic_signal_fence
+    ND_ATOMIC_FETCH_OP, // __atomic_fetch_add/sub/or/xor/and/nand
 } NodeKind;
 
 typedef struct Node Node;
@@ -360,6 +377,14 @@ struct Node {
     AsmOperand *asm_ops; // [0..noperands-1], outputs first
     char **asm_goto_labels; // goto label names
     int asm_ngoto;
+
+    // Atomic operations
+    int atomic_ord; // MemoryOrder
+    int atomic_ord2; // second memory order (for CAS)
+    int atomic_fetch_op; // 0=add, 1=sub, 2=or, 3=xor, 4=and, 5=nand
+    bool atomic_weak; // weak flag for CAS
+    bool atomic_is_store; // true for __atomic_store (stores val, no return)
+    bool atomic_signal_fence; // true for __atomic_signal_fence
 };
 
 typedef struct Function Function;

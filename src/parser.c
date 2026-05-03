@@ -497,6 +497,8 @@ static unsigned char collect_type_quals(Token **rest, Token *tok) {
             q |= QUAL_VOLATILE;
         else if (equalc(tok, "restrict") || equalc(tok, "__restrict") || equalc(tok, "__restrict__"))
             q |= QUAL_RESTRICT;
+        else if (equalc(tok, "_Atomic"))
+            q |= QUAL_ATOMIC;
         else
             break;
         tok = tok->next;
@@ -514,7 +516,8 @@ static bool is_typename(Token *tok) {
     if (equalc(tok, "int") || equalc(tok, "char") || equalc(tok, "void") ||
         equalc(tok, "float") || equalc(tok, "double") ||
         equalc(tok, "_Bool") || equalc(tok, "struct") || equalc(tok, "union") || equalc(tok, "enum") ||
-        equalc(tok, "typeof") || equalc(tok, "__typeof") || equalc(tok, "__typeof__"))
+        equalc(tok, "typeof") || equalc(tok, "__typeof") || equalc(tok, "__typeof__") ||
+        equalc(tok, "_Atomic"))
         return true;
     if (is_storage_class(tok))
         return true;
@@ -1465,6 +1468,19 @@ static Type *declspec(Token **rest, Token *tok, VarAttr *attr) {
         if (equalc(tok, "restrict") || equalc(tok, "__restrict") || equalc(tok, "__restrict__")) {
             quals |= QUAL_RESTRICT;
             tok = tok->next;
+            continue;
+        }
+        if (equalc(tok, "_Atomic")) {
+            tok = tok->next;
+            if (equalc(tok, "(") && is_typename(tok->next)) {
+                tok = skip(tok, "(");
+                ty = type_name(&tok, tok);
+                tok = skip(tok, ")");
+                ty = copy_type(ty);
+                ty->qual |= QUAL_ATOMIC;
+            } else {
+                quals |= QUAL_ATOMIC;
+            }
             continue;
         }
         if (equalc(tok, "__cdecl") || equalc(tok, "__stdcall") || equalc(tok, "__fastcall") ||
@@ -3422,6 +3438,515 @@ static Node *unary(Token **rest, Token *tok) {
 
         node->ty = pointer_to(ty);
         node = new_unary(ND_DEREF, node, tok);
+        return node;
+    }
+    if (equalc(tok, "__atomic_is_lock_free")) {
+        tok = skip(tok->next, "(");
+        assign(&tok, tok);
+        tok = skip(tok, ",");
+        assign(&tok, tok);
+        *rest = skip(tok, ")");
+        return new_num(1, tok);
+    }
+    if (equalc(tok, "__atomic_thread_fence")) {
+        Node *node = new_node(ND_ATOMIC_FENCE, tok);
+        node->atomic_ord = MEMORDER_SEQ_CST;
+        tok = skip(tok->next, "(");
+        if (tok->kind == TK_NUM)
+            node->atomic_ord = (int)tok->val;
+        tok = tok->next;
+        *rest = skip(tok, ")");
+        return node;
+    }
+    if (equalc(tok, "__atomic_signal_fence")) {
+        Node *node = new_node(ND_ATOMIC_FENCE, tok);
+        node->atomic_signal_fence = true;
+        node->atomic_ord = MEMORDER_SEQ_CST;
+        tok = skip(tok->next, "(");
+        if (tok->kind == TK_NUM)
+            node->atomic_ord = (int)tok->val;
+        tok = tok->next;
+        *rest = skip(tok, ")");
+        return node;
+    }
+    if (equalc(tok, "__atomic_test_and_set")) {
+        Token *start = tok;
+        Node *node = new_node(ND_ATOMIC_EXCHANGE, start);
+        node->atomic_ord = MEMORDER_SEQ_CST;
+        tok = skip(tok->next, "(");
+        node->lhs = assign(&tok, tok);
+        tok = skip(tok, ",");
+        if (!equalc(tok, ")")) {
+            if (tok->kind == TK_NUM)
+                node->atomic_ord = (int)tok->val;
+            tok = tok->next;
+        }
+        *rest = skip(tok, ")");
+        node->rhs = new_num(1, start);
+        node->ty = ty_bool;
+        return node;
+    }
+    if (equalc(tok, "__atomic_clear")) {
+        Token *start = tok;
+        Node *node = new_node(ND_ATOMIC_STORE, start);
+        node->atomic_ord = MEMORDER_SEQ_CST;
+        tok = skip(tok->next, "(");
+        node->lhs = assign(&tok, tok);
+        tok = skip(tok, ",");
+        if (!equalc(tok, ")")) {
+            if (tok->kind == TK_NUM)
+                node->atomic_ord = (int)tok->val;
+            tok = tok->next;
+        }
+        *rest = skip(tok, ")");
+        node->rhs = new_num(0, start);
+        node->ty = ty_void;
+        return node;
+    }
+    if (equalc(tok, "__atomic_load_n") || equalc(tok, "__atomic_load")) {
+        Token *start = tok;
+        tok = skip(tok->next, "(");
+        Node *ptr = assign(&tok, tok);
+        add_type(ptr);
+        tok = skip(tok, ",");
+        Node *node = new_node(ND_ATOMIC_LOAD, start);
+        node->lhs = ptr;
+        node->atomic_ord = MEMORDER_SEQ_CST;
+        if (tok->kind == TK_NUM)
+            node->atomic_ord = (int)tok->val;
+        tok = tok->next;
+        *rest = skip(tok, ")");
+        if (ptr->ty->base)
+            node->ty = ptr->ty->base;
+        else
+            node->ty = ty_int;
+        return node;
+    }
+    if (equalc(tok, "__atomic_store_n") || equalc(tok, "__atomic_store")) {
+        Token *start = tok;
+        tok = skip(tok->next, "(");
+        Node *ptr = assign(&tok, tok);
+        add_type(ptr);
+        tok = skip(tok, ",");
+        Node *val = assign(&tok, tok);
+        add_type(val);
+        Node *node = new_node(ND_ATOMIC_STORE, start);
+        node->lhs = ptr;
+        node->rhs = val;
+        node->atomic_ord = MEMORDER_SEQ_CST;
+        tok = skip(tok, ",");
+        if (tok->kind == TK_NUM)
+            node->atomic_ord = (int)tok->val;
+        tok = tok->next;
+        *rest = skip(tok, ")");
+        node->ty = ty_void;
+        return node;
+    }
+    if (equalc(tok, "__atomic_exchange_n") || equalc(tok, "__atomic_exchange")) {
+        Token *start = tok;
+        tok = skip(tok->next, "(");
+        Node *ptr = assign(&tok, tok);
+        add_type(ptr);
+        tok = skip(tok, ",");
+        Node *val = assign(&tok, tok);
+        add_type(val);
+        Node *node = new_node(ND_ATOMIC_EXCHANGE, start);
+        node->lhs = ptr;
+        node->rhs = val;
+        node->atomic_ord = MEMORDER_SEQ_CST;
+        tok = skip(tok, ",");
+        if (tok->kind == TK_NUM)
+            node->atomic_ord = (int)tok->val;
+        tok = tok->next;
+        *rest = skip(tok, ")");
+        if (ptr->ty->base)
+            node->ty = ptr->ty->base;
+        else
+            node->ty = ty_int;
+        return node;
+    }
+    if (equalc(tok, "__atomic_compare_exchange_n") || equalc(tok, "__atomic_compare_exchange")) {
+        Token *start = tok;
+        tok = skip(tok->next, "(");
+        Node *ptr = assign(&tok, tok);
+        add_type(ptr);
+        tok = skip(tok, ",");
+        Node *expected = assign(&tok, tok);
+        tok = skip(tok, ",");
+        Node *desired = assign(&tok, tok);
+        add_type(desired);
+        Node *node = new_node(ND_ATOMIC_CAS, start);
+        node->lhs = ptr;
+        node->body = expected;
+        node->rhs = desired;
+        node->atomic_ord = MEMORDER_SEQ_CST;
+        node->atomic_ord2 = MEMORDER_SEQ_CST;
+        node->atomic_weak = false;
+        if (equalc(tok, ",")) {
+            tok = tok->next;
+            if (tok->kind == TK_NUM) {
+                node->atomic_weak = !!tok->val;
+                tok = tok->next;
+            }
+            if (equalc(tok, ",")) {
+                tok = tok->next;
+                if (tok->kind == TK_NUM) {
+                    node->atomic_ord = (int)tok->val;
+                    tok = tok->next;
+                }
+                if (equalc(tok, ",")) {
+                    tok = tok->next;
+                    if (tok->kind == TK_NUM) {
+                        node->atomic_ord2 = (int)tok->val;
+                        tok = tok->next;
+                    }
+                }
+            }
+        }
+        *rest = skip(tok, ")");
+        node->ty = ty_bool;
+        return node;
+    }
+#define ATOMIC_FETCH_OP_HELPER(name_str, op_val) do { \
+    Token *start = tok; \
+    tok = skip(tok->next, "("); \
+    Node *ptr = assign(&tok, tok); \
+    add_type(ptr); \
+    tok = skip(tok, ","); \
+    Node *val = assign(&tok, tok); \
+    add_type(val); \
+    Node *node = new_node(ND_ATOMIC_FETCH_OP, start); \
+    node->lhs = ptr; \
+    node->rhs = val; \
+    node->atomic_ord = MEMORDER_SEQ_CST; \
+    node->atomic_fetch_op = (op_val); \
+    tok = skip(tok, ","); \
+    if (tok->kind == TK_NUM) \
+        node->atomic_ord = (int)tok->val; \
+    tok = tok->next; \
+    *rest = skip(tok, ")"); \
+    if (ptr->ty->base) \
+        node->ty = ptr->ty->base; \
+    else \
+        node->ty = ty_int; \
+    return node; \
+} while(0)
+    if (equalc(tok, "__atomic_fetch_add"))
+        ATOMIC_FETCH_OP_HELPER("__atomic_fetch_add", 0);
+    if (equalc(tok, "__atomic_fetch_sub"))
+        ATOMIC_FETCH_OP_HELPER("__atomic_fetch_sub", 1);
+    if (equalc(tok, "__atomic_fetch_or"))
+        ATOMIC_FETCH_OP_HELPER("__atomic_fetch_or", 2);
+    if (equalc(tok, "__atomic_fetch_xor"))
+        ATOMIC_FETCH_OP_HELPER("__atomic_fetch_xor", 3);
+    if (equalc(tok, "__atomic_fetch_and"))
+        ATOMIC_FETCH_OP_HELPER("__atomic_fetch_and", 4);
+    if (equalc(tok, "__atomic_fetch_nand"))
+        ATOMIC_FETCH_OP_HELPER("__atomic_fetch_nand", 5);
+#undef ATOMIC_FETCH_OP_HELPER
+    if (equalc(tok, "__atomic_add_fetch")) {
+        Token *start = tok;
+        tok = skip(tok->next, "(");
+        Node *ptr = assign(&tok, tok);
+        add_type(ptr);
+        tok = skip(tok, ",");
+        Node *val = assign(&tok, tok);
+        add_type(val);
+        Node *node = new_node(ND_ATOMIC_FETCH_OP, start);
+        node->lhs = ptr;
+        node->rhs = val;
+        node->atomic_ord = MEMORDER_SEQ_CST;
+        node->atomic_fetch_op = 0;
+        node->atomic_is_store = true;
+        tok = skip(tok, ",");
+        if (tok->kind == TK_NUM) node->atomic_ord = (int)tok->val;
+        tok = tok->next;
+        *rest = skip(tok, ")");
+        node->ty = ptr->ty->base ? ptr->ty->base : ty_int;
+        return node;
+    }
+    if (equalc(tok, "__atomic_sub_fetch")) {
+        Token *start = tok;
+        tok = skip(tok->next, "(");
+        Node *ptr = assign(&tok, tok);
+        add_type(ptr);
+        tok = skip(tok, ",");
+        Node *val = assign(&tok, tok);
+        add_type(val);
+        Node *node = new_node(ND_ATOMIC_FETCH_OP, start);
+        node->lhs = ptr;
+        node->rhs = val;
+        node->atomic_ord = MEMORDER_SEQ_CST;
+        node->atomic_fetch_op = 1;
+        node->atomic_is_store = true;
+        tok = skip(tok, ",");
+        if (tok->kind == TK_NUM) node->atomic_ord = (int)tok->val;
+        tok = tok->next;
+        *rest = skip(tok, ")");
+        node->ty = ptr->ty->base ? ptr->ty->base : ty_int;
+        return node;
+    }
+    if (equalc(tok, "__atomic_or_fetch")) {
+        Token *start = tok;
+        tok = skip(tok->next, "(");
+        Node *ptr = assign(&tok, tok);
+        add_type(ptr);
+        tok = skip(tok, ",");
+        Node *val = assign(&tok, tok);
+        add_type(val);
+        Node *node = new_node(ND_ATOMIC_FETCH_OP, start);
+        node->lhs = ptr;
+        node->rhs = val;
+        node->atomic_ord = MEMORDER_SEQ_CST;
+        node->atomic_fetch_op = 2;
+        node->atomic_is_store = true;
+        tok = skip(tok, ",");
+        if (tok->kind == TK_NUM) node->atomic_ord = (int)tok->val;
+        tok = tok->next;
+        *rest = skip(tok, ")");
+        node->ty = ptr->ty->base ? ptr->ty->base : ty_int;
+        return node;
+    }
+    if (equalc(tok, "__atomic_xor_fetch")) {
+        Token *start = tok;
+        tok = skip(tok->next, "(");
+        Node *ptr = assign(&tok, tok);
+        add_type(ptr);
+        tok = skip(tok, ",");
+        Node *val = assign(&tok, tok);
+        add_type(val);
+        Node *node = new_node(ND_ATOMIC_FETCH_OP, start);
+        node->lhs = ptr;
+        node->rhs = val;
+        node->atomic_ord = MEMORDER_SEQ_CST;
+        node->atomic_fetch_op = 3;
+        node->atomic_is_store = true;
+        tok = skip(tok, ",");
+        if (tok->kind == TK_NUM) node->atomic_ord = (int)tok->val;
+        tok = tok->next;
+        *rest = skip(tok, ")");
+        node->ty = ptr->ty->base ? ptr->ty->base : ty_int;
+        return node;
+    }
+    if (equalc(tok, "__atomic_and_fetch")) {
+        Token *start = tok;
+        tok = skip(tok->next, "(");
+        Node *ptr = assign(&tok, tok);
+        add_type(ptr);
+        tok = skip(tok, ",");
+        Node *val = assign(&tok, tok);
+        add_type(val);
+        Node *node = new_node(ND_ATOMIC_FETCH_OP, start);
+        node->lhs = ptr;
+        node->rhs = val;
+        node->atomic_ord = MEMORDER_SEQ_CST;
+        node->atomic_fetch_op = 4;
+        node->atomic_is_store = true;
+        tok = skip(tok, ",");
+        if (tok->kind == TK_NUM) node->atomic_ord = (int)tok->val;
+        tok = tok->next;
+        *rest = skip(tok, ")");
+        node->ty = ptr->ty->base ? ptr->ty->base : ty_int;
+        return node;
+    }
+    if (equalc(tok, "__atomic_nand_fetch")) {
+        Token *start = tok;
+        tok = skip(tok->next, "(");
+        Node *ptr = assign(&tok, tok);
+        add_type(ptr);
+        tok = skip(tok, ",");
+        Node *val = assign(&tok, tok);
+        add_type(val);
+        Node *node = new_node(ND_ATOMIC_FETCH_OP, start);
+        node->lhs = ptr;
+        node->rhs = val;
+        node->atomic_ord = MEMORDER_SEQ_CST;
+        node->atomic_fetch_op = 5;
+        node->atomic_is_store = true;
+        tok = skip(tok, ",");
+        if (tok->kind == TK_NUM) node->atomic_ord = (int)tok->val;
+        tok = tok->next;
+        *rest = skip(tok, ")");
+        node->ty = ptr->ty->base ? ptr->ty->base : ty_int;
+        return node;
+    }
+    if (equalc(tok, "__sync_synchronize")) {
+        Node *node = new_node(ND_ATOMIC_FENCE, tok);
+        node->body = NULL;
+        node->atomic_ord = MEMORDER_SEQ_CST;
+        *rest = skip(tok, "(");
+        *rest = skip(*rest, ")");
+        return node;
+    }
+    if (equalc(tok, "__sync_lock_test_and_set")) {
+        Token *start = tok;
+        Node *node = new_node(ND_ATOMIC_EXCHANGE, start);
+        node->atomic_ord = MEMORDER_ACQ_REL;
+        tok = skip(tok->next, "(");
+        node->lhs = assign(&tok, tok);
+        tok = skip(tok, ",");
+        node->rhs = assign(&tok, tok);
+        add_type(node->rhs);
+        *rest = skip(tok, ")");
+        if (node->lhs->ty && node->lhs->ty->base)
+            node->ty = node->lhs->ty->base;
+        else
+            node->ty = ty_int;
+        return node;
+    }
+    if (equalc(tok, "__sync_lock_release")) {
+        Token *start = tok;
+        Node *node = new_node(ND_ATOMIC_STORE, start);
+        node->atomic_ord = MEMORDER_RELEASE;
+        tok = skip(tok->next, "(");
+        node->lhs = assign(&tok, tok);
+        node->rhs = new_num(0, start);
+        *rest = skip(tok, ")");
+        node->ty = ty_void;
+        return node;
+    }
+    if (equalc(tok, "__sync_fetch_and_add")) {
+        Token *start = tok;
+        tok = skip(tok->next, "(");
+        Node *ptr = assign(&tok, tok);
+        add_type(ptr);
+        tok = skip(tok, ",");
+        Node *val = assign(&tok, tok);
+        add_type(val);
+        Node *node = new_node(ND_ATOMIC_FETCH_OP, start);
+        node->lhs = ptr;
+        node->rhs = val;
+        node->atomic_ord = MEMORDER_SEQ_CST;
+        node->atomic_fetch_op = 0;
+        *rest = skip(tok, ")");
+        node->ty = ptr->ty->base ? ptr->ty->base : ty_int;
+        return node;
+    }
+    if (equalc(tok, "__sync_fetch_and_sub")) {
+        Token *start = tok;
+        tok = skip(tok->next, "(");
+        Node *ptr = assign(&tok, tok);
+        add_type(ptr);
+        tok = skip(tok, ",");
+        Node *val = assign(&tok, tok);
+        add_type(val);
+        Node *node = new_node(ND_ATOMIC_FETCH_OP, start);
+        node->lhs = ptr;
+        node->rhs = val;
+        node->atomic_ord = MEMORDER_SEQ_CST;
+        node->atomic_fetch_op = 1;
+        *rest = skip(tok, ")");
+        node->ty = ptr->ty->base ? ptr->ty->base : ty_int;
+        return node;
+    }
+    if (equalc(tok, "__sync_fetch_and_or")) {
+        Token *start = tok;
+        tok = skip(tok->next, "(");
+        Node *ptr = assign(&tok, tok);
+        add_type(ptr);
+        tok = skip(tok, ",");
+        Node *val = assign(&tok, tok);
+        add_type(val);
+        Node *node = new_node(ND_ATOMIC_FETCH_OP, start);
+        node->lhs = ptr;
+        node->rhs = val;
+        node->atomic_ord = MEMORDER_SEQ_CST;
+        node->atomic_fetch_op = 2;
+        *rest = skip(tok, ")");
+        node->ty = ptr->ty->base ? ptr->ty->base : ty_int;
+        return node;
+    }
+    if (equalc(tok, "__sync_fetch_and_xor")) {
+        Token *start = tok;
+        tok = skip(tok->next, "(");
+        Node *ptr = assign(&tok, tok);
+        add_type(ptr);
+        tok = skip(tok, ",");
+        Node *val = assign(&tok, tok);
+        add_type(val);
+        Node *node = new_node(ND_ATOMIC_FETCH_OP, start);
+        node->lhs = ptr;
+        node->rhs = val;
+        node->atomic_ord = MEMORDER_SEQ_CST;
+        node->atomic_fetch_op = 3;
+        *rest = skip(tok, ")");
+        node->ty = ptr->ty->base ? ptr->ty->base : ty_int;
+        return node;
+    }
+    if (equalc(tok, "__sync_fetch_and_and")) {
+        Token *start = tok;
+        tok = skip(tok->next, "(");
+        Node *ptr = assign(&tok, tok);
+        add_type(ptr);
+        tok = skip(tok, ",");
+        Node *val = assign(&tok, tok);
+        add_type(val);
+        Node *node = new_node(ND_ATOMIC_FETCH_OP, start);
+        node->lhs = ptr;
+        node->rhs = val;
+        node->atomic_ord = MEMORDER_SEQ_CST;
+        node->atomic_fetch_op = 4;
+        *rest = skip(tok, ")");
+        node->ty = ptr->ty->base ? ptr->ty->base : ty_int;
+        return node;
+    }
+    if (equalc(tok, "__sync_fetch_and_nand")) {
+        Token *start = tok;
+        tok = skip(tok->next, "(");
+        Node *ptr = assign(&tok, tok);
+        add_type(ptr);
+        tok = skip(tok, ",");
+        Node *val = assign(&tok, tok);
+        add_type(val);
+        Node *node = new_node(ND_ATOMIC_FETCH_OP, start);
+        node->lhs = ptr;
+        node->rhs = val;
+        node->atomic_ord = MEMORDER_SEQ_CST;
+        node->atomic_fetch_op = 5;
+        *rest = skip(tok, ")");
+        node->ty = ptr->ty->base ? ptr->ty->base : ty_int;
+        return node;
+    }
+    if (equalc(tok, "__sync_val_compare_and_swap")) {
+        Token *start = tok;
+        tok = skip(tok->next, "(");
+        Node *ptr = assign(&tok, tok);
+        add_type(ptr);
+        tok = skip(tok, ",");
+        Node *oldval = assign(&tok, tok);
+        add_type(oldval);
+        tok = skip(tok, ",");
+        Node *newval = assign(&tok, tok);
+        add_type(newval);
+        Node *node = new_node(ND_ATOMIC_CAS, start);
+        node->lhs = ptr;
+        node->rhs = newval;
+        node->body = new_unary(ND_ADDR, oldval, start);
+        node->atomic_ord = MEMORDER_SEQ_CST;
+        node->atomic_ord2 = MEMORDER_SEQ_CST;
+        *rest = skip(tok, ")");
+        node->ty = ptr->ty->base ? ptr->ty->base : ty_int;
+        return node;
+    }
+    if (equalc(tok, "__sync_bool_compare_and_swap")) {
+        Token *start = tok;
+        tok = skip(tok->next, "(");
+        Node *ptr = assign(&tok, tok);
+        add_type(ptr);
+        tok = skip(tok, ",");
+        Node *oldval = assign(&tok, tok);
+        add_type(oldval);
+        tok = skip(tok, ",");
+        Node *newval = assign(&tok, tok);
+        add_type(newval);
+        Node *node = new_node(ND_ATOMIC_CAS, start);
+        node->lhs = ptr;
+        node->rhs = newval;
+        node->body = new_unary(ND_ADDR, oldval, start);
+        node->atomic_ord = MEMORDER_SEQ_CST;
+        node->atomic_ord2 = MEMORDER_SEQ_CST;
+        *rest = skip(tok, ")");
+        node->ty = ty_bool;
         return node;
     }
     if (equalc(tok, "++")) {

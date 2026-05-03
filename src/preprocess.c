@@ -1602,7 +1602,6 @@ char *preprocess(char *filename, char *p) {
     define_pre("__UINT_FAST32_TYPE__", "long unsigned int");
     define_pre("__UINT_FAST64_TYPE__", "long unsigned int");
     define_pre("__SIG_ATOMIC_TYPE__", "int");
-    define_pre("_Atomic", "");
 #ifdef _WIN32
     if (!find_macro("_WIN32"))
         define_macro("_WIN32", false, NULL, 0, "1");
@@ -1695,9 +1694,6 @@ char *preprocess(char *filename, char *p) {
         if (!find_macro("__LP64__"))
             define_pre("__LP64__", "1");
 #endif
-        if (!find_macro("_Atomic"))
-            add_undef("_Atomic");
-        define_pre("_Atomic", "");
         define_macro("__builtin_expect", true, builtin_expect_params, 2, "x");
         define_pre("__builtin_abort", "abort");
         define_pre("__builtin_malloc", "malloc");

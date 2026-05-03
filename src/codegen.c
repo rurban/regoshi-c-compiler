@@ -3732,6 +3732,338 @@ static int gen(Node *node) {
         rcc_label_count++;
         return r;
     }
+
+    case ND_ATOMIC_LOAD: {
+        int r_addr = gen(node->lhs);
+        int sz = node->ty->size;
+        int r = alloc_reg();
+        int ord = node->atomic_ord;
+#ifdef ARCH_ARM64
+        char *sz_suffix = (sz == 1) ? "b" : (sz == 2) ? "h"
+                                                      : "";
+        bool use_acquire = (ord == MEMORDER_ACQUIRE || ord == MEMORDER_ACQ_REL || ord == MEMORDER_SEQ_CST || ord == MEMORDER_CONSUME);
+        if (use_acquire)
+            printf("  ldar%s %s, [%s]\n", sz_suffix, sz <= 4 ? reg32[r] : reg64[r], reg64[r_addr]);
+        else
+            emit_load(node->ty, r, format("[%s]", reg64[r_addr]));
+#else
+        printf("  mov %s, %s ptr [%s]\n", reg(r, sz < 4 ? 4 : sz), (sz == 1 ? "byte" : sz == 2 ? "word"
+                                                                        : sz == 4              ? "dword"
+                                                                                               : "qword"),
+               reg64[r_addr]);
+        if (sz < 4) {
+            if (use_unsigned(node->ty))
+                printf("  movzx %s, %s\n", reg32[r], reg(r, sz));
+            else
+                printf("  movsx %s, %s\n", reg32[r], reg(r, sz));
+        }
+        if (ord == MEMORDER_SEQ_CST)
+            printf("  mfence\n");
+#endif
+        free_reg(r_addr);
+#ifdef ARCH_ARM64
+        if (use_acquire && sz < 8 && !use_unsigned(node->ty)) {
+            if (sz == 1)
+                printf("  sxtb %s, %s\n", reg32[r], reg32[r]);
+            else if (sz == 2)
+                printf("  sxth %s, %s\n", reg32[r], reg32[r]);
+        }
+#endif
+        return r;
+    }
+    case ND_ATOMIC_STORE: {
+        int r_addr = gen(node->lhs);
+        int r_val = gen(node->rhs);
+        int sz = node->lhs->ty && node->lhs->ty->base ? node->lhs->ty->base->size : 4;
+        int ord = node->atomic_ord;
+#ifdef ARCH_ARM64
+        char *sz_suffix = (sz == 1) ? "b" : (sz == 2) ? "h"
+                                                      : "";
+        bool use_release = (ord == MEMORDER_RELEASE || ord == MEMORDER_ACQ_REL || ord == MEMORDER_SEQ_CST);
+        if (use_release)
+            printf("  stlr%s %s, [%s]\n", sz_suffix, sz <= 4 ? reg32[r_val] : reg64[r_val], reg64[r_addr]);
+        else
+            emit_store(node->lhs->ty->base ? node->lhs->ty->base : ty_int, r_val, format("[%s]", reg64[r_addr]));
+        if (ord == MEMORDER_SEQ_CST)
+            printf("  dmb ish\n");
+#else
+        printf("  mov %s ptr [%s], %s\n", (sz == 1 ? "byte" : sz == 2 ? "word"
+                                               : sz == 4              ? "dword"
+                                                                      : "qword"),
+               reg64[r_addr], reg(r_val, sz));
+        if (ord == MEMORDER_SEQ_CST)
+            printf("  mfence\n");
+#endif
+        free_reg(r_val);
+        free_reg(r_addr);
+        return -1;
+    }
+    case ND_ATOMIC_EXCHANGE: {
+        int r_addr = gen(node->lhs);
+        int r_val = gen(node->rhs);
+        int sz = node->ty->size;
+        int r_result = alloc_reg();
+#ifdef ARCH_ARM64
+        int r_tmp = alloc_reg();
+        int lbl = rcc_label_count++;
+        printf(".L.atom_xchg.%d:\n", lbl);
+        if (sz == 1) {
+            printf("  ldxrb %s, [%s]\n", reg32[r_result], reg64[r_addr]);
+            printf("  stxrb %s, %s, [%s]\n", reg32[r_tmp], reg32[r_val], reg64[r_addr]);
+        } else if (sz == 2) {
+            printf("  ldxrh %s, [%s]\n", reg32[r_result], reg64[r_addr]);
+            printf("  stxrh %s, %s, [%s]\n", reg32[r_tmp], reg32[r_val], reg64[r_addr]);
+        } else if (sz == 4) {
+            printf("  ldxr %s, [%s]\n", reg32[r_result], reg64[r_addr]);
+            printf("  stxr %s, %s, [%s]\n", reg32[r_tmp], reg32[r_val], reg64[r_addr]);
+        } else {
+            printf("  ldxr %s, [%s]\n", reg64[r_result], reg64[r_addr]);
+            printf("  stxr %s, %s, [%s]\n", reg32[r_tmp], reg64[r_val], reg64[r_addr]);
+        }
+        printf("  cbnz %s, .L.atom_xchg.%d\n", reg32[r_tmp], lbl);
+        free_reg(r_tmp);
+#else
+        printf("  xchg %s ptr [%s], %s\n", (sz == 1 ? "byte" : sz == 2 ? "word"
+                                                : sz == 4              ? "dword"
+                                                                       : "qword"),
+               reg64[r_addr], reg(r_val, sz));
+        if (sz < 4) {
+            if (use_unsigned(node->ty))
+                printf("  movzx %s, %s\n", reg32[r_result], reg(r_val, sz));
+            else
+                printf("  movsx %s, %s\n", reg32[r_result], reg(r_val, sz));
+        } else {
+            printf("  mov %s, %s\n", reg(r_result, sz), reg(r_val, sz));
+        }
+#endif
+        free_reg(r_val);
+        free_reg(r_addr);
+#ifdef ARCH_ARM64
+        if (sz < 8 && !use_unsigned(node->ty)) {
+            if (sz == 1)
+                printf("  sxtb %s, %s\n", reg32[r_result], reg32[r_result]);
+            else if (sz == 2)
+                printf("  sxth %s, %s\n", reg32[r_result], reg32[r_result]);
+        }
+#endif
+        return r_result;
+    }
+    case ND_ATOMIC_CAS: {
+        int r_addr = gen(node->lhs);
+        int r_expectedaddr = gen(node->body);
+        int r_desired = gen(node->rhs);
+        int sz = node->lhs->ty && node->lhs->ty->base ? node->lhs->ty->base->size : 4;
+        int r_result = alloc_reg();
+#ifdef ARCH_ARM64
+        int r_expected = alloc_reg();
+        Type *elem_ty = node->lhs->ty && node->lhs->ty->base ? node->lhs->ty->base : ty_int;
+        emit_load(elem_ty, r_expected, format("[%s]", reg64[r_expectedaddr]));
+        int r_old = alloc_reg();
+        int r_tmp = alloc_reg();
+        int lbl = rcc_label_count++;
+        printf(".L.atom_cas.%d:\n", lbl);
+        if (sz == 1)
+            printf("  ldxrb %s, [%s]\n", reg32[r_old], reg64[r_addr]);
+        else if (sz == 2)
+            printf("  ldxrh %s, [%s]\n", reg32[r_old], reg64[r_addr]);
+        else if (sz == 4)
+            printf("  ldxr %s, [%s]\n", reg32[r_old], reg64[r_addr]);
+        else
+            printf("  ldxr %s, [%s]\n", reg64[r_old], reg64[r_addr]);
+        printf("  cmp %s, %s\n", reg(r_old, sz), reg(r_expected, sz));
+        printf("  b.ne .L.atom_cas_fail.%d\n", lbl);
+        if (sz == 1)
+            printf("  stxrb %s, %s, [%s]\n", reg32[r_tmp], reg32[r_desired], reg64[r_addr]);
+        else if (sz == 2)
+            printf("  stxrh %s, %s, [%s]\n", reg32[r_tmp], reg32[r_desired], reg64[r_addr]);
+        else if (sz == 4)
+            printf("  stxr %s, %s, [%s]\n", reg32[r_tmp], reg32[r_desired], reg64[r_addr]);
+        else
+            printf("  stxr %s, %s, [%s]\n", reg32[r_tmp], reg64[r_desired], reg64[r_addr]);
+        if (node->atomic_weak)
+            printf("  cbnz %s, .L.atom_cas_fail.%d\n", reg32[r_tmp], lbl);
+        else
+            printf("  cbnz %s, .L.atom_cas.%d\n", reg32[r_tmp], lbl);
+        printf("  mov %s, #1\n", reg64[r_result]);
+        printf("  b .L.atom_cas_done.%d\n", lbl);
+        printf(".L.atom_cas_fail.%d:\n", lbl);
+        printf("  mov %s, #0\n", reg64[r_result]);
+        emit_store(elem_ty, r_old, format("[%s]", reg64[r_expectedaddr]));
+        printf(".L.atom_cas_done.%d:\n", lbl);
+        free_reg(r_tmp);
+        free_reg(r_old);
+        free_reg(r_expected);
+#else
+        int r_expected = alloc_reg();
+        printf("  mov %s, %s ptr [%s]\n", sz == 8 ? "rax" : "eax", (sz == 1 ? "byte" : sz == 2 ? "word"
+                                                                        : sz == 4              ? "dword"
+                                                                                               : "qword"),
+               reg64[r_expectedaddr]);
+        printf("  lock cmpxchg %s ptr [%s], %s\n", (sz == 1 ? "byte" : sz == 2 ? "word"
+                                                        : sz == 4              ? "dword"
+                                                                               : "qword"),
+               reg64[r_addr], reg(r_desired, sz));
+        printf("  sete %s\n", reg8[r_result]);
+        printf("  movzx %s, %s\n", reg64[r_result], reg8[r_result]);
+        printf("  mov %s ptr [%s], %s\n", (sz == 1 ? "byte" : sz == 2 ? "word"
+                                               : sz == 4              ? "dword"
+                                                                      : "qword"),
+               reg64[r_expectedaddr], sz == 8 ? "rax" : "eax");
+        free_reg(r_expected);
+#endif
+        free_reg(r_desired);
+        free_reg(r_expectedaddr);
+        free_reg(r_addr);
+        return r_result;
+    }
+    case ND_ATOMIC_FENCE: {
+        int ord = node->atomic_ord;
+        if (!node->atomic_signal_fence) {
+            if (ord == MEMORDER_SEQ_CST || ord == MEMORDER_ACQ_REL) {
+#ifdef ARCH_ARM64
+                printf("  dmb ish\n");
+#else
+                printf("  mfence\n");
+#endif
+            } else if (ord == MEMORDER_ACQUIRE || ord == MEMORDER_CONSUME) {
+#ifdef ARCH_ARM64
+                printf("  dmb ishld\n");
+#endif
+            } else if (ord == MEMORDER_RELEASE) {
+#ifdef ARCH_ARM64
+                printf("  dmb ishst\n");
+#endif
+            }
+        }
+        return -1;
+    }
+    case ND_ATOMIC_FETCH_OP: {
+        int r_addr = gen(node->lhs);
+        int r_val = gen(node->rhs);
+        int sz = node->ty->size;
+        int op = node->atomic_fetch_op;
+        bool is_store = node->atomic_is_store;
+        int r_old = alloc_reg();
+#ifdef ARCH_ARM64
+        int r_new = alloc_reg();
+        int r_tmp = alloc_reg();
+        int lbl = rcc_label_count++;
+        printf(".L.atom_fop.%d:\n", lbl);
+        if (sz == 1)
+            printf("  ldxrb %s, [%s]\n", reg32[r_old], reg64[r_addr]);
+        else if (sz == 2)
+            printf("  ldxrh %s, [%s]\n", reg32[r_old], reg64[r_addr]);
+        else if (sz == 4)
+            printf("  ldxr %s, [%s]\n", reg32[r_old], reg64[r_addr]);
+        else
+            printf("  ldxr %s, [%s]\n", reg64[r_old], reg64[r_addr]);
+        printf("  mov %s, %s\n", reg64[r_new], reg64[r_old]);
+        switch (op) {
+        case 0: printf("  add %s, %s, %s\n", reg(r_new, sz), reg(r_new, sz), reg(r_val, sz)); break;
+        case 1: printf("  sub %s, %s, %s\n", reg(r_new, sz), reg(r_new, sz), reg(r_val, sz)); break;
+        case 2: printf("  orr %s, %s, %s\n", reg(r_new, sz), reg(r_new, sz), reg(r_val, sz)); break;
+        case 3: printf("  eor %s, %s, %s\n", reg(r_new, sz), reg(r_new, sz), reg(r_val, sz)); break;
+        case 4: printf("  and %s, %s, %s\n", reg(r_new, sz), reg(r_new, sz), reg(r_val, sz)); break;
+        case 5:
+            printf("  and %s, %s, %s\n", reg(r_new, sz), reg(r_new, sz), reg(r_val, sz));
+            printf("  mvn %s, %s\n", reg(r_new, sz), reg(r_new, sz));
+            break;
+        }
+        if (sz == 1)
+            printf("  stxrb %s, %s, [%s]\n", reg32[r_tmp], reg32[r_new], reg64[r_addr]);
+        else if (sz == 2)
+            printf("  stxrh %s, %s, [%s]\n", reg32[r_tmp], reg32[r_new], reg64[r_addr]);
+        else if (sz == 4)
+            printf("  stxr %s, %s, [%s]\n", reg32[r_tmp], reg32[r_new], reg64[r_addr]);
+        else
+            printf("  stxr %s, %s, [%s]\n", reg32[r_tmp], reg64[r_new], reg64[r_addr]);
+        printf("  cbnz %s, .L.atom_fop.%d\n", reg32[r_tmp], lbl);
+        if (node->atomic_ord == MEMORDER_SEQ_CST)
+            printf("  dmb ish\n");
+        free_reg(r_tmp);
+        free_reg(r_val);
+        free_reg(r_addr);
+        if (is_store) {
+            free_reg(r_old);
+            if (sz < 8 && !use_unsigned(node->ty)) {
+                if (sz == 1) printf("  sxtb %s, %s\n", reg32[r_new], reg32[r_new]);
+                else if (sz == 2)
+                    printf("  sxth %s, %s\n", reg32[r_new], reg32[r_new]);
+            }
+            return r_new;
+        } else {
+            free_reg(r_new);
+            if (sz < 8 && !use_unsigned(node->ty)) {
+                if (sz == 1) printf("  sxtb %s, %s\n", reg32[r_old], reg32[r_old]);
+                else if (sz == 2)
+                    printf("  sxth %s, %s\n", reg32[r_old], reg32[r_old]);
+            }
+            return r_old;
+        }
+#else
+        if (op == 0 || op == 1) {
+            if (op == 1)
+                printf("  neg %s\n", reg(r_val, sz));
+            printf("  mov %s, %s\n", reg(r_old, sz), reg(r_val, sz));
+            printf("  lock xadd %s ptr [%s], %s\n", (sz == 1 ? "byte" : sz == 2 ? "word"
+                                                         : sz == 4              ? "dword"
+                                                                                : "qword"),
+                   reg64[r_addr], reg(r_old, sz));
+            free_reg(r_val);
+            free_reg(r_addr);
+            if (node->atomic_ord == MEMORDER_SEQ_CST)
+                printf("  mfence\n");
+            if (!is_store && sz < 4 && !use_unsigned(node->ty))
+                printf("  movsx %s, %s\n", reg32[r_old], reg(r_old, sz));
+            else if (!is_store && sz < 4)
+                printf("  movzx %s, %s\n", reg32[r_old], reg(r_old, sz));
+            return r_old;
+        } else {
+            int r_new = alloc_reg();
+            int lbl2 = rcc_label_count++;
+            printf(".L.atom_fop.%d:\n", lbl2);
+            printf("  mov %s, %s ptr [%s]\n", reg(r_old, sz), (sz == 1 ? "byte" : sz == 2 ? "word"
+                                                                   : sz == 4              ? "dword"
+                                                                                          : "qword"),
+                   reg64[r_addr]);
+            printf("  mov %s, %s\n", reg(r_new, sz), reg(r_old, sz));
+            switch (op) {
+            case 2: printf("  or %s, %s\n", reg(r_new, sz), reg(r_val, sz)); break;
+            case 3: printf("  xor %s, %s\n", reg(r_new, sz), reg(r_val, sz)); break;
+            case 4: printf("  and %s, %s\n", reg(r_new, sz), reg(r_val, sz)); break;
+            case 5:
+                printf("  and %s, %s\n", reg(r_new, sz), reg(r_val, sz));
+                printf("  not %s\n", reg(r_new, sz));
+                break;
+            }
+            printf("  lock cmpxchg %s ptr [%s], %s\n", (sz == 1 ? "byte" : sz == 2 ? "word"
+                                                            : sz == 4              ? "dword"
+                                                                                   : "qword"),
+                   reg64[r_addr], reg(r_new, sz));
+            printf("  jne .L.atom_fop.%d\n", lbl2);
+            if (node->atomic_ord == MEMORDER_SEQ_CST)
+                printf("  mfence\n");
+            free_reg(r_val);
+            free_reg(r_addr);
+            if (is_store) {
+                free_reg(r_old);
+                if (sz < 4 && !use_unsigned(node->ty))
+                    printf("  movsx %s, %s\n", reg32[r_new], reg(r_new, sz));
+                else if (sz < 4)
+                    printf("  movzx %s, %s\n", reg32[r_new], reg(r_new, sz));
+                return r_new;
+            } else {
+                free_reg(r_new);
+                if (sz < 4 && !use_unsigned(node->ty))
+                    printf("  movsx %s, %s\n", reg32[r_old], reg(r_old, sz));
+                else if (sz < 4)
+                    printf("  movzx %s, %s\n", reg32[r_old], reg(r_old, sz));
+                return r_old;
+            }
+        }
+#endif
+    }
+
     default:
         break;
     }

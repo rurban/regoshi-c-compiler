@@ -2,10 +2,10 @@
 Generated: May 2026
 
 ## Summary
- - **Total**:     142
- - **Passed**:    142
- - **Failed**:    0
- - **Pass Rate**: 100%
+ - **Total**:     145
+ - **Passed**:    143
+ - **Failed**:    2
+ - **Pass Rate**: 98%
 
 ## Detailed Results
 | Test                                     | Status       | Message                              |
@@ -123,8 +123,8 @@ Generated: May 2026
 | 121_struct_return                        | PASS         | Output matches                       |
 | 122_vla_reuse                            | PASS         | Output matches                       |
 | 123_vla_bug                              | PASS         | Output matches                       |
-| 124_atomic_counter                       | SKIP         | Skipped                              |
-| 125_atomic_misc                          | SKIP         | Skipped                              |
+| 124_atomic_counter                       | COMPILE_FAIL | rcc returned non-zero                |
+| 125_atomic_misc                          | COMPILE_FAIL | executable missing                   |
 | 126_bound_global                         | SKIP         | Skipped                              |
 | 127_asm_goto                             | PASS         | Output matches                       |
 | 128_run_atexit                           | PASS         | Output matches                       |
@@ -135,7 +135,7 @@ Generated: May 2026
 | 133_old_func                             | PASS         | Output matches                       |
 | 134_double_to_signed                     | PASS         | Output matches                       |
 | 135_func_arg_struct_compare              | PASS         | Output matches                       |
-| 136_atomic_gcc_style                     | SKIP         | Skipped                              |
+| 136_atomic_gcc_style                     | PASS         | Output matches                       |
 | 137_funcall_struct_args                  | PASS         | Output matches                       |
 | test_arm64_asm                           | PASS         | exit=0                               |
 | test_bitfields                           | PASS         | exit=0                               |

@@ -206,16 +206,15 @@ SKIP_TESTS="
 115_bound_setjmp
 116_bound_setjmp2
 120_alias
-124_atomic_counter
 125_atomic_misc
 126_bound_global
-136_atomic_gcc_style
 "
 
 # Tests skipped only when using mingw-cross.sh (Windows cross-compilation)
 MINGW_SKIP_TESTS="
 "
 
+# we provide our own arm64 asm_goto test, this is x86_64 only. tcc bug to be filed
 ARM64_SKIP_TESTS="
 95_bitfields_ms
 127_asm_goto
