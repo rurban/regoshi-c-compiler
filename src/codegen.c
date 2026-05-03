@@ -3753,21 +3753,17 @@ static int gen(Node *node) {
                reg64[r_addr]);
         if (sz < 4) {
             if (use_unsigned(node->ty))
-                printf("  movzx %s, %s\n", reg32[r], reg(r, sz));
+                zero_extend_to(r, sz, 4);
             else
-                printf("  movsx %s, %s\n", reg32[r], reg(r, sz));
+                sign_extend_to(r, sz, 4);
         }
         if (ord == MEMORDER_SEQ_CST)
             printf("  mfence\n");
 #endif
         free_reg(r_addr);
 #ifdef ARCH_ARM64
-        if (use_acquire && sz < 8 && !use_unsigned(node->ty)) {
-            if (sz == 1)
-                printf("  sxtb %s, %s\n", reg32[r], reg32[r]);
-            else if (sz == 2)
-                printf("  sxth %s, %s\n", reg32[r], reg32[r]);
-        }
+        if (use_acquire && sz < 8 && !use_unsigned(node->ty))
+            sign_extend_to(r, sz, 8);
 #endif
         return r;
     }
@@ -3829,9 +3825,9 @@ static int gen(Node *node) {
                reg64[r_addr], reg(r_val, sz));
         if (sz < 4) {
             if (use_unsigned(node->ty))
-                printf("  movzx %s, %s\n", reg32[r_result], reg(r_val, sz));
+                zero_extend_to(r_result, sz, 4);
             else
-                printf("  movsx %s, %s\n", reg32[r_result], reg(r_val, sz));
+                sign_extend_to(r_result, sz, 4);
         } else {
             printf("  mov %s, %s\n", reg(r_result, sz), reg(r_val, sz));
         }
@@ -3839,12 +3835,8 @@ static int gen(Node *node) {
         free_reg(r_val);
         free_reg(r_addr);
 #ifdef ARCH_ARM64
-        if (sz < 8 && !use_unsigned(node->ty)) {
-            if (sz == 1)
-                printf("  sxtb %s, %s\n", reg32[r_result], reg32[r_result]);
-            else if (sz == 2)
-                printf("  sxth %s, %s\n", reg32[r_result], reg32[r_result]);
-        }
+        if (sz < 8 && !use_unsigned(node->ty))
+            sign_extend_to(r_result, sz, 8);
 #endif
         return r_result;
     }
@@ -3985,19 +3977,13 @@ static int gen(Node *node) {
         free_reg(r_addr);
         if (is_store) {
             free_reg(r_old);
-            if (sz < 8 && !use_unsigned(node->ty)) {
-                if (sz == 1) printf("  sxtb %s, %s\n", reg32[r_new], reg32[r_new]);
-                else if (sz == 2)
-                    printf("  sxth %s, %s\n", reg32[r_new], reg32[r_new]);
-            }
+            if (sz < 8 && !use_unsigned(node->ty))
+                sign_extend_to(r_new, sz, 8);
             return r_new;
         } else {
             free_reg(r_new);
-            if (sz < 8 && !use_unsigned(node->ty)) {
-                if (sz == 1) printf("  sxtb %s, %s\n", reg32[r_old], reg32[r_old]);
-                else if (sz == 2)
-                    printf("  sxth %s, %s\n", reg32[r_old], reg32[r_old]);
-            }
+            if (sz < 8 && !use_unsigned(node->ty))
+                sign_extend_to(r_old, sz, 8);
             return r_old;
         }
 #else
@@ -4013,10 +3999,12 @@ static int gen(Node *node) {
             free_reg(r_addr);
             if (node->atomic_ord == MEMORDER_SEQ_CST)
                 printf("  mfence\n");
-            if (!is_store && sz < 4 && !use_unsigned(node->ty))
-                printf("  movsx %s, %s\n", reg32[r_old], reg(r_old, sz));
-            else if (!is_store && sz < 4)
-                printf("  movzx %s, %s\n", reg32[r_old], reg(r_old, sz));
+            if (!is_store && sz < 4) {
+                if (!use_unsigned(node->ty))
+                    sign_extend_to(r_old, sz, 4);
+                else
+                    zero_extend_to(r_old, sz, 4);
+            }
             return r_old;
         } else {
             int r_new = alloc_reg();
@@ -4047,17 +4035,21 @@ static int gen(Node *node) {
             free_reg(r_addr);
             if (is_store) {
                 free_reg(r_old);
-                if (sz < 4 && !use_unsigned(node->ty))
-                    printf("  movsx %s, %s\n", reg32[r_new], reg(r_new, sz));
-                else if (sz < 4)
-                    printf("  movzx %s, %s\n", reg32[r_new], reg(r_new, sz));
+                if (sz < 4) {
+                    if (!use_unsigned(node->ty))
+                        sign_extend_to(r_new, sz, 4);
+                    else
+                        zero_extend_to(r_new, sz, 4);
+                }
                 return r_new;
             } else {
                 free_reg(r_new);
-                if (sz < 4 && !use_unsigned(node->ty))
-                    printf("  movsx %s, %s\n", reg32[r_old], reg(r_old, sz));
-                else if (sz < 4)
-                    printf("  movzx %s, %s\n", reg32[r_old], reg(r_old, sz));
+                if (sz < 4) {
+                    if (!use_unsigned(node->ty))
+                        sign_extend_to(r_old, sz, 4);
+                    else
+                        zero_extend_to(r_old, sz, 4);
+                }
                 return r_old;
             }
         }
