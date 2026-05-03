@@ -111,6 +111,8 @@ static void free_reg(int i);
 static int gen(Node *node);
 static int gen_addr(Node *node);
 static bool is_asm_reserved(const char *name);
+static void sign_extend_to(int r, int from_size, int to_size);
+static void zero_extend_to(int r, int from_size, int to_size);
 
 #if 0
 static char *func_asm_name(char *name) {
@@ -1032,22 +1034,10 @@ static int gen_funcall(Node *node, int hidden_ret_reg) {
         if (is_flonum(argv[i]->ty)) {
             printf("  mov qword ptr [rsp+%d], %s\n", shadow_space + arg_stack_idx[i] * 8, reg64[r]);
         } else {
-            if (argv[i]->ty->size == 1) {
-                if (argv[i]->ty->is_unsigned)
-                    printf("  movzx %s, %s\n", reg64[r], reg8[r]);
-                else
-                    printf("  movsx %s, %s\n", reg32[r], reg8[r]);
-            } else if (argv[i]->ty->size == 2) {
-                if (argv[i]->ty->is_unsigned)
-                    printf("  movzx %s, %s\n", reg64[r], reg16[r]);
-                else
-                    printf("  movsx %s, %s\n", reg32[r], reg16[r]);
-            } else if (argv[i]->ty->size == 4) {
-                if (argv[i]->ty->is_unsigned)
-                    printf("  mov %s, %s\n", reg32[r], reg32[r]);
-                else
-                    printf("  movsxd %s, %s\n", reg64[r], reg32[r]);
-            }
+            if (argv[i]->ty->is_unsigned)
+                zero_extend_to(r, argv[i]->ty->size, 8);
+            else
+                sign_extend_to(r, argv[i]->ty->size, 8);
             printf("  mov qword ptr [rsp+%d], %s\n", shadow_space + arg_stack_idx[i] * 8, reg64[r]);
         }
         free_reg(r);
@@ -1388,6 +1378,50 @@ static bool use_unsigned_cmp(Node *node) {
     if (size < 4)
         size = 4;
     return get_integer_type(size, lhs->is_unsigned || rhs->is_unsigned)->is_unsigned;
+}
+
+static void sign_extend_to(int r, int from_size, int to_size) {
+    if (to_size <= from_size)
+        return;
+    if (to_size == 8) {
+        if (from_size == 4)
+            printf("  movsxd %s, %s\n", reg64[r], reg32[r]);
+        else if (from_size == 2)
+            printf("  movsx %s, %s\n", reg64[r], reg16[r]);
+        else if (from_size == 1)
+            printf("  movsx %s, %s\n", reg64[r], reg8[r]);
+        else
+            printf("  movsxd %s, %s\n", reg64[r], reg32[r]);
+    } else if (to_size == 4) {
+        if (from_size == 2)
+            printf("  movsx %s, %s\n", reg32[r], reg16[r]);
+        else if (from_size == 1)
+            printf("  movsx %s, %s\n", reg32[r], reg8[r]);
+        else
+            printf("  mov %s, %s\n", reg32[r], reg32[r]);
+    }
+}
+
+static void zero_extend_to(int r, int from_size, int to_size) {
+    if (to_size <= from_size)
+        return;
+    if (to_size == 8) {
+        if (from_size == 4)
+            printf("  mov %s, %s\n", reg32[r], reg32[r]);
+        else if (from_size == 2)
+            printf("  movzx %s, %s\n", reg64[r], reg16[r]);
+        else if (from_size == 1)
+            printf("  movzx %s, %s\n", reg64[r], reg8[r]);
+        else
+            printf("  mov %s, %s\n", reg32[r], reg32[r]);
+    } else if (to_size == 4) {
+        if (from_size == 2)
+            printf("  movzx %s, %s\n", reg32[r], reg16[r]);
+        else if (from_size == 1)
+            printf("  movzx %s, %s\n", reg32[r], reg8[r]);
+        else
+            printf("  mov %s, %s\n", reg32[r], reg32[r]);
+    }
 }
 
 #ifdef ARCH_ARM64
@@ -2697,18 +2731,10 @@ static int gen(Node *node) {
                 }
             }
 #else
-            if (from->size == 4) {
-                if (from->is_unsigned)
-                    printf("  mov %s, %s\n", reg32[r], reg32[r]);
-                else
-                    printf("  movsxd %s, %s\n", reg64[r], reg32[r]);
-            } else {
-                // 8-bit or 16-bit -> 64-bit
-                if (from->is_unsigned)
-                    printf("  movzx %s, %s\n", reg64[r], reg(r, from->size));
-                else
-                    printf("  movsx %s, %s\n", reg64[r], reg(r, from->size));
-            }
+            if (from->is_unsigned)
+                zero_extend_to(r, from->size, 8);
+            else
+                sign_extend_to(r, from->size, 8);
 #endif
         }
         return r;
