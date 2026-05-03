@@ -1175,6 +1175,7 @@ static char *preprocess_file(char *filename, char *input, int *line_counts) {
     sb_init(&acc, 4096);
     unsigned acc_line_no = 0;
     int acc_line_count = 0;
+    int acc_phys_count = 0;
 
     for (char *p = input; *p;) {
         char *line = p;
@@ -1192,10 +1193,12 @@ static char *preprocess_file(char *filename, char *input, int *line_counts) {
             if (acc.len > 0) {
                 char *expanded = expand_text(acc.buf, filename, acc_line_no, 0);
                 sb_puts(&out, expanded);
-                sb_putc(&out, '\n');
+                for (int i = 0; i < acc_phys_count; i++)
+                    sb_putc(&out, '\n');
                 acc.len = 0;
                 acc.buf[0] = '\0';
                 acc_line_count = 0;
+                acc_phys_count = 0;
             }
             s++;
             while (s < end && isspace((unsigned char)*s))
@@ -1205,9 +1208,10 @@ static char *preprocess_file(char *filename, char *input, int *line_counts) {
                 s += 6;
                 while (s < end && isspace((unsigned char)*s))
                     s++;
-                if (pp_startswith(s, "once"))
+                if (pp_startswith(s, "once")) {
                     mark_once_file(fpath);
-                else if (pp_startswith(s, "pack")) {
+                    sb_putc(&out, '\n');
+                } else if (pp_startswith(s, "pack")) {
                     s += 4;
                     while (s < end && isspace((unsigned char)*s)) s++;
                     if (*s == '(') {
@@ -1251,6 +1255,7 @@ static char *preprocess_file(char *filename, char *input, int *line_counts) {
                         }
                         char *name = pp_strndup(name_start, s - name_start);
                         push_macro(name);
+                        sb_putc(&out, '\n');
                     }
                 } else if (pp_startswith(s, "pop_macro")) {
                     s += 9;
@@ -1267,7 +1272,10 @@ static char *preprocess_file(char *filename, char *input, int *line_counts) {
                         }
                         char *name = pp_strndup(name_start, s - name_start);
                         pop_macro(name);
+                        sb_putc(&out, '\n');
                     }
+                } else {
+                    sb_putc(&out, '\n');
                 }
             } else if (pp_startswith(s, "define") && active) {
                 s += 6;
@@ -1319,15 +1327,25 @@ static char *preprocess_file(char *filename, char *input, int *line_counts) {
                         Macro *m = find_macro(name);
                         if (m) m->is_variadic = true;
                     }
-                    if (line_counts)
-                        line_no += line_counts[line_idx++];
-                    else
-                        line_no++;
+                    {
+                        int n = line_counts ? line_counts[line_idx] : 1;
+                        if (line_counts)
+                            line_no += line_counts[line_idx++];
+                        else
+                            line_no++;
+                        for (int i = 0; i < n; i++)
+                            sb_putc(&out, '\n');
+                    }
                     continue;
                 }
                 while (s < end && (*s == ' ' || *s == '\t'))
                     s++;
                 define_macro(name, is_function, params, param_len, trim_copy(s, end - s));
+                {
+                    int n = line_counts ? line_counts[line_idx] : 1;
+                    for (int i = 0; i < n; i++)
+                        sb_putc(&out, '\n');
+                }
             } else if (pp_startswith(s, "undef") && active) {
                 s += 5;
                 while (s < end && isspace((unsigned char)*s))
@@ -1344,6 +1362,11 @@ static char *preprocess_file(char *filename, char *input, int *line_counts) {
                         break;
                     }
                     pm = &(*pm)->next;
+                }
+                {
+                    int n = line_counts ? line_counts[line_idx] : 1;
+                    for (int i = 0; i < n; i++)
+                        sb_putc(&out, '\n');
                 }
             } else if (pp_startswith(s, "include") && active) {
                 s += 7;
@@ -1415,6 +1438,7 @@ static char *preprocess_file(char *filename, char *input, int *line_counts) {
                 ci->next = conds;
                 conds = ci;
                 active = ci->active;
+                sb_putc(&out, '\n');
             } else if (pp_startswith(s, "elif")) {
                 // #elif - check if we already took a branch
                 s += 4;
@@ -1436,6 +1460,7 @@ static char *preprocess_file(char *filename, char *input, int *line_counts) {
                     // #elif without prior #if - treat as error but handle gracefully
                     active = false;
                 }
+                sb_putc(&out, '\n');
             } else if (pp_startswith(s, "ifdef")) {
                 s += 5;
                 while (s < end && isspace((unsigned char)*s))
@@ -1451,6 +1476,7 @@ static char *preprocess_file(char *filename, char *input, int *line_counts) {
                 ci->next = conds;
                 conds = ci;
                 active = ci->active;
+                sb_putc(&out, '\n');
             } else if (pp_startswith(s, "ifndef")) {
                 s += 6;
                 while (s < end && isspace((unsigned char)*s))
@@ -1466,18 +1492,27 @@ static char *preprocess_file(char *filename, char *input, int *line_counts) {
                 ci->next = conds;
                 conds = ci;
                 active = ci->active;
+                sb_putc(&out, '\n');
             } else if (pp_startswith(s, "else")) {
                 if (conds) {
                     conds->active = conds->parent_active && !conds->branch_taken;
                     conds->branch_taken = true;
                     active = conds->active;
                 }
+                sb_putc(&out, '\n');
             } else if (pp_startswith(s, "endif")) {
                 if (conds) {
                     CondIncl *next = conds->next;
                     active = conds->parent_active;
                     conds = next;
                 }
+                sb_putc(&out, '\n');
+            } else {
+                // Catch-all: #define, #undef, #include, #pragma, etc.
+                // in inactive sections. Output newline for line counting.
+                int n = line_counts ? line_counts[line_idx] : 1;
+                for (int i = 0; i < n; i++)
+                    sb_putc(&out, '\n');
             }
         } else if (active) {
             if (acc.len > 0 || count_unmatched_parens(line, end) > 0) {
@@ -1491,35 +1526,43 @@ static char *preprocess_file(char *filename, char *input, int *line_counts) {
                 acc.len += end - line;
                 acc.buf[acc.len] = '\0';
                 acc_line_count++;
+                acc_phys_count += line_counts ? line_counts[line_idx] : 1;
                 if (count_unmatched_parens(acc.buf, acc.buf + acc.len) <= 0) {
                     char *expanded = expand_text(acc.buf, filename, acc_line_no, 0);
                     sb_puts(&out, expanded);
-                    sb_putc(&out, '\n');
-                    /* output empty lines for accumulated lines beyond the first */
-                    for (int i = 1; i < acc_line_count; i++)
+                    for (int i = 0; i < acc_phys_count; i++)
                         sb_putc(&out, '\n');
                     acc.len = 0;
                     acc.buf[0] = '\0';
                     acc_line_count = 0;
+                    acc_phys_count = 0;
                 }
             } else {
                 char *expanded = expand_text(pp_strndup(line, end - line), filename, line_no, 0);
                 sb_puts(&out, expanded);
-                sb_putc(&out, '\n');
+                {
+                    int n = line_counts ? line_counts[line_idx] : 1;
+                    for (int i = 0; i < n; i++)
+                        sb_putc(&out, '\n');
+                }
             }
         } else {
             if (acc.len > 0) {
                 /* flush accumulator before inactive section */
                 char *expanded = expand_text(acc.buf, filename, acc_line_no, 0);
                 sb_puts(&out, expanded);
-                sb_putc(&out, '\n');
-                for (int i = 1; i < acc_line_count; i++)
+                for (int i = 0; i < acc_phys_count; i++)
                     sb_putc(&out, '\n');
                 acc.len = 0;
                 acc.buf[0] = '\0';
                 acc_line_count = 0;
+                acc_phys_count = 0;
             }
-            sb_putc(&out, '\n');
+            {
+                int n = line_counts ? line_counts[line_idx] : 1;
+                for (int i = 0; i < n; i++)
+                    sb_putc(&out, '\n');
+            }
         }
 
         if (line_counts)
@@ -1531,7 +1574,8 @@ static char *preprocess_file(char *filename, char *input, int *line_counts) {
     if (acc.len > 0) {
         char *expanded = expand_text(acc.buf, filename, acc_line_no, 0);
         sb_puts(&out, expanded);
-        sb_putc(&out, '\n');
+        for (int i = 0; i < acc_phys_count; i++)
+            sb_putc(&out, '\n');
     }
 
     return out.buf;

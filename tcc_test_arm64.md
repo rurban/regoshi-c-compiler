@@ -3,8 +3,8 @@ Generated: May 2026
 
 ## Summary
  - **Total**:     147
- - **Passed**:    135
- - **Failed**:    12
+ - **Passed**:    134
+ - **Failed**:    13
  - **Pass Rate**: 91%
 
 ## Detailed Results
@@ -105,7 +105,7 @@ Generated: May 2026
 | 103_implicit_memmove                     | PASS         | Output matches                       |
 | 104_inline                               | COMPILE_FAIL | executable missing                   |
 | 105_local_extern                         | PASS         | Output matches                       |
-| 106_versym                               | PASS         | Output matches                       |
+| 106_versym                               | COMPILE_FAIL | executable missing                   |
 | 107_stack_safe                           | PASS         | Output matches                       |
 | 108_constructor                          | COMPILE_FAIL | executable missing                   |
 | 109_float_struct_calling                 | PASS         | Output matches                       |
@@ -118,12 +118,12 @@ Generated: May 2026
 | 116_bound_setjmp2                        | SKIP         | Skipped                              |
 | 117_builtins                             | PASS         | Output matches                       |
 | 118_switch                               | PASS         | Output matches                       |
-| 119_random_stuff                         | MISMATCH     | Output does not match .expect        |
+| 119_random_stuff                         | COMPILE_FAIL | executable missing                   |
 | 120_alias                                | COMPILE_FAIL | executable missing                   |
 | 121_struct_return                        | PASS         | Output matches                       |
 | 122_vla_reuse                            | PASS         | Output matches                       |
 | 123_vla_bug                              | PASS         | Output matches                       |
-| 124_atomic_counter                       | MISMATCH     | Output does not match .expect        |
+| 124_atomic_counter                       | COMPILE_FAIL | executable missing                   |
 | 125_atomic_misc                          | MISMATCH     | Output differs                       |
 | 126_bound_global                         | SKIP         | Skipped                              |
 | 127_asm_goto                             | COMPILE_FAIL | executable missing                   |
