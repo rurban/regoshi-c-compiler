@@ -76,6 +76,9 @@ static bool equal(Token *tok, char *op) {
     return tok->len == len && memcmp(tok->loc, op, len) == 0;
 }
 
+// Fast variant for string-literal comparisons (avoids strlen at runtime)
+#define equalc(tok, op)     ((tok) && (tok)->loc && (tok)->len == (int)(sizeof(op) - 1) &&      memcmp((tok)->loc, op, sizeof(op) - 1) == 0)
+
 static Token *skip(Token *tok, char *op) {
     if (!equal(tok, op))
         error_tok(tok, "expected specific operator");
@@ -457,20 +460,20 @@ static Node *append_cleanup_range(Node *body, LVar *begin, LVar *end, Token *tok
 }
 
 static bool is_storage_class(Token *tok) {
-    return equal(tok, "typedef") || equal(tok, "extern") || equal(tok, "static") ||
-        equal(tok, "inline") || equal(tok, "__inline") || equal(tok, "__inline__") ||
-        equal(tok, "const") || equal(tok, "volatile") || equal(tok, "restrict") ||
-        equal(tok, "__restrict") || equal(tok, "__restrict__") ||
-        equal(tok, "signed") ||
-        equal(tok, "unsigned") || equal(tok, "short") || equal(tok, "long");
+    return equalc(tok, "typedef") || equalc(tok, "extern") || equalc(tok, "static") ||
+        equalc(tok, "inline") || equalc(tok, "__inline") || equalc(tok, "__inline__") ||
+        equalc(tok, "const") || equalc(tok, "volatile") || equalc(tok, "restrict") ||
+        equalc(tok, "__restrict") || equalc(tok, "__restrict__") ||
+        equalc(tok, "signed") ||
+        equalc(tok, "unsigned") || equalc(tok, "short") || equalc(tok, "long");
 }
 
 static Token *skip_balanced(Token *tok) {
     int depth = 0;
     do {
-        if (equal(tok, "("))
+        if (equalc(tok, "("))
             depth++;
-        else if (equal(tok, ")"))
+        else if (equalc(tok, ")"))
             depth--;
         tok = tok->next;
     } while (depth > 0 && tok->kind != TK_EOF);
@@ -488,11 +491,11 @@ static Token *skip_attributes(Token *tok) {
 static unsigned char collect_type_quals(Token **rest, Token *tok) {
     unsigned char q = 0;
     while (true) {
-        if (equal(tok, "const"))
+        if (equalc(tok, "const"))
             q |= QUAL_CONST;
-        else if (equal(tok, "volatile"))
+        else if (equalc(tok, "volatile"))
             q |= QUAL_VOLATILE;
-        else if (equal(tok, "restrict") || equal(tok, "__restrict") || equal(tok, "__restrict__"))
+        else if (equalc(tok, "restrict") || equalc(tok, "__restrict") || equalc(tok, "__restrict__"))
             q |= QUAL_RESTRICT;
         else
             break;
@@ -504,14 +507,14 @@ static unsigned char collect_type_quals(Token **rest, Token *tok) {
 
 
 static bool is_typename(Token *tok) {
-    if (equal(tok, "__attribute__") || equal(tok, "__attribute") ||
-        equal(tok, "__declspec") || equal(tok, "_Alignas"))
+    if (equalc(tok, "__attribute__") || equalc(tok, "__attribute") ||
+        equalc(tok, "__declspec") || equalc(tok, "_Alignas"))
         return true;
     tok = skip_attributes(tok);
-    if (equal(tok, "int") || equal(tok, "char") || equal(tok, "void") ||
-        equal(tok, "float") || equal(tok, "double") ||
-        equal(tok, "_Bool") || equal(tok, "struct") || equal(tok, "union") || equal(tok, "enum") ||
-        equal(tok, "typeof") || equal(tok, "__typeof") || equal(tok, "__typeof__"))
+    if (equalc(tok, "int") || equalc(tok, "char") || equalc(tok, "void") ||
+        equalc(tok, "float") || equalc(tok, "double") ||
+        equalc(tok, "_Bool") || equalc(tok, "struct") || equalc(tok, "union") || equalc(tok, "enum") ||
+        equalc(tok, "typeof") || equalc(tok, "__typeof") || equalc(tok, "__typeof__"))
         return true;
     if (is_storage_class(tok))
         return true;
@@ -530,7 +533,7 @@ static void maybe_update_align(int *align, int value) {
 
 static Token *read_type_attrs(Token *tok, int *align, VarAttr *attr) {
     while (true) {
-        if (equal(tok, "_Alignas")) {
+        if (equalc(tok, "_Alignas")) {
             tok = tok->next;
             tok = skip(tok, "(");
             if (is_typename(tok)) {
@@ -547,11 +550,11 @@ static Token *read_type_attrs(Token *tok, int *align, VarAttr *attr) {
             continue;
         }
 
-        if (equal(tok, "__asm__") || equal(tok, "__asm")) {
+        if (equalc(tok, "__asm__") || equalc(tok, "__asm")) {
             Token *start = tok;
             tok = tok->next;
             // Before consuming "(", check if next is "(" — if not, it's not an asm attribute
-            if (!equal(tok, "(")) {
+            if (!equalc(tok, "(")) {
                 // Could be __asm__ statement without parens (but we don't handle that here)
                 tok = start;
                 return tok;
@@ -560,7 +563,7 @@ static Token *read_type_attrs(Token *tok, int *align, VarAttr *attr) {
             char asm_buf[256];
             asm_buf[0] = '\0';
             int asm_len = 0;
-            while (tok->kind == TK_STR || (tok->kind == TK_IDENT && equal(tok, "_"))) {
+            while (tok->kind == TK_STR || (tok->kind == TK_IDENT && equalc(tok, "_"))) {
                 if (tok->kind == TK_STR && asm_len + tok->len < (int)sizeof(asm_buf) - 1) {
                     memcpy(asm_buf + asm_len, tok->str, tok->len);
                     asm_len += tok->len;
@@ -569,7 +572,7 @@ static Token *read_type_attrs(Token *tok, int *align, VarAttr *attr) {
                 tok = tok->next;
             }
             // Simple __asm__("label") for symbol naming — no operands
-            if (equal(tok, ")")) {
+            if (equalc(tok, ")")) {
                 tok = skip(tok, ")");
                 if (asm_len > 0)
                     pending_asm_name = str_intern(asm_buf, asm_len);
@@ -580,12 +583,12 @@ static Token *read_type_attrs(Token *tok, int *align, VarAttr *attr) {
             return tok;
         }
 
-        if (equal(tok, "__attribute__") || equal(tok, "__attribute")) {
+        if (equalc(tok, "__attribute__") || equalc(tok, "__attribute")) {
             tok = tok->next;
             tok = skip(tok, "(");
             tok = skip(tok, "(");
-            while (!(equal(tok, ")") && equal(tok->next, ")"))) {
-                if (equal(tok, "__cleanup__") || equal(tok, "cleanup")) {
+            while (!(equalc(tok, ")") && equalc(tok->next, ")"))) {
+                if (equalc(tok, "__cleanup__") || equalc(tok, "cleanup")) {
                     pending_cleanup_tok = tok;
                     tok = tok->next;
                     tok = skip(tok, "(");
@@ -593,14 +596,14 @@ static Token *read_type_attrs(Token *tok, int *align, VarAttr *attr) {
                         pending_cleanup_func = tok->name;
                     tok = tok->next;
                     tok = skip(tok, ")");
-                    if (equal(tok, ","))
+                    if (equalc(tok, ","))
                         tok = tok->next;
                     continue;
                 }
 
-                if (equal(tok, "aligned") || equal(tok, "__aligned__")) {
+                if (equalc(tok, "aligned") || equalc(tok, "__aligned__")) {
                     tok = tok->next;
-                    if (equal(tok, "(")) {
+                    if (equalc(tok, "(")) {
                         tok = tok->next;
                         if (is_typename(tok)) {
                             Type *ty = type_name(&tok, tok);
@@ -614,71 +617,71 @@ static Token *read_type_attrs(Token *tok, int *align, VarAttr *attr) {
                         }
                         tok = skip(tok, ")");
                     }
-                    if (equal(tok, ","))
+                    if (equalc(tok, ","))
                         tok = tok->next;
                     continue;
                 }
 
-                if (equal(tok, "weak")) {
+                if (equalc(tok, "weak")) {
                     if (attr)
                         attr->is_weak = true;
                     tok = tok->next;
-                    if (equal(tok, "("))
+                    if (equalc(tok, "("))
                         tok = skip_balanced(tok);
-                    if (equal(tok, ","))
+                    if (equalc(tok, ","))
                         tok = tok->next;
                     continue;
                 }
 
-                if (equal(tok, "ms_struct")) {
+                if (equalc(tok, "ms_struct")) {
                     if (attr)
                         attr->bitfield_mode = BF_MODE_MS;
                     tok = tok->next;
-                    if (equal(tok, "("))
+                    if (equalc(tok, "("))
                         tok = skip_balanced(tok);
-                    if (equal(tok, ","))
+                    if (equalc(tok, ","))
                         tok = tok->next;
                     continue;
                 }
 
-                if (equal(tok, "gcc_struct")) {
+                if (equalc(tok, "gcc_struct")) {
                     if (attr)
                         attr->bitfield_mode = BF_MODE_GCC;
                     tok = tok->next;
-                    if (equal(tok, "("))
+                    if (equalc(tok, "("))
                         tok = skip_balanced(tok);
-                    if (equal(tok, ","))
+                    if (equalc(tok, ","))
                         tok = tok->next;
                     continue;
                 }
 
-                if (equal(tok, "constructor") || equal(tok, "__constructor__")) {
+                if (equalc(tok, "constructor") || equalc(tok, "__constructor__")) {
                     pending_constructor = true;
                     tok = tok->next;
-                    if (equal(tok, "("))
+                    if (equalc(tok, "("))
                         tok = skip_balanced(tok);
-                    if (equal(tok, ","))
+                    if (equalc(tok, ","))
                         tok = tok->next;
                     continue;
                 }
 
-                if (equal(tok, "destructor") || equal(tok, "__destructor__")) {
+                if (equalc(tok, "destructor") || equalc(tok, "__destructor__")) {
                     pending_destructor = true;
                     tok = tok->next;
-                    if (equal(tok, "("))
+                    if (equalc(tok, "("))
                         tok = skip_balanced(tok);
-                    if (equal(tok, ","))
+                    if (equalc(tok, ","))
                         tok = tok->next;
                     continue;
                 }
 
-                if (equal(tok, "(")) {
+                if (equalc(tok, "(")) {
                     tok = skip_balanced(tok);
                 } else {
                     tok = tok->next;
                 }
 
-                if (equal(tok, ","))
+                if (equalc(tok, ","))
                     tok = tok->next;
             }
             tok = skip(tok, ")");
@@ -686,9 +689,9 @@ static Token *read_type_attrs(Token *tok, int *align, VarAttr *attr) {
             continue;
         }
 
-        if (equal(tok, "__declspec")) {
+        if (equalc(tok, "__declspec")) {
             tok = tok->next;
-            if (equal(tok, "("))
+            if (equalc(tok, "("))
                 tok = skip_balanced(tok);
             continue;
         }
@@ -825,18 +828,18 @@ static Type *declarator_params(Token **rest, Token *tok, Type *ty) {
     Type *pcur = &param_head;
     bool is_variadic = false;
 
-    if (equal(tok, "void") && equal(tok->next, ")")) {
+    if (equalc(tok, "void") && equalc(tok->next, ")")) {
         tok = tok->next->next;
     } else {
-        while (!equal(tok, ")")) {
+        while (!equalc(tok, ")")) {
             if (pcur != &param_head)
                 tok = skip(tok, ",");
-            if (equal(tok, "...")) {
+            if (equalc(tok, "...")) {
                 is_variadic = true;
                 tok = tok->next;
                 break;
             }
-            if (equal(tok, ";")) {
+            if (equalc(tok, ";")) {
                 tok = tok->next;
                 continue;
             }
@@ -872,14 +875,14 @@ static Type *type_suffix(Token **rest, Token *tok, Type *ty) {
     int dims[16];
     Node *vla_exprs[16] = {0};
     int ndims = 0;
-    while (equal(tok, "[")) {
+    while (equalc(tok, "[")) {
         tok = tok->next;
         int len = 0;
         Node *vla_expr = NULL;
-        while (equal(tok, "const") || equal(tok, "volatile") || equal(tok, "restrict") || equal(tok, "static"))
+        while (equalc(tok, "const") || equalc(tok, "volatile") || equalc(tok, "restrict") || equalc(tok, "static"))
             tok = tok->next;
-        if (!equal(tok, "]")) {
-            if (equal(tok, "*")) {
+        if (!equalc(tok, "]")) {
+            if (equalc(tok, "*")) {
                 tok = tok->next;
             } else {
                 Node *node = expr(&tok, tok);
@@ -907,14 +910,14 @@ static Type *type_suffix(Token **rest, Token *tok, Type *ty) {
             ty = array_of(ty, dims[i]);
     }
 
-    if (equal(tok, "(")) {
+    if (equalc(tok, "(")) {
         Token *next = tok->next;
         // Detect old-style (K&R) parameter lists: identifier-only params.
         // If the first token inside () is an identifier (not a type name)
         // followed by ) or ,, leave it for the caller (parse/declaration)
         // to handle, so K&R function definitions are not mis-parsed here.
         if (next->kind == TK_IDENT && !is_typename(next) &&
-            (equal(next->next, ")") || equal(next->next, ","))) {
+            (equalc(next->next, ")") || equalc(next->next, ","))) {
             *rest = tok;
             return ty;
         }
@@ -928,7 +931,7 @@ static Type *type_suffix(Token **rest, Token *tok, Type *ty) {
 static Type *declarator(Token **rest, Token *tok, Type *ty, char **name) {
     int decl_align = 0;
     tok = read_type_attrs(tok, &decl_align, NULL);
-    while (equal(tok, "*")) {
+    while (equalc(tok, "*")) {
         ty = pointer_to(ty);
         tok = tok->next;
         tok = read_type_attrs(tok, &decl_align, NULL);
@@ -940,18 +943,18 @@ static Type *declarator(Token **rest, Token *tok, Type *ty, char **name) {
     }
 
     Token *inner = tok->next;
-    while (equal(inner, "__cdecl") || equal(inner, "__stdcall") || equal(inner, "__fastcall") ||
-           equal(inner, "__thiscall") || equal(inner, "__vectorcall"))
+    while (equalc(inner, "__cdecl") || equalc(inner, "__stdcall") || equalc(inner, "__fastcall") ||
+           equalc(inner, "__thiscall") || equalc(inner, "__vectorcall"))
         inner = inner->next;
     inner = skip_attributes(inner);
-    if (equal(tok, "(")) {
+    if (equalc(tok, "(")) {
         Token *start = tok->next;
         // Find the matching ) for the initial (
         Token *after_paren = start;
         int depth = 1;
         while (depth > 0 && after_paren->kind != TK_EOF) {
-            if (equal(after_paren, "(")) depth++;
-            else if (equal(after_paren, ")"))
+            if (equalc(after_paren, "(")) depth++;
+            else if (equalc(after_paren, ")"))
                 depth--;
             after_paren = after_paren->next;
         }
@@ -963,11 +966,11 @@ static Type *declarator(Token **rest, Token *tok, Type *ty, char **name) {
 
     // Skip calling convention keywords, attributes, and pointer declarators before the identifier
     for (;;) {
-        while (equal(tok, "__cdecl") || equal(tok, "__stdcall") || equal(tok, "__fastcall") ||
-               equal(tok, "__thiscall") || equal(tok, "__vectorcall"))
+        while (equalc(tok, "__cdecl") || equalc(tok, "__stdcall") || equalc(tok, "__fastcall") ||
+               equalc(tok, "__thiscall") || equalc(tok, "__vectorcall"))
             tok = tok->next;
         tok = read_type_attrs(tok, &decl_align, NULL);
-        if (equal(tok, "*")) {
+        if (equalc(tok, "*")) {
             ty = pointer_to(ty);
             tok = tok->next;
             continue;
@@ -976,7 +979,7 @@ static Type *declarator(Token **rest, Token *tok, Type *ty, char **name) {
     }
 
     // __asm__ is not a declarator identifier — let stmt() handle inline asm
-    if (equal(tok, "__asm__") || equal(tok, "__asm")) {
+    if (equalc(tok, "__asm__") || equalc(tok, "__asm")) {
         if (name) *name = NULL;
         *rest = tok;
         return ty;
@@ -1002,7 +1005,7 @@ static Type *enum_specifier(Token **rest, Token *tok) {
     if (tok->kind == TK_IDENT)
         tok = tok->next;
 
-    if (!equal(tok, "{")) {
+    if (!equalc(tok, "{")) {
         *rest = tok;
         Type *ety = arena_alloc(sizeof(Type));
         *ety = *ty_int;
@@ -1012,7 +1015,7 @@ static Type *enum_specifier(Token **rest, Token *tok) {
 
     tok = tok->next;
     int val = 0;
-    while (!equal(tok, "}")) {
+    while (!equalc(tok, "}")) {
         if (tok->kind != TK_IDENT)
             error_tok(tok, "expected enum constant");
 
@@ -1020,7 +1023,7 @@ static Type *enum_specifier(Token **rest, Token *tok) {
         ec->name = tok->name;
         tok = tok->next;
 
-        if (equal(tok, "=")) {
+        if (equalc(tok, "=")) {
             tok = tok->next;
             Node *node = conditional(&tok, tok);
             add_type(node);
@@ -1034,7 +1037,7 @@ static Type *enum_specifier(Token **rest, Token *tok) {
         ec->next = enum_consts;
         enum_consts = ec;
 
-        if (!equal(tok, "}"))
+        if (!equalc(tok, "}"))
             tok = skip(tok, ",");
     }
 
@@ -1063,10 +1066,10 @@ static Type *struct_or_union_specifier(Token **rest, Token *tok, bool is_union) 
     Type *ty = NULL;
     if (tag_tok) {
         TagScope *tag = find_tag(tag_tok);
-        if (tag && !equal(tok, "{")) {
+        if (tag && !equalc(tok, "{")) {
             // Forward-reference use: return existing type
             ty = tag->ty;
-        } else if (tag && equal(tok, "{") && tag->ty->size == 0 && !tag->ty->members) {
+        } else if (tag && equalc(tok, "{") && tag->ty->size == 0 && !tag->ty->members) {
             // Completing a forward-declared (incomplete) type: reuse existing Type object
             // so all pointers to it (typedefs, etc.) see the completed definition.
             ty = tag->ty;
@@ -1090,7 +1093,7 @@ static Type *struct_or_union_specifier(Token **rest, Token *tok, bool is_union) 
     if (struct_attr.bitfield_mode)
         ty->bitfield_mode = struct_attr.bitfield_mode;
 
-    if (!equal(tok, "{")) {
+    if (!equalc(tok, "{")) {
         *rest = tok;
         return ty;
     }
@@ -1116,7 +1119,7 @@ static Type *struct_or_union_specifier(Token **rest, Token *tok, bool is_union) 
     TypeKind ms_prev_kind = TY_FUNC;
     int ms_prev_bit_width = 0;
 
-    while (!equal(tok, "}")) {
+    while (!equalc(tok, "}")) {
         VarAttr attr = {};
         pending_constructor = false;
         pending_destructor = false;
@@ -1126,7 +1129,7 @@ static Type *struct_or_union_specifier(Token **rest, Token *tok, bool is_union) 
             error_tok(tok, "invalid storage class in member declaration");
         if (!base)
             error_tok(tok, "expected member type");
-        if (equal(tok, ";")) {
+        if (equalc(tok, ";")) {
             // Anonymous struct/union member: struct { ... }; or union { ... };
             if (base->kind == TY_STRUCT || base->kind == TY_UNION) {
                 // bf_unit_size = 0;
@@ -1160,7 +1163,7 @@ static Type *struct_or_union_specifier(Token **rest, Token *tok, bool is_union) 
 
             // Check for bitfield
             int bit_width = 0;
-            if (equal(tok, ":")) {
+            if (equalc(tok, ":")) {
                 tok = tok->next;
                 Node *width_node = conditional(&tok, tok);
                 long long w;
@@ -1193,7 +1196,7 @@ static Type *struct_or_union_specifier(Token **rest, Token *tok, bool is_union) 
                     if (max_align < a) max_align = a;
                 }
                 cur = cur->next = mem;
-                if (!equal(tok, ",")) break;
+                if (!equalc(tok, ",")) break;
                 tok = tok->next;
                 continue;
             }
@@ -1252,7 +1255,7 @@ static Type *struct_or_union_specifier(Token **rest, Token *tok, bool is_union) 
                         if (end_byte > offset) offset = end_byte;
                     }
                 }
-                if (!equal(tok, ","))
+                if (!equalc(tok, ","))
                     break;
                 tok = tok->next;
                 continue;
@@ -1383,7 +1386,7 @@ static Type *struct_or_union_specifier(Token **rest, Token *tok, bool is_union) 
             if (name)
                 cur = cur->next = mem;
 
-            if (!equal(tok, ","))
+            if (!equalc(tok, ","))
                 break;
             tok = tok->next;
         }
@@ -1429,103 +1432,103 @@ static Type *declspec(Token **rest, Token *tok, VarAttr *attr) {
             continue;
         }
 
-        if (equal(tok, "typedef")) {
+        if (equalc(tok, "typedef")) {
             attr->is_typedef = true;
             tok = tok->next;
             continue;
         }
-        if (equal(tok, "extern")) {
+        if (equalc(tok, "extern")) {
             attr->is_extern = true;
             tok = tok->next;
             continue;
         }
-        if (equal(tok, "static")) {
+        if (equalc(tok, "static")) {
             attr->is_static = true;
             tok = tok->next;
             continue;
         }
-        if (equal(tok, "inline") || equal(tok, "__inline") || equal(tok, "__inline__")) {
+        if (equalc(tok, "inline") || equalc(tok, "__inline") || equalc(tok, "__inline__")) {
             attr->is_inline = true;
             tok = tok->next;
             continue;
         }
-        if (equal(tok, "const")) {
+        if (equalc(tok, "const")) {
             quals |= QUAL_CONST;
             tok = tok->next;
             continue;
         }
-        if (equal(tok, "volatile")) {
+        if (equalc(tok, "volatile")) {
             quals |= QUAL_VOLATILE;
             tok = tok->next;
             continue;
         }
-        if (equal(tok, "restrict") || equal(tok, "__restrict") || equal(tok, "__restrict__")) {
+        if (equalc(tok, "restrict") || equalc(tok, "__restrict") || equalc(tok, "__restrict__")) {
             quals |= QUAL_RESTRICT;
             tok = tok->next;
             continue;
         }
-        if (equal(tok, "__cdecl") || equal(tok, "__stdcall") || equal(tok, "__fastcall") ||
-            equal(tok, "__thiscall") || equal(tok, "__vectorcall")) {
+        if (equalc(tok, "__cdecl") || equalc(tok, "__stdcall") || equalc(tok, "__fastcall") ||
+            equalc(tok, "__thiscall") || equalc(tok, "__vectorcall")) {
             tok = tok->next;
             continue;
         }
-        if (equal(tok, "signed")) {
+        if (equalc(tok, "signed")) {
             is_signed = true;
             tok = tok->next;
             continue;
         }
-        if (equal(tok, "unsigned")) {
+        if (equalc(tok, "unsigned")) {
             is_unsigned = true;
             tok = tok->next;
             continue;
         }
-        if (equal(tok, "short")) {
+        if (equalc(tok, "short")) {
             is_short = true;
             tok = tok->next;
             continue;
         }
-        if (equal(tok, "long")) {
+        if (equalc(tok, "long")) {
             long_count++;
             tok = tok->next;
             continue;
         }
-        if (equal(tok, "int")) {
+        if (equalc(tok, "int")) {
             is_int = true;
             tok = tok->next;
             continue;
         }
-        if (equal(tok, "char")) {
+        if (equalc(tok, "char")) {
             is_char = true;
             tok = tok->next;
             continue;
         }
-        if (equal(tok, "float")) {
+        if (equalc(tok, "float")) {
             is_float = true;
             tok = tok->next;
             continue;
         }
-        if (equal(tok, "double")) {
+        if (equalc(tok, "double")) {
             is_double = true;
             tok = tok->next;
             continue;
         }
-        if (equal(tok, "_Bool")) {
+        if (equalc(tok, "_Bool")) {
             is_bool = true;
             tok = tok->next;
             continue;
         }
-        if (equal(tok, "__int64")) {
+        if (equalc(tok, "__int64")) {
             long_count = 2;
             tok = tok->next;
             continue;
         }
-        if (equal(tok, "void")) {
+        if (equalc(tok, "void")) {
             is_void = true;
             tok = tok->next;
             continue;
         }
 
-        if (equal(tok, "typeof") || equal(tok, "__typeof") || equal(tok, "__typeof__")) {
+        if (equalc(tok, "typeof") || equalc(tok, "__typeof") || equalc(tok, "__typeof__")) {
             tok = tok->next;
             tok = skip(tok, "(");
             if (is_typename(tok)) {
@@ -1556,15 +1559,15 @@ static Type *declspec(Token **rest, Token *tok, VarAttr *attr) {
             tok = tok->next;
             continue;
         }
-        if (equal(tok, "struct")) {
+        if (equalc(tok, "struct")) {
             ty = struct_or_union_specifier(&tok, tok, false);
             continue;
         }
-        if (equal(tok, "union")) {
+        if (equalc(tok, "union")) {
             ty = struct_or_union_specifier(&tok, tok, true);
             continue;
         }
-        if (equal(tok, "enum")) {
+        if (equalc(tok, "enum")) {
             ty = enum_specifier(&tok, tok);
             continue;
         }
@@ -1633,7 +1636,7 @@ static Type *parse_cast_type(Token **rest, Token *tok) {
 }
 
 static bool is_cast(Token *tok) {
-    if (!equal(tok, "("))
+    if (!equalc(tok, "("))
         return false;
     tok = tok->next;
     tok = skip_attributes(tok);
@@ -1692,7 +1695,7 @@ static bool read_global_label_initializer(Token **rest, Token *tok, char **label
     }
 
     // GCC label address: &&label
-    if (equal(tok, "&&") && tok->next && tok->next->kind == TK_IDENT) {
+    if (equalc(tok, "&&") && tok->next && tok->next->kind == TK_IDENT) {
         if (parser_current_fn)
             *label = format(".L.label.%s.%s", parser_current_fn, tok->next->name);
         else
@@ -1701,7 +1704,7 @@ static bool read_global_label_initializer(Token **rest, Token *tok, char **label
         return true;
     }
 
-    if (equal(tok, "&"))
+    if (equalc(tok, "&"))
         tok = tok->next;
 
     if (tok->kind == TK_IDENT) {
@@ -1715,40 +1718,40 @@ static bool read_global_label_initializer(Token **rest, Token *tok, char **label
 
 static Token *skip_initializer(Token *tok) {
     // Skip designated initializer: .name = value
-    if (equal(tok, ".") && tok->next && tok->next->kind == TK_IDENT) {
+    if (equalc(tok, ".") && tok->next && tok->next->kind == TK_IDENT) {
         tok = tok->next->next;
-        if (equal(tok, "="))
+        if (equalc(tok, "="))
             tok = tok->next;
         return skip_initializer(tok);
     }
     // Skip array index designator: [N] = value or [N ... M] = value
-    if (equal(tok, "[")) {
+    if (equalc(tok, "[")) {
         int depth = 1;
         tok = tok->next;
         while (depth > 0 && tok->kind != TK_EOF) {
-            if (equal(tok, "[")) depth++;
-            else if (equal(tok, "]"))
+            if (equalc(tok, "[")) depth++;
+            else if (equalc(tok, "]"))
                 depth--;
             tok = tok->next;
         }
-        if (equal(tok, "...")) {
+        if (equalc(tok, "...")) {
             tok = tok->next;
-            while (!equal(tok, "]") && tok->kind != TK_EOF) tok = tok->next;
+            while (!equalc(tok, "]") && tok->kind != TK_EOF) tok = tok->next;
             tok = tok->next;
         }
-        if (equal(tok, "=")) tok = tok->next;
+        if (equalc(tok, "=")) tok = tok->next;
         return skip_initializer(tok);
     }
-    if (!equal(tok, "{")) {
+    if (!equalc(tok, "{")) {
         assign(&tok, tok);
         return tok;
     }
 
     int depth = 0;
     do {
-        if (equal(tok, "{"))
+        if (equalc(tok, "{"))
             depth++;
-        else if (equal(tok, "}"))
+        else if (equalc(tok, "}"))
             depth--;
         tok = tok->next;
     } while (depth > 0 && tok->kind != TK_EOF);
@@ -1759,23 +1762,23 @@ static Token *skip_flat_aggregate_init(Token *tok, Type *ty) {
     if (ty->kind == TY_STRUCT || ty->kind == TY_UNION) {
         Member *mem = ty->members;
         while (mem) {
-            if (equal(tok, "}"))
+            if (equalc(tok, "}"))
                 break;
             tok = skip_flat_aggregate_init(tok, mem->ty);
             mem = mem->next;
-            if (mem && equal(tok, ","))
+            if (mem && equalc(tok, ","))
                 tok = tok->next;
             if (ty->kind == TY_UNION)
                 break;
         }
     } else if (ty->kind == TY_ARRAY) {
-        if (equal(tok, "{") || (ty->base->kind == TY_CHAR && tok->kind == TK_STR)) {
+        if (equalc(tok, "{") || (ty->base->kind == TY_CHAR && tok->kind == TK_STR)) {
             tok = skip_initializer(tok);
         } else {
             int len = array_len(ty);
-            for (int i = 0; i < len && !equal(tok, "}"); i++) {
+            for (int i = 0; i < len && !equalc(tok, "}"); i++) {
                 tok = skip_flat_aggregate_init(tok, ty->base);
-                if (i < len - 1 && equal(tok, ","))
+                if (i < len - 1 && equalc(tok, ","))
                     tok = tok->next;
             }
         }
@@ -1803,14 +1806,14 @@ static int count_array_initializer(Token **rest, Token *tok, Type *elem_ty) {
     int max_idx = -1;
     int idx = 0;
     tok = skip(tok, "{");
-    while (!equal(tok, "}")) {
+    while (!equalc(tok, "}")) {
         int eidx = idx;
-        if (equal(tok, "[")) {
+        if (equalc(tok, "[")) {
             tok = tok->next; // skip [
             long long aidx = peek_const_expr(tok);
             assign(&tok, tok); // skip first expression
             eidx = (int)aidx;
-            if (equal(tok, "...")) {
+            if (equalc(tok, "...")) {
                 tok = tok->next; // skip ...
                 long long aeidx = peek_const_expr(tok);
                 assign(&tok, tok); // skip second expression
@@ -1820,7 +1823,7 @@ static int count_array_initializer(Token **rest, Token *tok, Type *elem_ty) {
             tok = skip(tok, "]");
             tok = skip(tok, "=");
         }
-        if (elem_ty && (elem_ty->kind == TY_STRUCT || elem_ty->kind == TY_UNION) && !equal(tok, "{")) {
+        if (elem_ty && (elem_ty->kind == TY_STRUCT || elem_ty->kind == TY_UNION) && !equalc(tok, "{")) {
             // Heuristic: if the first token is an identifier of struct/union type,
             // or a compound literal, treat it as a single element expression.
             // Otherwise use flat aggregate initialization.
@@ -1843,9 +1846,9 @@ static int count_array_initializer(Token **rest, Token *tok, Type *elem_ty) {
         if (eidx > max_idx) max_idx = eidx;
         count++;
         idx = eidx + 1;
-        if (equal(tok, ",")) {
+        if (equalc(tok, ",")) {
             tok = tok->next;
-            if (equal(tok, "}"))
+            if (equalc(tok, "}"))
                 break;
             continue;
         }
@@ -1864,7 +1867,7 @@ static Type *infer_array_type(Type *ty, Token *tok) {
         // For wide strings, count UTF-8 characters (each becomes one wchar)
         return array_of(ty->base, utf8_len(tok->str) + 1);
     }
-    if (equal(tok, "{")) {
+    if (equalc(tok, "{")) {
         Token *tmp = tok;
         int len = count_array_initializer(&tmp, tmp, ty->base);
         return array_of(ty->base, len);
@@ -1876,16 +1879,16 @@ static Type *infer_array_type(Type *ty, Token *tok) {
 // a pointer to the { token, or NULL if not a compound literal.
 static Token *find_compound_literal_start(Token *tok) {
     Token *t = tok;
-    while (equal(t, "("))
+    while (equalc(t, "("))
         t = t->next;
     if (!is_typename(t))
         return NULL;
     Type *ty = type_name(&t, t);
     if (!ty)
         return NULL;
-    while (equal(t, ")"))
+    while (equalc(t, ")"))
         t = t->next;
-    if (equal(t, "{"))
+    if (equalc(t, "{"))
         return t;
     return NULL;
 }
@@ -1934,9 +1937,9 @@ static Token *global_init_flat_array(Token *tok, LVar *var, Type *ty, int offset
         int len = array_len(ty);
         Type *base = ty->base;
         int elem_size = base->size;
-        for (int i = 0; i < len && !equal(tok, "}"); i++) {
+        for (int i = 0; i < len && !equalc(tok, "}"); i++) {
             tok = global_init_flat_array(tok, var, base, offset + i * elem_size);
-            if (i < len - 1 && equal(tok, ","))
+            if (i < len - 1 && equalc(tok, ","))
                 tok = tok->next;
         }
         return tok;
@@ -1983,7 +1986,7 @@ static Token *global_init_member(Token *tok, LVar *var, Member *mem, int base_of
         }
         return tok;
     }
-    if (mem->ty->kind == TY_ARRAY && !equal(tok, "{") && !(mem->ty->base->kind == TY_CHAR && tok->kind == TK_STR)) {
+    if (mem->ty->kind == TY_ARRAY && !equalc(tok, "{") && !(mem->ty->base->kind == TY_CHAR && tok->kind == TK_STR)) {
         return global_init_flat_array(tok, var, mem->ty, base_offset + mem->offset);
     }
     return global_init_one(tok, var, mem->ty, base_offset + mem->offset);
@@ -2001,21 +2004,21 @@ static Token *global_init_one(Token *tok, LVar *var, Type *ty, int offset) {
     }
 
     // Array with braces: { elem1, elem2, ... } with optional [N]=val or [N...M]=val designators
-    if (ty->kind == TY_ARRAY && equal(tok, "{")) {
+    if (ty->kind == TY_ARRAY && equalc(tok, "{")) {
         int elem_size = ty->base->size;
         int len = array_len(ty);
         tok = skip(tok, "{");
         int idx = 0;
-        while (!equal(tok, "}")) {
+        while (!equalc(tok, "}")) {
             int sidx = idx, eidx = idx;
-            if (equal(tok, "[")) {
+            if (equalc(tok, "[")) {
                 tok = tok->next;
                 Node *n = assign(&tok, tok);
                 long long sv = 0;
                 eval_const_expr(n, &sv);
                 sidx = (int)sv;
                 eidx = sidx;
-                if (equal(tok, "...")) {
+                if (equalc(tok, "...")) {
                     tok = tok->next;
                     Node *n2 = assign(&tok, tok);
                     long long ev = sidx;
@@ -2034,9 +2037,9 @@ static Token *global_init_one(Token *tok, LVar *var, Type *ty, int offset) {
                     tok = skip_initializer(val_start);
             }
             idx = eidx + 1;
-            if (equal(tok, ",")) {
+            if (equalc(tok, ",")) {
                 tok = tok->next;
-                if (equal(tok, "}"))
+                if (equalc(tok, "}"))
                     break;
                 continue;
             }
@@ -2046,12 +2049,12 @@ static Token *global_init_one(Token *tok, LVar *var, Type *ty, int offset) {
     }
 
     // Struct/union with braces: { mem1, mem2, ... }
-    if ((ty->kind == TY_STRUCT || ty->kind == TY_UNION) && equal(tok, "{")) {
+    if ((ty->kind == TY_STRUCT || ty->kind == TY_UNION) && equalc(tok, "{")) {
         tok = skip(tok, "{");
         Member *mem = ty->members;
-        while (!equal(tok, "}")) {
+        while (!equalc(tok, "}")) {
             // Designated initializer: .member = value
-            if (equal(tok, ".") && tok->next && tok->next->kind == TK_IDENT) {
+            if (equalc(tok, ".") && tok->next && tok->next->kind == TK_IDENT) {
                 char *name = tok->next->name;
                 tok = tok->next->next;
                 tok = skip(tok, "=");
@@ -2068,9 +2071,9 @@ static Token *global_init_one(Token *tok, LVar *var, Type *ty, int offset) {
             } else {
                 tok = skip_initializer(tok);
             }
-            if (equal(tok, ",")) {
+            if (equalc(tok, ",")) {
                 tok = tok->next;
-                if (equal(tok, "}"))
+                if (equalc(tok, "}"))
                     break;
                 continue;
             }
@@ -2085,16 +2088,16 @@ static Token *global_init_one(Token *tok, LVar *var, Type *ty, int offset) {
         tok = skip(compound_start, "{");
         if (ty->kind == TY_STRUCT || ty->kind == TY_UNION) {
             Member *mem = ty->members;
-            while (!equal(tok, "}")) {
+            while (!equalc(tok, "}")) {
                 if (mem) {
                     tok = global_init_member(tok, var, mem, offset);
                     mem = mem->next;
                 } else {
                     tok = skip_initializer(tok);
                 }
-                if (equal(tok, ",")) {
+                if (equalc(tok, ",")) {
                     tok = tok->next;
-                    if (equal(tok, "}"))
+                    if (equalc(tok, "}"))
                         break;
                     continue;
                 }
@@ -2104,24 +2107,24 @@ static Token *global_init_one(Token *tok, LVar *var, Type *ty, int offset) {
             int elem_size = ty->base->size;
             int len = array_len(ty);
             int idx = 0;
-            while (!equal(tok, "}")) {
+            while (!equalc(tok, "}")) {
                 if (len == 0 || idx < len)
                     tok = global_init_one(tok, var, ty->base, offset + idx * elem_size);
                 else
                     tok = skip_initializer(tok);
                 idx++;
-                if (equal(tok, ",")) {
+                if (equalc(tok, ",")) {
                     tok = tok->next;
-                    if (equal(tok, "}"))
+                    if (equalc(tok, "}"))
                         break;
                     continue;
                 }
                 break;
             }
         }
-        if (equal(tok, "}"))
+        if (equalc(tok, "}"))
             tok = tok->next;
-        while (equal(tok, ")"))
+        while (equalc(tok, ")"))
             tok = tok->next;
         return tok;
     }
@@ -2134,10 +2137,10 @@ static Token *global_init_one(Token *tok, LVar *var, Type *ty, int offset) {
             tok = global_init_member(tok, var, mem, offset);
             mem = mem->next;
             if (ty->kind == TY_STRUCT) {
-                while (mem && !equal(tok, "}")) {
-                    if (equal(tok, ","))
+                while (mem && !equalc(tok, "}")) {
+                    if (equalc(tok, ","))
                         tok = tok->next;
-                    if (equal(tok, "}"))
+                    if (equalc(tok, "}"))
                         break;
                     tok = global_init_member(tok, var, mem, offset);
                     mem = mem->next;
@@ -2153,7 +2156,7 @@ static Token *global_init_one(Token *tok, LVar *var, Type *ty, int offset) {
     }
 
     // Superfluous braces around scalar: { expr }
-    if (equal(tok, "{")) {
+    if (equalc(tok, "{")) {
         tok = skip(tok, "{");
         tok = global_init_one(tok, var, ty, offset);
         tok = skip(tok, "}");
@@ -2212,10 +2215,10 @@ static Token *local_init_flat_array(Token *tok, Node *lhs, Type *ty, Node **cur)
     if (ty->kind == TY_ARRAY) {
         int len = array_len(ty);
         Type *base = ty->base;
-        for (int i = 0; i < len && !equal(tok, "}"); i++) {
+        for (int i = 0; i < len && !equalc(tok, "}"); i++) {
             Node *elem_lhs = new_array_elem_lvalue_node(lhs, i, tok);
             tok = local_init_flat_array(tok, elem_lhs, base, cur);
-            if (i < len - 1 && equal(tok, ","))
+            if (i < len - 1 && equalc(tok, ","))
                 tok = tok->next;
         }
         return tok;
@@ -2227,7 +2230,7 @@ static Token *local_init_member(Token *tok, Node *lhs, Member *mem, Node **cur) 
     Node *mem_node = new_unary(ND_MEMBER, lhs, tok);
     mem_node->member = mem;
     add_type(mem_node);
-    if (mem->ty->kind == TY_ARRAY && !equal(tok, "{") && !(mem->ty->base->kind == TY_CHAR && tok->kind == TK_STR)) {
+    if (mem->ty->kind == TY_ARRAY && !equalc(tok, "{") && !(mem->ty->base->kind == TY_CHAR && tok->kind == TK_STR)) {
         return local_init_flat_array(tok, mem_node, mem->ty, cur);
     }
     return local_init_one(tok, mem_node, mem->ty, cur);
@@ -2245,20 +2248,20 @@ static Token *local_init_one(Token *tok, Node *lhs, Type *ty, Node **cur) {
     }
 
     // Array with braces
-    if (ty->kind == TY_ARRAY && equal(tok, "{")) {
+    if (ty->kind == TY_ARRAY && equalc(tok, "{")) {
         int len = array_len(ty);
         tok = skip(tok, "{");
         int idx = 0;
-        while (!equal(tok, "}")) {
+        while (!equalc(tok, "}")) {
             int sidx = idx, eidx = idx;
-            if (equal(tok, "[")) {
+            if (equalc(tok, "[")) {
                 tok = tok->next;
                 Node *n = assign(&tok, tok);
                 long long sv = 0;
                 eval_const_expr(n, &sv);
                 sidx = (int)sv;
                 eidx = sidx;
-                if (equal(tok, "...")) {
+                if (equalc(tok, "...")) {
                     tok = tok->next;
                     Node *n2 = assign(&tok, tok);
                     long long ev = sidx;
@@ -2270,7 +2273,7 @@ static Token *local_init_one(Token *tok, Node *lhs, Type *ty, Node **cur) {
                 idx = sidx;
             }
             Token *val_start = tok;
-            if (sidx != eidx && !equal(tok, "{")) {
+            if (sidx != eidx && !equalc(tok, "{")) {
                 // Range with scalar/non-brace value: evaluate once into a temp
                 Token *after_val = tok;
                 Node *rhs = assign(&after_val, after_val);
@@ -2300,9 +2303,9 @@ static Token *local_init_one(Token *tok, Node *lhs, Type *ty, Node **cur) {
                 }
             }
             idx = eidx + 1;
-            if (equal(tok, ",")) {
+            if (equalc(tok, ",")) {
                 tok = tok->next;
-                if (equal(tok, "}"))
+                if (equalc(tok, "}"))
                     break;
                 continue;
             }
@@ -2312,18 +2315,18 @@ static Token *local_init_one(Token *tok, Node *lhs, Type *ty, Node **cur) {
     }
 
     // Struct/union with braces
-    if ((ty->kind == TY_STRUCT || ty->kind == TY_UNION) && equal(tok, "{")) {
+    if ((ty->kind == TY_STRUCT || ty->kind == TY_UNION) && equalc(tok, "{")) {
         tok = skip(tok, "{");
         Member *mem = ty->members;
-        while (!equal(tok, "}")) {
-            if (equal(tok, ".") && tok->next && tok->next->kind == TK_IDENT) {
+        while (!equalc(tok, "}")) {
+            if (equalc(tok, ".") && tok->next && tok->next->kind == TK_IDENT) {
                 // Parse chain of .member designators
                 Node *chain_lhs = lhs;
                 Type *chain_ty = ty;
                 Member *first_dm = NULL;
                 Member *last_dm = NULL;
                 bool chain_ok = true;
-                while (equal(tok, ".") && tok->next && tok->next->kind == TK_IDENT) {
+                while (equalc(tok, ".") && tok->next && tok->next->kind == TK_IDENT) {
                     char *dname = tok->next->name;
                     tok = tok->next->next;
                     Member *dm = find_member_by_name(chain_ty, dname);
@@ -2346,7 +2349,7 @@ static Token *local_init_one(Token *tok, Node *lhs, Type *ty, Node **cur) {
                     tok = local_init_one(tok, chain_lhs, chain_ty, cur);
                 }
                 mem = first_dm ? first_dm->next : NULL;
-            } else if (tok->kind == TK_IDENT && tok->next && equal(tok->next, ":")) {
+            } else if (tok->kind == TK_IDENT && tok->next && equalc(tok->next, ":")) {
                 // GNU-style designated init: member: value
                 char *name = tok->name;
                 tok = tok->next->next;
@@ -2363,9 +2366,9 @@ static Token *local_init_one(Token *tok, Node *lhs, Type *ty, Node **cur) {
             } else {
                 tok = skip_initializer(tok);
             }
-            if (equal(tok, ",")) {
+            if (equalc(tok, ",")) {
                 tok = tok->next;
-                if (equal(tok, "}"))
+                if (equalc(tok, "}"))
                     break;
                 continue;
             }
@@ -2401,10 +2404,10 @@ static Token *local_init_one(Token *tok, Node *lhs, Type *ty, Node **cur) {
             tok = local_init_member(tok, lhs, mem, cur);
             mem = mem->next;
             if (ty->kind == TY_STRUCT) {
-                while (mem && !equal(tok, "}")) {
-                    if (equal(tok, ","))
+                while (mem && !equalc(tok, "}")) {
+                    if (equalc(tok, ","))
                         tok = tok->next;
-                    if (equal(tok, "}"))
+                    if (equalc(tok, "}"))
                         break;
                     tok = local_init_member(tok, lhs, mem, cur);
                     mem = mem->next;
@@ -2421,7 +2424,7 @@ static Token *local_init_one(Token *tok, Node *lhs, Type *ty, Node **cur) {
     }
 
     // Superfluous braces around scalar
-    if (equal(tok, "{")) {
+    if (equalc(tok, "{")) {
         tok = skip(tok, "{");
         tok = local_init_one(tok, lhs, ty, cur);
         tok = skip(tok, "}");
@@ -2447,13 +2450,13 @@ static Node *declaration(Token **rest, Token *tok) {
     Node head = {};
     Node *cur = &head;
 
-    if (equal(tok, ";")) {
+    if (equalc(tok, ";")) {
         pending_cleanup_func = NULL;
         *rest = tok->next;
         return new_node(ND_NULL, tok);
     }
 
-    while (!equal(tok, ";")) {
+    while (!equalc(tok, ";")) {
         char *name = NULL;
         pending_cleanup_func = NULL;
         Type *ty = declarator(&tok, tok, copy_type(base), &name);
@@ -2489,7 +2492,7 @@ static Node *declaration(Token **rest, Token *tok) {
             locals = lvar;
             if (current_block_depth == 1)
                 current_fn_scope_locals = locals;
-            if (!equal(tok, ","))
+            if (!equalc(tok, ","))
                 break;
             tok = tok->next;
             continue;
@@ -2500,7 +2503,7 @@ static Node *declaration(Token **rest, Token *tok) {
         } else if (attr.is_static) {
             // Static local variable: create global storage with unique name
             char *asm_label = format(".Lstatic.%d", static_local_counter++);
-            if (equal(tok, "="))
+            if (equalc(tok, "="))
                 ty = infer_array_type(ty, tok->next);
             // Global entry for storage
             LVar *gvar = arena_alloc(sizeof(LVar));
@@ -2519,7 +2522,7 @@ static Node *declaration(Token **rest, Token *tok) {
             lvar->is_static = true;
             lvar->next = locals;
             locals = lvar;
-            if (equal(tok, "=")) {
+            if (equalc(tok, "=")) {
                 tok = tok->next;
                 global_initializer(&tok, tok, gvar);
                 lvar->ty = gvar->ty;
@@ -2548,7 +2551,7 @@ static Node *declaration(Token **rest, Token *tok) {
             if (current_block_depth == 1)
                 current_fn_scope_locals = locals;
         } else {
-            if (equal(tok, "=")) {
+            if (equalc(tok, "=")) {
                 ty = infer_array_type(ty, tok->next);
             }
             LVar *var = new_var(name, ty, true);
@@ -2567,7 +2570,7 @@ static Node *declaration(Token **rest, Token *tok) {
 
             if (current_block_depth == 1)
                 current_fn_scope_locals = locals;
-            if (equal(tok, "=")) {
+            if (equalc(tok, "=")) {
                 Token *start = tok;
                 tok = tok->next;
                 Node *lhs = new_var_node(var, start);
@@ -2584,7 +2587,7 @@ static Node *declaration(Token **rest, Token *tok) {
             }
         }
 
-        if (!equal(tok, ","))
+        if (!equalc(tok, ","))
             break;
         tok = tok->next;
     }
@@ -2606,26 +2609,26 @@ static Node *compound_stmt_ex(Token **rest, Token *tok, LVar **out_locals) {
     tok = skip(tok, "{");
     current_block_depth++;
 
-    while (!equal(tok, "}")) {
+    while (!equalc(tok, "}")) {
         // Handle # pragma pack(N) emitted by the preprocessor
-        if (equal(tok, "#") && equal(tok->next, "pragma") &&
-            equal(tok->next->next, "pack")) {
+        if (equalc(tok, "#") && equalc(tok->next, "pragma") &&
+            equalc(tok->next->next, "pack")) {
             tok = tok->next->next->next;
-            if (equal(tok, "(")) {
+            if (equalc(tok, "(")) {
                 tok = tok->next;
                 if (tok->kind == TK_NUM)
                     pack_align = tok->val;
                 else
                     pack_align = 0;
                 tok = tok->next;
-                if (equal(tok, ")"))
+                if (equalc(tok, ")"))
                     tok = tok->next;
             }
             continue;
         }
         if (is_typename(tok)) {
             // A typedef name followed by ':' is a label, not a declaration.
-            if (find_typedef(tok) && equal(tok->next, ":")) {
+            if (find_typedef(tok) && equalc(tok->next, ":")) {
                 cur = cur->next = stmt(&tok, tok);
                 continue;
             }
@@ -2658,7 +2661,7 @@ static Node *compound_stmt(Token **rest, Token *tok) {
 }
 
 static bool is_asm_keyword(Token *tok) {
-    return equal(tok, "asm") || equal(tok, "__asm__") || equal(tok, "__asm");
+    return equalc(tok, "asm") || equalc(tok, "__asm__") || equalc(tok, "__asm");
 }
 
 static Node *parse_asm_stmt(Token **rest, Token *tok) {
@@ -2666,8 +2669,8 @@ static Node *parse_asm_stmt(Token **rest, Token *tok) {
     tok = tok->next; // skip asm/__asm__/__asm
 
     // consume optional volatile/goto qualifiers
-    while (equal(tok, "volatile") || equal(tok, "__volatile__") ||
-           equal(tok, "__volatile") || equal(tok, "goto"))
+    while (equalc(tok, "volatile") || equalc(tok, "__volatile__") ||
+           equalc(tok, "__volatile") || equalc(tok, "goto"))
         tok = tok->next;
 
     tok = skip(tok, "(");
@@ -2684,7 +2687,7 @@ static Node *parse_asm_stmt(Token **rest, Token *tok) {
     }
     node->asm_template = str_intern(buf, len);
 
-    if (equal(tok, ")")) {
+    if (equalc(tok, ")")) {
         *rest = skip(tok->next, ";");
         return node;
     }
@@ -2696,12 +2699,12 @@ static Node *parse_asm_stmt(Token **rest, Token *tok) {
     // Parse output operands
     tok = skip(tok, ":");
     bool first = true;
-    while (!equal(tok, ":") && !equal(tok, ")")) {
+    while (!equalc(tok, ":") && !equalc(tok, ")")) {
         if (!first) tok = skip(tok, ",");
         first = false;
         if (nops >= MAX_ASM_OPERANDS) error_tok(tok, "too many asm operands");
         AsmOperand *op = &ops[nops++];
-        if (equal(tok, "[")) { // skip named operand [id]
+        if (equalc(tok, "[")) { // skip named operand [id]
             tok = tok->next->next;
             tok = skip(tok, "]");
         }
@@ -2723,15 +2726,15 @@ static Node *parse_asm_stmt(Token **rest, Token *tok) {
     int nout = nops;
 
     // Parse input operands
-    if (!equal(tok, ")")) {
+    if (!equalc(tok, ")")) {
         tok = skip(tok, ":");
         first = true;
-        while (!equal(tok, ":") && !equal(tok, ")")) {
+        while (!equalc(tok, ":") && !equalc(tok, ")")) {
             if (!first) tok = skip(tok, ",");
             first = false;
             if (nops >= MAX_ASM_OPERANDS) error_tok(tok, "too many asm operands");
             AsmOperand *op = &ops[nops++];
-            if (equal(tok, "[")) {
+            if (equalc(tok, "[")) {
                 tok = tok->next->next;
                 tok = skip(tok, "]");
             }
@@ -2749,21 +2752,21 @@ static Node *parse_asm_stmt(Token **rest, Token *tok) {
         }
 
         // Skip clobbers
-        if (!equal(tok, ")")) {
+        if (!equalc(tok, ")")) {
             tok = skip(tok, ":");
-            while (!equal(tok, ":") && !equal(tok, ")")) {
+            while (!equalc(tok, ":") && !equalc(tok, ")")) {
                 if (tok->kind != TK_STR) error_tok(tok, "expected clobber string");
                 tok = tok->next;
-                if (equal(tok, ",")) tok = tok->next;
+                if (equalc(tok, ",")) tok = tok->next;
             }
 
             // Parse goto labels
-            if (!equal(tok, ")")) {
+            if (!equalc(tok, ")")) {
                 tok = skip(tok, ":");
                 char **glabels = arena_alloc(sizeof(char *) * MAX_ASM_OPERANDS);
                 int ngoto = 0;
                 first = true;
-                while (!equal(tok, ")")) {
+                while (!equalc(tok, ")")) {
                     if (!first) tok = skip(tok, ",");
                     first = false;
                     if (tok->kind != TK_IDENT) error_tok(tok, "expected label name");
@@ -2786,11 +2789,11 @@ static Node *parse_asm_stmt(Token **rest, Token *tok) {
 }
 
 static Node *stmt(Token **rest, Token *tok) {
-    if (equal(tok, "return")) {
+    if (equalc(tok, "return")) {
         Node *node = new_node(ND_RETURN, tok);
         node->cleanup_begin = locals;
         node->cleanup_end = current_fn_scope_locals;
-        if (equal(tok->next, ";")) {
+        if (equalc(tok->next, ";")) {
             *rest = tok->next->next;
             return node;
         }
@@ -2799,21 +2802,21 @@ static Node *stmt(Token **rest, Token *tok) {
         return node;
     }
 
-    if (equal(tok, "if")) {
+    if (equalc(tok, "if")) {
         Node *node = new_node(ND_IF, tok);
         tok = skip(tok->next, "(");
         EnumConst *saved_enum = enum_consts;
         node->cond = expr(&tok, tok);
         tok = skip(tok, ")");
         node->then = stmt(&tok, tok);
-        if (equal(tok, "else"))
+        if (equalc(tok, "else"))
             node->els = stmt(&tok, tok->next);
         enum_consts = saved_enum;
         *rest = tok;
         return node;
     }
 
-    if (equal(tok, "while")) {
+    if (equalc(tok, "while")) {
         Node *node = new_node(ND_FOR, tok);
         tok = skip(tok->next, "(");
         EnumConst *saved_enum = enum_consts;
@@ -2830,7 +2833,7 @@ static Node *stmt(Token **rest, Token *tok) {
         return node;
     }
 
-    if (equal(tok, "do")) {
+    if (equalc(tok, "do")) {
         Node *node = new_node(ND_DO, tok);
         Node *saved_loop = current_loop;
         node->cleanup_end = locals;
@@ -2848,14 +2851,14 @@ static Node *stmt(Token **rest, Token *tok) {
         return node;
     }
 
-    if (equal(tok, "for")) {
+    if (equalc(tok, "for")) {
         LVar *saved_locals = locals;
         Typedef *saved_typedefs = typedefs;
         Node *node = new_node(ND_FOR, tok);
         tok = skip(tok->next, "(");
         EnumConst *saved_enum = enum_consts;
 
-        if (!equal(tok, ";")) {
+        if (!equalc(tok, ";")) {
             if (is_typename(tok)) {
                 node->init = declaration(&tok, tok);
             } else {
@@ -2866,13 +2869,13 @@ static Node *stmt(Token **rest, Token *tok) {
             tok = tok->next;
         }
 
-        if (!equal(tok, ";"))
+        if (!equalc(tok, ";"))
             node->cond = expr(&tok, tok);
         tok = skip(tok, ";");
 
         LVar *for_init_locals = locals;
 
-        if (!equal(tok, ")"))
+        if (!equalc(tok, ")"))
             node->inc = expr(&tok, tok);
         tok = skip(tok, ")");
         Node *saved_loop = current_loop;
@@ -2889,7 +2892,7 @@ static Node *stmt(Token **rest, Token *tok) {
         return node;
     }
 
-    if (equal(tok, "switch")) {
+    if (equalc(tok, "switch")) {
         Node *node = new_node(ND_SWITCH, tok);
         tok = skip(tok->next, "(");
         EnumConst *saved_enum = enum_consts;
@@ -2905,7 +2908,7 @@ static Node *stmt(Token **rest, Token *tok) {
         return node;
     }
 
-    if (equal(tok, "case")) {
+    if (equalc(tok, "case")) {
         if (!current_switch)
             error_tok(tok, "stray case label");
         Node *node = new_node(ND_CASE, tok);
@@ -2916,7 +2919,7 @@ static Node *stmt(Token **rest, Token *tok) {
         if (!eval_const_expr(val_node, &v))
             error_tok(tok, "expected constant expression for case");
         node->case_val = v;
-        if (equal(tok, "...")) {
+        if (equalc(tok, "...")) {
             tok = tok->next;
             Node *end_node = conditional(&tok, tok);
             add_type(end_node);
@@ -2934,7 +2937,7 @@ static Node *stmt(Token **rest, Token *tok) {
         return node;
     }
 
-    if (equal(tok, "default")) {
+    if (equalc(tok, "default")) {
         if (!current_switch)
             error_tok(tok, "stray default label");
         Node *node = new_node(ND_CASE, tok);
@@ -2946,7 +2949,7 @@ static Node *stmt(Token **rest, Token *tok) {
         return node;
     }
 
-    if (equal(tok, "break")) {
+    if (equalc(tok, "break")) {
         Node *node = new_node(ND_BREAK, tok);
         node->cleanup_begin = locals;
         *rest = skip(tok->next, ";");
@@ -2961,7 +2964,7 @@ static Node *stmt(Token **rest, Token *tok) {
         error_tok(tok, "stray break");
     }
 
-    if (equal(tok, "continue")) {
+    if (equalc(tok, "continue")) {
         Node *node = new_node(ND_CONTINUE, tok);
         node->cleanup_begin = locals;
         *rest = skip(tok->next, ";");
@@ -2971,9 +2974,9 @@ static Node *stmt(Token **rest, Token *tok) {
         return node;
     }
 
-    if (equal(tok, "goto")) {
+    if (equalc(tok, "goto")) {
         tok = tok->next;
-        if (equal(tok, "*")) {
+        if (equalc(tok, "*")) {
             // Computed goto: goto *expr;
             Node *node = new_node(ND_GOTO_IND, tok);
             tok = tok->next;
@@ -2994,7 +2997,7 @@ static Node *stmt(Token **rest, Token *tok) {
         return node;
     }
 
-    if (tok->kind == TK_IDENT && equal(tok->next, ":")) {
+    if (tok->kind == TK_IDENT && equalc(tok->next, ":")) {
         Node *node = new_node(ND_LABEL, tok);
         node->label_name = tok->name;
         record_label_scope(node->label_name, locals);
@@ -3006,10 +3009,10 @@ static Node *stmt(Token **rest, Token *tok) {
         return node;
     }
 
-    if (equal(tok, "{"))
+    if (equalc(tok, "{"))
         return compound_stmt(rest, tok);
 
-    if (equal(tok, ";")) {
+    if (equalc(tok, ";")) {
         *rest = tok->next;
         return new_node(ND_NULL, tok);
     }
@@ -3075,7 +3078,7 @@ static bool type_equal(Type *a, Type *b) {
 static Node *primary(Token **rest, Token *tok) {
     Node *node = NULL;
 
-    if (equal(tok, "_Generic")) {
+    if (equalc(tok, "_Generic")) {
         Token *start = tok;
         tok = skip(tok->next, "(");
         Node *ctrl = assign(&tok, tok);
@@ -3096,8 +3099,8 @@ static Node *primary(Token **rest, Token *tok) {
 
         Node *selected = NULL;
         Node *default_expr = NULL;
-        while (!equal(tok, ")")) {
-            if (equal(tok, "default")) {
+        while (!equalc(tok, ")")) {
+            if (equalc(tok, "default")) {
                 tok = skip(tok->next, ":");
                 default_expr = assign(&tok, tok);
             } else {
@@ -3107,7 +3110,7 @@ static Node *primary(Token **rest, Token *tok) {
                 if (type_equal(ctrl_ty, ty))
                     selected = expr;
             }
-            if (equal(tok, ","))
+            if (equalc(tok, ","))
                 tok = tok->next;
         }
 
@@ -3118,8 +3121,8 @@ static Node *primary(Token **rest, Token *tok) {
 
         tok = skip(tok, ")");
         node = selected;
-    } else if (equal(tok, "(")) {
-        if (equal(tok->next, "{")) {
+    } else if (equalc(tok, "(")) {
+        if (equalc(tok->next, "{")) {
             node = new_node(ND_STMT_EXPR, tok);
             LVar *block_locals = NULL;
             Node *block = compound_stmt_ex(&tok, tok->next, &block_locals);
@@ -3139,7 +3142,7 @@ static Node *primary(Token **rest, Token *tok) {
         }
     } else if (tok->kind == TK_IDENT) {
         // __FUNCTION__, __func__, __PRETTY_FUNCTION__ → current function name string
-        if (equal(tok, "__FUNCTION__") || equal(tok, "__func__") || equal(tok, "__PRETTY_FUNCTION__")) {
+        if (equalc(tok, "__FUNCTION__") || equalc(tok, "__func__") || equalc(tok, "__PRETTY_FUNCTION__")) {
             const char *fn = parser_current_fn ? parser_current_fn : "";
             node = new_node(ND_STR, tok);
             node->ty = array_of(ty_char, strlen(fn) + 1);
@@ -3148,7 +3151,7 @@ static Node *primary(Token **rest, Token *tok) {
             *rest = tok->next;
             return node;
         }
-        if (equal(tok->next, "(")) {
+        if (equalc(tok->next, "(")) {
             node = new_node(ND_FUNCALL, tok);
             LVar *var = find_var(tok);
             if (var)
@@ -3162,7 +3165,7 @@ static Node *primary(Token **rest, Token *tok) {
             tok = skip(tok->next, "(");
             Node head = {};
             Node *cur = &head;
-            while (!equal(tok, ")")) {
+            while (!equalc(tok, ")")) {
                 if (cur != &head)
                     tok = skip(tok, ",");
                 cur = cur->next = assign(&tok, tok);
@@ -3175,7 +3178,7 @@ static Node *primary(Token **rest, Token *tok) {
             if (ec) {
                 node = new_num(ec->val, tok);
                 tok = tok->next;
-            } else if (equal(tok, "NULL")) {
+            } else if (equalc(tok, "NULL")) {
                 node = new_num(0, tok);
                 tok = tok->next;
             } else {
@@ -3186,7 +3189,7 @@ static Node *primary(Token **rest, Token *tok) {
                 tok = tok->next;
             }
         }
-    } else if (equal(tok, "&&") && tok->next && tok->next->kind == TK_IDENT) {
+    } else if (equalc(tok, "&&") && tok->next && tok->next->kind == TK_IDENT) {
         // GCC label address: &&label
         node = new_node(ND_LABEL_VAL, tok);
         node->label_name = tok->next->name;
@@ -3247,13 +3250,13 @@ static Node *primary(Token **rest, Token *tok) {
     add_type(node);
 
     while (true) {
-        if (equal(tok, "(")) {
+        if (equalc(tok, "(")) {
             Node *call = new_node(ND_FUNCALL, tok);
             call->lhs = node;
             tok = tok->next;
             Node head = {};
             Node *cur = &head;
-            while (!equal(tok, ")")) {
+            while (!equalc(tok, ")")) {
                 if (cur != &head)
                     tok = skip(tok, ",");
                 cur = cur->next = assign(&tok, tok);
@@ -3265,7 +3268,7 @@ static Node *primary(Token **rest, Token *tok) {
             add_type(node);
             continue;
         }
-        if (equal(tok, "[")) {
+        if (equalc(tok, "[")) {
             Token *start = tok;
             Node *idx = expr(&tok, tok->next);
             tok = skip(tok, "]");
@@ -3273,7 +3276,7 @@ static Node *primary(Token **rest, Token *tok) {
             add_type(node);
             continue;
         }
-        if (equal(tok, ".")) {
+        if (equalc(tok, ".")) {
             tok = tok->next;
             add_type(node);
             Member *mem = find_member(node->ty, tok);
@@ -3296,7 +3299,7 @@ static Node *primary(Token **rest, Token *tok) {
             tok = tok->next;
             continue;
         }
-        if (equal(tok, "->")) {
+        if (equalc(tok, "->")) {
             tok = tok->next;
             add_type(node);
             if ((node->ty->kind != TY_PTR && node->ty->kind != TY_ARRAY) ||
@@ -3324,13 +3327,13 @@ static Node *primary(Token **rest, Token *tok) {
             tok = tok->next;
             continue;
         }
-        if (equal(tok, "++")) {
+        if (equalc(tok, "++")) {
             node = new_unary(ND_POST_INC, node, tok);
             tok = tok->next;
             add_type(node);
             continue;
         }
-        if (equal(tok, "--")) {
+        if (equalc(tok, "--")) {
             node = new_unary(ND_POST_DEC, node, tok);
             tok = tok->next;
             add_type(node);
@@ -3345,7 +3348,7 @@ static Node *primary(Token **rest, Token *tok) {
 
 
 static Node *unary(Token **rest, Token *tok) {
-    if (equal(tok, "__builtin_offsetof")) {
+    if (equalc(tok, "__builtin_offsetof")) {
         Token *start = tok;
         tok = skip(tok->next, "(");
         Type *ty = type_name(&tok, tok);
@@ -3362,7 +3365,7 @@ static Node *unary(Token **rest, Token *tok) {
             ty = mem->ty;
             tok = tok->next;
 
-            if (equal(tok, "[")) {
+            if (equalc(tok, "[")) {
                 tok = tok->next;
                 if (tok->kind != TK_NUM || ty->kind != TY_ARRAY)
                     error_tok(tok, "unsupported offsetof designator");
@@ -3371,7 +3374,7 @@ static Node *unary(Token **rest, Token *tok) {
                 tok = skip(tok->next, "]");
             }
 
-            if (!equal(tok, "."))
+            if (!equalc(tok, "."))
                 break;
             tok = tok->next;
         }
@@ -3379,7 +3382,7 @@ static Node *unary(Token **rest, Token *tok) {
         *rest = skip(tok, ")");
         return new_num(offset, start);
     }
-    if (equal(tok, "__builtin_va_start")) {
+    if (equalc(tok, "__builtin_va_start")) {
         Node *node = new_node(ND_VA_START, tok);
         tok = skip(tok->next, "(");
         node->lhs = assign(&tok, tok);
@@ -3388,7 +3391,7 @@ static Node *unary(Token **rest, Token *tok) {
         *rest = skip(tok, ")");
         return node;
     }
-    if (equal(tok, "__builtin_va_copy")) {
+    if (equalc(tok, "__builtin_va_copy")) {
         Node *node = new_node(ND_VA_COPY, tok);
         tok = skip(tok->next, "(");
         node->lhs = assign(&tok, tok);
@@ -3397,13 +3400,13 @@ static Node *unary(Token **rest, Token *tok) {
         *rest = skip(tok, ")");
         return node;
     }
-    if (equal(tok, "__builtin_va_end")) {
+    if (equalc(tok, "__builtin_va_end")) {
         tok = skip(tok->next, "(");
         Node *node = assign(&tok, tok);
         *rest = skip(tok, ")");
         return node;
     }
-    if (equal(tok, "__builtin_va_arg")) {
+    if (equalc(tok, "__builtin_va_arg")) {
         Node *node = new_node(ND_VA_ARG, tok);
         tok = skip(tok->next, "(");
 
@@ -3421,32 +3424,32 @@ static Node *unary(Token **rest, Token *tok) {
         node = new_unary(ND_DEREF, node, tok);
         return node;
     }
-    if (equal(tok, "++")) {
+    if (equalc(tok, "++")) {
         Token *start = tok;
         Node *lhs = unary(&tok, tok->next);
         *rest = tok;
         return new_binary(ND_ASSIGN, lhs, new_binary(ND_ADD, lhs, new_num(1, start), start), start);
     }
-    if (equal(tok, "--")) {
+    if (equalc(tok, "--")) {
         Token *start = tok;
         Node *lhs = unary(&tok, tok->next);
         *rest = tok;
         return new_binary(ND_ASSIGN, lhs, new_binary(ND_SUB, lhs, new_num(1, start), start), start);
     }
-    if (equal(tok, "+"))
+    if (equalc(tok, "+"))
         return unary(rest, tok->next);
-    if (equal(tok, "-"))
+    if (equalc(tok, "-"))
         return new_unary(ND_NEG, unary(rest, tok->next), tok);
-    if (equal(tok, "!"))
+    if (equalc(tok, "!"))
         return new_unary(ND_NOT, unary(rest, tok->next), tok);
-    if (equal(tok, "~"))
+    if (equalc(tok, "~"))
         return new_unary(ND_BITNOT, unary(rest, tok->next), tok);
-    if (equal(tok, "&"))
+    if (equalc(tok, "&"))
         return new_unary(ND_ADDR, unary(rest, tok->next), tok);
-    if (equal(tok, "*"))
+    if (equalc(tok, "*"))
         return new_unary(ND_DEREF, unary(rest, tok->next), tok);
-    if (equal(tok, "sizeof")) {
-        if (equal(tok->next, "(") && is_typename(tok->next->next)) {
+    if (equalc(tok, "sizeof")) {
+        if (equalc(tok->next, "(") && is_typename(tok->next->next)) {
             Type *ty = parse_cast_type(&tok, tok->next);
             *rest = tok;
             return new_num(ty->size, tok);
@@ -3456,9 +3459,9 @@ static Node *unary(Token **rest, Token *tok) {
         *rest = tok;
         return new_num(node->ty->size, tok);
     }
-    if (equal(tok, "__alignof__") || equal(tok, "__alignof")) {
+    if (equalc(tok, "__alignof__") || equalc(tok, "__alignof")) {
         Token *start = tok;
-        if (equal(tok->next, "(") && is_typename(tok->next->next)) {
+        if (equalc(tok->next, "(") && is_typename(tok->next->next)) {
             Type *ty = parse_cast_type(&tok, tok->next);
             *rest = tok;
             return new_num(ty->align, start);
@@ -3473,7 +3476,7 @@ static Node *unary(Token **rest, Token *tok) {
         Type *ty = parse_cast_type(&tok, tok);
 
         // Compound literal: (type){init_list}
-        if (equal(tok, "{")) {
+        if (equalc(tok, "{")) {
             tok = tok->next;
 
             // For incomplete arrays, count elements first
@@ -3482,21 +3485,21 @@ static Node *unary(Token **rest, Token *tok) {
                 int count = 0;
                 int depth = 0;
                 while (true) {
-                    if (equal(tmp, "{")) depth++;
-                    else if (equal(tmp, "}")) {
+                    if (equalc(tmp, "{")) depth++;
+                    else if (equalc(tmp, "}")) {
                         if (depth == 0) break;
                         depth--;
                     }
-                    if (depth == 0 && (equal(tmp, ",") || equal(tmp, "}")))
+                    if (depth == 0 && (equalc(tmp, ",") || equalc(tmp, "}")))
                         ;
                     else
                         count++;
                     // Advance past comma-separated items
-                    if (depth == 0 && equal(tmp->next, ",")) {
+                    if (depth == 0 && equalc(tmp->next, ",")) {
                         tmp = tmp->next->next;
                         continue;
                     }
-                    if (depth == 0 && equal(tmp->next, "}")) {
+                    if (depth == 0 && equalc(tmp->next, "}")) {
                         tmp = tmp->next;
                         continue;
                     }
@@ -3506,19 +3509,19 @@ static Node *unary(Token **rest, Token *tok) {
                 tmp = tok;
                 count = 1;
                 depth = 0;
-                while (!(depth == 0 && equal(tmp, "}"))) {
-                    if (equal(tmp, "{")) depth++;
-                    else if (equal(tmp, "}"))
+                while (!(depth == 0 && equalc(tmp, "}"))) {
+                    if (equalc(tmp, "{")) depth++;
+                    else if (equalc(tmp, "}"))
                         depth--;
-                    else if (depth == 0 && equal(tmp, ","))
+                    else if (depth == 0 && equalc(tmp, ","))
                         count++;
                     tmp = tmp->next;
                 }
                 // Handle trailing comma
                 Token *before_end = tok;
-                for (Token *t = tok; !equal(t, "}"); t = t->next)
+                for (Token *t = tok; !equalc(t, "}"); t = t->next)
                     before_end = t;
-                if (equal(before_end, ","))
+                if (equalc(before_end, ","))
                     count--;
                 ty = array_of(ty->base, count);
             }
@@ -3532,7 +3535,7 @@ static Node *unary(Token **rest, Token *tok) {
             if (ty->kind == TY_ARRAY && ty->base) {
                 // Array compound literal: assign each element
                 int i = 0;
-                while (!equal(tok, "}")) {
+                while (!equalc(tok, "}")) {
                     Node *idx = new_num(i, start);
                     Node *elem_ptr = new_binary(ND_ADD, new_var_node(var, start), idx, start);
                     Node *deref = new_unary(ND_DEREF, elem_ptr, start);
@@ -3543,7 +3546,7 @@ static Node *unary(Token **rest, Token *tok) {
                     result = new_binary(ND_COMMA, result, asgn, start);
                     add_type(result);
                     i++;
-                    if (!equal(tok, "}"))
+                    if (!equalc(tok, "}"))
                         tok = skip(tok, ",");
                 }
                 tok = tok->next; // skip }
@@ -3558,24 +3561,24 @@ static Node *unary(Token **rest, Token *tok) {
             } else if (ty->kind == TY_STRUCT || ty->kind == TY_UNION) {
                 // Struct compound literal: assign each member
                 Member *mem = ty->members;
-                while (!equal(tok, "}") && mem) {
+                while (!equalc(tok, "}") && mem) {
                     if (mem->ty->kind == TY_ARRAY) {
                         // Array member: assign elements, handle optional braces
                         int len = array_len(mem->ty);
                         int idx = 0;
-                        bool arr_brace = equal(tok, "{");
+                        bool arr_brace = equalc(tok, "{");
                         if (arr_brace) tok = tok->next;
-                        while (idx < len && !equal(tok, "}")) {
+                        while (idx < len && !equalc(tok, "}")) {
                             int sidx = idx, eidx = idx;
                             // Designated initializer: [N] = val or [N ... M] = val
-                            if (equal(tok, "[")) {
+                            if (equalc(tok, "[")) {
                                 tok = tok->next;
                                 Node *n = assign(&tok, tok);
                                 long long sv = 0;
                                 eval_const_expr(n, &sv);
                                 sidx = (int)sv;
                                 eidx = sidx;
-                                if (equal(tok, "...")) {
+                                if (equalc(tok, "...")) {
                                     tok = tok->next;
                                     Node *n2 = assign(&tok, tok);
                                     long long ev = sidx;
@@ -3609,27 +3612,27 @@ static Node *unary(Token **rest, Token *tok) {
                                 }
                             }
                             idx = eidx + 1;
-                            if (equal(tok, ",")) {
+                            if (equalc(tok, ",")) {
                                 tok = tok->next;
-                                if (equal(tok, "}"))
+                                if (equalc(tok, "}"))
                                     break;
                                 continue;
                             }
                             break;
                         }
                         if (arr_brace) tok = skip(tok, "}");
-                    } else if ((mem->ty->kind == TY_STRUCT || mem->ty->kind == TY_UNION) && equal(tok, "{")) {
+                    } else if ((mem->ty->kind == TY_STRUCT || mem->ty->kind == TY_UNION) && equalc(tok, "{")) {
                         // Struct/union member with brace-enclosed initializer
                         tok = skip(tok, "{");
                         Member *sub = mem->ty->members;
-                        while (!equal(tok, "}")) {
+                        while (!equalc(tok, "}")) {
                             Node *var_node = new_var_node(var, start);
                             Node *member_access = new_node(ND_MEMBER, start);
                             member_access->lhs = var_node;
                             member_access->member = mem;
                             member_access->ty = mem->ty;
                             // Designated initializer: .name = value
-                            if (equal(tok, ".") && tok->next && tok->next->kind == TK_IDENT) {
+                            if (equalc(tok, ".") && tok->next && tok->next->kind == TK_IDENT) {
                                 char *name = tok->next->name;
                                 tok = tok->next->next;
                                 tok = skip(tok, "=");
@@ -3663,9 +3666,9 @@ static Node *unary(Token **rest, Token *tok) {
                             } else {
                                 tok = skip_initializer(tok);
                             }
-                            if (equal(tok, ",")) {
+                            if (equalc(tok, ",")) {
                                 tok = tok->next;
-                                if (equal(tok, "}"))
+                                if (equalc(tok, "}"))
                                     break;
                                 continue;
                             }
@@ -3686,17 +3689,17 @@ static Node *unary(Token **rest, Token *tok) {
                         result->ty = ty;
                     }
                     mem = mem->next;
-                    if (!equal(tok, "}"))
+                    if (!equalc(tok, "}"))
                         tok = skip(tok, ",");
                 }
-                while (!equal(tok, "}")) {
+                while (!equalc(tok, "}")) {
                     // Skip extra initializers
-                    if (equal(tok, ",")) {
+                    if (equalc(tok, ",")) {
                         tok = tok->next;
                         continue;
                     }
                     assign(&tok, tok);
-                    if (!equal(tok, "}"))
+                    if (!equalc(tok, "}"))
                         tok = skip(tok, ",");
                 }
                 tok = tok->next; // skip }
@@ -3707,7 +3710,7 @@ static Node *unary(Token **rest, Token *tok) {
                 // Scalar compound literal
                 Node *val = assign(&tok, tok);
                 add_type(val);
-                if (equal(tok, ",")) tok = tok->next;
+                if (equalc(tok, ",")) tok = tok->next;
                 tok = skip(tok, "}");
                 Node *asgn = new_binary(ND_ASSIGN, new_var_node(var, start), val, start);
                 asgn->ty = ty;
@@ -3732,15 +3735,15 @@ static Node *mul(Token **rest, Token *tok) {
     Node *node = unary(&tok, tok);
     for (;;) {
         Token *start = tok;
-        if (equal(tok, "*")) {
+        if (equalc(tok, "*")) {
             node = new_binary(ND_MUL, node, unary(&tok, tok->next), start);
             continue;
         }
-        if (equal(tok, "/")) {
+        if (equalc(tok, "/")) {
             node = new_binary(ND_DIV, node, unary(&tok, tok->next), start);
             continue;
         }
-        if (equal(tok, "%")) {
+        if (equalc(tok, "%")) {
             node = new_binary(ND_MOD, node, unary(&tok, tok->next), start);
             continue;
         }
@@ -3753,11 +3756,11 @@ static Node *add(Token **rest, Token *tok) {
     Node *node = mul(&tok, tok);
     for (;;) {
         Token *start = tok;
-        if (equal(tok, "+")) {
+        if (equalc(tok, "+")) {
             node = new_binary(ND_ADD, node, mul(&tok, tok->next), start);
             continue;
         }
-        if (equal(tok, "-")) {
+        if (equalc(tok, "-")) {
             node = new_binary(ND_SUB, node, mul(&tok, tok->next), start);
             continue;
         }
@@ -3770,11 +3773,11 @@ static Node *shift(Token **rest, Token *tok) {
     Node *node = add(&tok, tok);
     for (;;) {
         Token *start = tok;
-        if (equal(tok, "<<")) {
+        if (equalc(tok, "<<")) {
             node = new_binary(ND_SHL, node, add(&tok, tok->next), start);
             continue;
         }
-        if (equal(tok, ">>")) {
+        if (equalc(tok, ">>")) {
             node = new_binary(ND_SHR, node, add(&tok, tok->next), start);
             continue;
         }
@@ -3787,19 +3790,19 @@ static Node *relational(Token **rest, Token *tok) {
     Node *node = shift(&tok, tok);
     for (;;) {
         Token *start = tok;
-        if (equal(tok, "<")) {
+        if (equalc(tok, "<")) {
             node = new_binary(ND_LT, node, shift(&tok, tok->next), start);
             continue;
         }
-        if (equal(tok, "<=")) {
+        if (equalc(tok, "<=")) {
             node = new_binary(ND_LE, node, shift(&tok, tok->next), start);
             continue;
         }
-        if (equal(tok, ">")) {
+        if (equalc(tok, ">")) {
             node = new_binary(ND_LT, shift(&tok, tok->next), node, start);
             continue;
         }
-        if (equal(tok, ">=")) {
+        if (equalc(tok, ">=")) {
             node = new_binary(ND_LE, shift(&tok, tok->next), node, start);
             continue;
         }
@@ -3812,11 +3815,11 @@ static Node *equality(Token **rest, Token *tok) {
     Node *node = relational(&tok, tok);
     for (;;) {
         Token *start = tok;
-        if (equal(tok, "==")) {
+        if (equalc(tok, "==")) {
             node = new_binary(ND_EQ, node, relational(&tok, tok->next), start);
             continue;
         }
-        if (equal(tok, "!=")) {
+        if (equalc(tok, "!=")) {
             node = new_binary(ND_NE, node, relational(&tok, tok->next), start);
             continue;
         }
@@ -3827,7 +3830,7 @@ static Node *equality(Token **rest, Token *tok) {
 
 static Node *bitand(Token **rest, Token *tok) {
     Node *node = equality(&tok, tok);
-    while (equal(tok, "&")) {
+    while (equalc(tok, "&")) {
         Token *start = tok;
         node = new_binary(ND_BITAND, node, equality(&tok, tok->next), start);
     }
@@ -3837,7 +3840,7 @@ static Node *bitand(Token **rest, Token *tok) {
 
 static Node *bitxor(Token **rest, Token *tok) {
     Node *node = bitand(&tok, tok);
-    while (equal(tok, "^")) {
+    while (equalc(tok, "^")) {
         Token *start = tok;
         node = new_binary(ND_BITXOR, node, bitand(&tok, tok->next), start);
     }
@@ -3847,7 +3850,7 @@ static Node *bitxor(Token **rest, Token *tok) {
 
 static Node *bitor(Token **rest, Token *tok) {
     Node *node = bitxor(&tok, tok);
-    while (equal(tok, "|")) {
+    while (equalc(tok, "|")) {
         Token *start = tok;
         node = new_binary(ND_BITOR, node, bitxor(&tok, tok->next), start);
     }
@@ -3857,7 +3860,7 @@ static Node *bitor(Token **rest, Token *tok) {
 
 static Node *logand(Token **rest, Token *tok) {
     Node *node = bitor(&tok, tok);
-    while (equal(tok, "&&"))
+    while (equalc(tok, "&&"))
         node = new_binary(ND_LOGAND, node, bitor(&tok, tok->next), tok);
     *rest = tok;
     return node;
@@ -3865,7 +3868,7 @@ static Node *logand(Token **rest, Token *tok) {
 
 static Node *logor(Token **rest, Token *tok) {
     Node *node = logand(&tok, tok);
-    while (equal(tok, "||"))
+    while (equalc(tok, "||"))
         node = new_binary(ND_LOGOR, node, logand(&tok, tok->next), tok);
     *rest = tok;
     return node;
@@ -3873,7 +3876,7 @@ static Node *logor(Token **rest, Token *tok) {
 
 static Node *conditional(Token **rest, Token *tok) {
     Node *node = logor(&tok, tok);
-    if (equal(tok, "?")) {
+    if (equalc(tok, "?")) {
         Token *qtok = tok;
         Node *cond = node;
         Node *then = expr(&tok, tok->next);
@@ -3890,27 +3893,27 @@ static Node *conditional(Token **rest, Token *tok) {
 
 static Node *assign(Token **rest, Token *tok) {
     Node *node = conditional(&tok, tok);
-    if (equal(tok, "="))
+    if (equalc(tok, "="))
         node = new_binary(ND_ASSIGN, node, assign(&tok, tok->next), tok);
-    else if (equal(tok, "+="))
+    else if (equalc(tok, "+="))
         node = new_binary(ND_ASSIGN, node, new_binary(ND_ADD, node, assign(&tok, tok->next), tok), tok);
-    else if (equal(tok, "-="))
+    else if (equalc(tok, "-="))
         node = new_binary(ND_ASSIGN, node, new_binary(ND_SUB, node, assign(&tok, tok->next), tok), tok);
-    else if (equal(tok, "*="))
+    else if (equalc(tok, "*="))
         node = new_binary(ND_ASSIGN, node, new_binary(ND_MUL, node, assign(&tok, tok->next), tok), tok);
-    else if (equal(tok, "/="))
+    else if (equalc(tok, "/="))
         node = new_binary(ND_ASSIGN, node, new_binary(ND_DIV, node, assign(&tok, tok->next), tok), tok);
-    else if (equal(tok, "%="))
+    else if (equalc(tok, "%="))
         node = new_binary(ND_ASSIGN, node, new_binary(ND_MOD, node, assign(&tok, tok->next), tok), tok);
-    else if (equal(tok, "&="))
+    else if (equalc(tok, "&="))
         node = new_binary(ND_ASSIGN, node, new_binary(ND_BITAND, node, assign(&tok, tok->next), tok), tok);
-    else if (equal(tok, "|="))
+    else if (equalc(tok, "|="))
         node = new_binary(ND_ASSIGN, node, new_binary(ND_BITOR, node, assign(&tok, tok->next), tok), tok);
-    else if (equal(tok, "^="))
+    else if (equalc(tok, "^="))
         node = new_binary(ND_ASSIGN, node, new_binary(ND_BITXOR, node, assign(&tok, tok->next), tok), tok);
-    else if (equal(tok, "<<="))
+    else if (equalc(tok, "<<="))
         node = new_binary(ND_ASSIGN, node, new_binary(ND_SHL, node, assign(&tok, tok->next), tok), tok);
-    else if (equal(tok, ">>="))
+    else if (equalc(tok, ">>="))
         node = new_binary(ND_ASSIGN, node, new_binary(ND_SHR, node, assign(&tok, tok->next), tok), tok);
     *rest = tok;
     return node;
@@ -3918,7 +3921,7 @@ static Node *assign(Token **rest, Token *tok) {
 
 static Node *expr(Token **rest, Token *tok) {
     Node *node = assign(&tok, tok);
-    while (equal(tok, ","))
+    while (equalc(tok, ","))
         node = new_binary(ND_COMMA, node, assign(&tok, tok->next), tok);
     *rest = tok;
     return node;
@@ -3930,15 +3933,15 @@ static LVar *parse_params(Token **rest, Token *tok, bool *is_variadic) {
     int param_index = 0;
 
     *is_variadic = false;
-    if (equal(tok, "void") && equal(tok->next, ")")) {
+    if (equalc(tok, "void") && equalc(tok->next, ")")) {
         *rest = tok->next;
         return NULL;
     }
 
-    while (!equal(tok, ")")) {
+    while (!equalc(tok, ")")) {
         if (cur != &head)
             tok = skip(tok, ",");
-        if (equal(tok, "...")) {
+        if (equalc(tok, "...")) {
             *is_variadic = true;
             tok = tok->next;
             break;
@@ -3953,11 +3956,11 @@ static LVar *parse_params(Token **rest, Token *tok, bool *is_variadic) {
         if (!name)
             name = format("__param%d", param_index++);
 
-        if (equal(tok, "(")) {
+        if (equalc(tok, "(")) {
             tok = tok->next;
             // Handle extra grouping parens: int ((int)) - outer ( consumed, tok = (int))
             bool stripped_extra = false;
-            if (equal(tok, "(") && (is_typename(tok->next) || equal(tok->next, ")") || equal(tok->next, "..."))) {
+            if (equalc(tok, "(") && (is_typename(tok->next) || equalc(tok->next, ")") || equalc(tok->next, "..."))) {
                 stripped_extra = true;
                 tok = tok->next;
             }
@@ -4009,21 +4012,21 @@ static void global_initializer(Token **rest, Token *tok, LVar *var) {
             return;
         }
         // Pointer initialized with &(compound literal): &(struct T){...}
-        if (equal(tok, "&") && find_compound_literal_start(tok->next)) {
+        if (equalc(tok, "&") && find_compound_literal_start(tok->next)) {
             tok = tok->next; // skip &
             Token *compound_start = find_compound_literal_start(tok);
             Token *t = tok;
-            while (equal(t, "(")) t = t->next;
+            while (equalc(t, "(")) t = t->next;
             Type *compound_ty = type_name(&t, t);
-            while (equal(t, ")")) t = t->next;
+            while (equalc(t, ")")) t = t->next;
             static int anon_count;
             char *name = format(".Lanon.%d", anon_count++);
             LVar *anon_var = new_var(name, compound_ty, false);
             global_initializer(rest, compound_start, anon_var);
             tok = *rest;
-            if (equal(tok, "}"))
+            if (equalc(tok, "}"))
                 tok = tok->next;
-            while (equal(tok, ")"))
+            while (equalc(tok, ")"))
                 tok = tok->next;
             var->init_data = arena_alloc(var->ty->size ? var->ty->size : 1);
             var->init_size = var->ty->size;
@@ -4033,7 +4036,7 @@ static void global_initializer(Token **rest, Token *tok, LVar *var) {
         }
     }
 
-    if (var->ty->kind == TY_ARRAY && equal(tok, "{")) {
+    if (var->ty->kind == TY_ARRAY && equalc(tok, "{")) {
         int len = array_len(var->ty);
         if (len == 0) {
             Token *tmp = tok;
@@ -4046,7 +4049,7 @@ static void global_initializer(Token **rest, Token *tok, LVar *var) {
         return;
     }
 
-    if ((var->ty->kind == TY_STRUCT || var->ty->kind == TY_UNION) && equal(tok, "{")) {
+    if ((var->ty->kind == TY_STRUCT || var->ty->kind == TY_UNION) && equalc(tok, "{")) {
         var->init_data = arena_alloc(var->ty->size ? var->ty->size : 1);
         var->init_size = var->ty->size;
         tok = global_init_one(tok, var, var->ty, 0);
@@ -4111,8 +4114,8 @@ static void global_initializer(Token **rest, Token *tok, LVar *var) {
 }
 
 static char *parse_toplevel_asm(Token **rest, Token *tok) {
-    while (equal(tok, "volatile") || equal(tok, "__volatile__") ||
-           equal(tok, "__volatile") || equal(tok, "goto"))
+    while (equalc(tok, "volatile") || equalc(tok, "__volatile__") ||
+           equalc(tok, "__volatile") || equalc(tok, "goto"))
         tok = tok->next;
     tok = skip(tok, "(");
     if (tok->kind != TK_STR)
@@ -4129,27 +4132,27 @@ static char *parse_toplevel_asm(Token **rest, Token *tok) {
     }
     buf[pos] = '\0';
     // Skip operand sections (outputs, inputs, clobbers, goto labels)
-    while (!equal(tok, ")")) {
+    while (!equalc(tok, ")")) {
         tok = skip(tok, ":");
-        while (!equal(tok, ":") && !equal(tok, ")")) {
-            if (equal(tok, "[")) {
+        while (!equalc(tok, ":") && !equalc(tok, ")")) {
+            if (equalc(tok, "[")) {
                 tok = tok->next;
                 if (tok->kind == TK_IDENT) tok = tok->next;
-                if (equal(tok, "]")) tok = tok->next;
+                if (equalc(tok, "]")) tok = tok->next;
                 continue;
             }
             if (tok->kind == TK_STR) tok = tok->next;
-            if (equal(tok, "(")) {
+            if (equalc(tok, "(")) {
                 int depth = 1;
                 tok = tok->next;
                 while (depth > 0 && tok->kind != TK_EOF) {
-                    if (equal(tok, ")")) depth--;
-                    else if (equal(tok, "("))
+                    if (equalc(tok, ")")) depth--;
+                    else if (equalc(tok, "("))
                         depth++;
                     tok = tok->next;
                 }
             }
-            if (equal(tok, ",")) tok = tok->next;
+            if (equalc(tok, ",")) tok = tok->next;
         }
     }
     tok = skip(tok, ")");
@@ -4182,22 +4185,22 @@ Program *parse(Token *tok) {
 
     while (tok->kind != TK_EOF) {
 
-        if (equal(tok, "#") && equal(tok->next, "pragma") &&
-            equal(tok->next->next, "pack")) {
+        if (equalc(tok, "#") && equalc(tok->next, "pragma") &&
+            equalc(tok->next->next, "pack")) {
             tok = tok->next->next->next; // skip '# pragma pack'
-            if (equal(tok, "(")) {
+            if (equalc(tok, "(")) {
                 tok = tok->next;
                 if (tok->kind == TK_NUM)
                     pack_align = tok->val;
                 else
                     pack_align = 0;
                 tok = tok->next;
-                if (equal(tok, ")"))
+                if (equalc(tok, ")"))
                     tok = tok->next;
             }
             continue;
         }
-        if (equal(tok, "__asm__") || equal(tok, "__asm")) {
+        if (equalc(tok, "__asm__") || equalc(tok, "__asm")) {
             tok = tok->next;
             char *str = parse_toplevel_asm(&tok, tok);
             TLItem *item = arena_alloc(sizeof(TLItem));
@@ -4208,7 +4211,7 @@ Program *parse(Token *tok) {
             continue;
         }
 
-        if (equal(tok, ";")) {
+        if (equalc(tok, ";")) {
             tok = tok->next;
             continue;
         }
@@ -4216,7 +4219,7 @@ Program *parse(Token *tok) {
         VarAttr attr = {};
         Type *base = declspec(&tok, tok, &attr);
 
-        if (equal(tok, ";")) {
+        if (equalc(tok, ";")) {
             tok = tok->next;
             continue;
         }
@@ -4231,7 +4234,7 @@ Program *parse(Token *tok) {
                 break;
             }
 
-            bool is_func = ty->kind == TY_FUNC || equal(tok, "(");
+            bool is_func = ty->kind == TY_FUNC || equalc(tok, "(");
 
             if (is_func) {
                 Type *fty;
@@ -4263,11 +4266,11 @@ Program *parse(Token *tok) {
                     parser_current_fn = name;
 
                     tok = tok->next;
-                    if (!equal(tok, ")") && !equal(tok, "...") && !is_typename(tok)) {
+                    if (!equalc(tok, ")") && !equalc(tok, "...") && !is_typename(tok)) {
                         // K&R function definition: param list has identifiers, not types
                         LVar head = {};
                         LVar *cur = &head;
-                        while (!equal(tok, ")")) {
+                        while (!equalc(tok, ")")) {
                             if (cur != &head)
                                 tok = skip(tok, ",");
                             if (tok->kind != TK_IDENT)
@@ -4281,7 +4284,7 @@ Program *parse(Token *tok) {
                         tok = skip_attributes(tok);
                         current_fn_scope_locals = params;
                         // Parse K&R parameter declarations between ) and {
-                        while (!equal(tok, "{")) {
+                        while (!equalc(tok, "{")) {
                             VarAttr dattr = {};
                             Type *dty = declspec(&tok, tok, &dattr);
                             for (;;) {
@@ -4295,7 +4298,7 @@ Program *parse(Token *tok) {
                                         }
                                     }
                                 }
-                                if (!equal(tok, ","))
+                                if (!equalc(tok, ","))
                                     break;
                                 tok = tok->next;
                             }
@@ -4342,7 +4345,7 @@ Program *parse(Token *tok) {
                 // For typedefs like 'typedef int functype(int);', register the type
                 if (attr.is_typedef) {
                     add_typedef(name, fty);
-                    if (!equal(tok, ";") && !equal(tok, ","))
+                    if (!equalc(tok, ";") && !equalc(tok, ","))
                         error_tok(tok, "expected ';' or ',' after typedef");
                 } else {
                     // Register function symbol
@@ -4375,7 +4378,7 @@ Program *parse(Token *tok) {
                     }
                 }
 
-                if (equal(tok, "{")) {
+                if (equalc(tok, "{")) {
                     if (attr.is_typedef)
                         error_tok(tok, "typedef cannot have function body");
 
@@ -4427,11 +4430,11 @@ Program *parse(Token *tok) {
                     break;
                 }
 
-                if (equal(tok, ";")) {
+                if (equalc(tok, ";")) {
                     tok = tok->next;
                     break;
                 }
-                if (equal(tok, ",")) {
+                if (equalc(tok, ",")) {
                     tok = tok->next;
                     continue;
                 }
@@ -4440,7 +4443,7 @@ Program *parse(Token *tok) {
                 if (attr.is_typedef) {
                     add_typedef(name, ty);
                 } else {
-                    if (equal(tok, "="))
+                    if (equalc(tok, "="))
                         ty = infer_array_type(ty, tok->next);
                     LVar *var = find_global_name(name);
                     if (var) {
@@ -4455,17 +4458,17 @@ Program *parse(Token *tok) {
                     if (pending_asm_name)
                         var->asm_name = pending_asm_name;
                     pending_asm_name = NULL;
-                    if (equal(tok, "=")) {
+                    if (equalc(tok, "=")) {
                         tok = tok->next;
                         global_initializer(&tok, tok, var);
                     }
                 }
 
-                if (equal(tok, ";")) {
+                if (equalc(tok, ";")) {
                     tok = tok->next;
                     break;
                 }
-                if (equal(tok, ",")) {
+                if (equalc(tok, ",")) {
                     tok = tok->next;
                     continue;
                 }
