@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: LGPL-2.1-or-later
 CC     = gcc
-CFLAGS = -std=c11 -Wall -Wextra -O2 -g
+CFLAGS = -std=c11 -Wall -Wextra -O3 -g -flto
 TARGET = rcc
 MINGW_O =
 OBJ_EXT = .o
@@ -79,6 +79,18 @@ compile_commands.json: $(SRCS)
 	$(MAKE) clean
 	bear -- make
 
+# Profile build: rcc compiled with -pg for gprof analysis
+rcc_prof: CFLAGS += -pg
+rcc_prof: $(SRCS) src/rcc.h src/sysinc_paths.h src/gcc_predefined.h
+	$(CC) $(CFLAGS) -o $@ $(SRCS) -DGCC=\"$(CC)\" $(DEF_INCDIR) -DVERSION=\"$(VERSION)\" -DMACHINE=\"$(MACHINE)\" -lm
+
+# Run profile: compile a decent-sized file to generate gmon.out
+prof: rcc_prof
+	./rcc_prof -E bench/bench.c > /dev/null
+	gprof ./rcc_prof gmon.out > gprof.txt
+	@echo "Profile written to gprof.txt"
+	@head -40 gprof.txt
+
 ifeq ($(OS),Windows_NT)
 TEST_RUNNER = powershell -ExecutionPolicy Bypass -File run_tcc_suite.ps1 -O1
 BENCH_RUNNER = powershell -ExecutionPolicy Bypass -File bench/run_bench.ps1 ./$(TARGET)
@@ -144,7 +156,7 @@ endif
 	rm -rf rcc-$(VERSION)-src
 
 clean:
-	rm -f $(OBJS) $(TARGET) $(TARGET).exe src/sysinc_paths.h src/gcc_predefined.h \
+	rm -f $(OBJS) $(TARGET) $(TARGET).exe rcc_prof src/sysinc_paths.h src/gcc_predefined.h \
               fred.txt *.s qemu*.core src/*.obj src/*.darwin.o src/*.arm64.o
 	if command -v git > /dev/null 2>&1; then \
 	  cd tinycc && git reset --hard && git clean -dxf tests/tests2; fi
@@ -152,4 +164,4 @@ clean:
 TAGS: $(SRCS) src/rcc.h
 	etags -a --language=c src/*.c src/*.h
 
-.PHONY: clean test check lint bench install dist bench test-all
+.PHONY: clean test check lint bench install dist bench test-all prof

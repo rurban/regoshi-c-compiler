@@ -37,6 +37,8 @@ rcc-*-src/
 rcc-*.tar.*
 c-testsuite.tap.txt
 rcc-arm64
+rcc_prof
 .rcc-arm64.stamp
 *.arm64.o
 qemu_*.core
+gmon.out
