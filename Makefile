@@ -135,7 +135,7 @@ ifeq ($(OS),Windows_NT)
 TEST_RUNNER = powershell -ExecutionPolicy Bypass -File run_tcc_suite.ps1 -O1
 BENCH_RUNNER = powershell -ExecutionPolicy Bypass -File bench/run_bench.ps1 ./$(TARGET)
 else
-TEST_RUNNER = ./run_tcc_suite.sh "" "" -O1 && ./run-c-testsuite.sh && test/compliance/run.sh && test/torture/run.sh
+TEST_RUNNER = ./run_tcc_suite.sh "" "" -O1 && ./run-c-testsuite.sh && test/compliance/run.sh
 BENCH_RUNNER = ./bench/run_bench.sh ./$(TARGET)
 endif
 
@@ -146,6 +146,7 @@ test-all: $(TARGET)
 	$(MAKE) clean
 	$(MAKE)
 	@$(TEST_RUNNER)
+	test/torture/run.sh
 	./mingw-test.sh
 	./arm64-test.sh
 	./darwin-test.sh

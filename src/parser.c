@@ -4107,7 +4107,7 @@ static Node *unary(Token **rest, Token *tok) {
         *rest = tok;
         return new_num(node->ty->size, tok);
     }
-    if (equalc(tok, "__alignof__") || equalc(tok, "__alignof")) {
+    if (equalc(tok, "__alignof__") || equalc(tok, "__alignof") || equalc(tok, "_Alignof")) {
         Token *start = tok;
         if (equalc(tok->next, "(") && is_typename(tok->next->next)) {
             Type *ty = parse_cast_type(&tok, tok->next);
