@@ -241,6 +241,7 @@ void add_type(Node *node);
 typedef struct AsmOperand AsmOperand;
 struct AsmOperand {
     char constraint[16]; // e.g. "=m", "r", "=r"
+    char name[32]; // named operand [name] (empty if unnamed)
     char asm_str[64]; // computed AT&T operand string (filled by codegen)
     Node *expr; // C expression for the operand
     int reg; // allocated reg index (-1 if unused)

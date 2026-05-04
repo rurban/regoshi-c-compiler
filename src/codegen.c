@@ -1764,6 +1764,18 @@ static void free_reg(int i) {
 
 static int gen(Node *node);
 
+// Try to extract an integer constant from a node (traversing casts).
+// Returns true and sets *val if the node reduces to a compile-time constant.
+static bool try_const_int(Node *n, int64_t *val) {
+    while (n && n->kind == ND_CAST)
+        n = n->lhs;
+    if (n && n->kind == ND_NUM) {
+        *val = n->val;
+        return true;
+    }
+    return false;
+}
+
 // Generate code to compute the absolute address of an lvalue.
 static int gen_addr(Node *node) {
     switch (node->kind) {
@@ -3430,23 +3442,138 @@ static int gen(Node *node) {
     }
     case ND_ASM: {
 #ifdef ARCH_ARM64
-        // Evaluate operands: memory outputs/inputs then register inputs
-        int op_regs[MAX_ASM_OPERANDS];
-        for (int i = 0; i < node->asm_noperands; i++) op_regs[i] = -1;
+        // ARM64 extended inline assembly handler.
+        //
+        // For each operand:
+        //   - Memory (m, Q, Ump): gen_addr → asm_str = "[xN]"
+        //   - Output-only register (=r, =w, =x, =y, =&r):
+        //       gen_addr for store-back, alloc fresh register for asm use
+        //   - Read-write register (+r): gen_addr, alloc fresh reg, load value, store back
+        //   - Input register (r, w, x): gen value into register
+        //   - Matching constraint (digit): same register as referenced output
+        //   - Immediate (I,K,L,M,N): gen value, emit as register (immediate in template)
+        //   - Zero (Z): use xzr
+        //   - Symbol (S): gen address
+
+        int op_regs[MAX_ASM_OPERANDS]; // GPR for asm template operand (-1 if unused/FP)
+        int op_addr[MAX_ASM_OPERANDS]; // Address register for store-back (-1 if none)
+        int op_is_fp[MAX_ASM_OPERANDS]; // FP constraint (use d0 as output)
+        for (int i = 0; i < node->asm_noperands; i++) {
+            op_regs[i] = -1;
+            op_addr[i] = -1;
+            op_is_fp[i] = 0;
+        }
 
         for (int i = 0; i < node->asm_noperands; i++) {
             AsmOperand *op = &node->asm_ops[i];
-            if (op->is_memory || (op->is_output && !op->is_rw)) {
+            const char *c = op->constraint;
+            // skip leading modifiers =, +, &
+            while (*c == '=' || *c == '+' || *c == '&') c++;
+
+            // Matching constraint: digit refers to another operand
+            if (*c >= '0' && *c <= '9') {
+                // defer: will resolve after all others are evaluated
+                op_regs[i] = -2; // sentinel: matching
+                continue;
+            }
+
+            // Determine constraint class
+            bool is_mem = op->is_memory || *c == 'Q' ||
+                (*c == 'U' && c[1] == 'm' && c[2] == 'p');
+            bool is_fp = (*c == 'w' || *c == 'x' || *c == 'y') && !is_mem;
+            bool is_imm = (*c == 'I' || *c == 'K' || *c == 'L' ||
+                           *c == 'M' || *c == 'N');
+            bool is_zero = (*c == 'Z');
+
+            if (is_mem) {
                 int r = gen_addr(op->expr);
                 op_regs[i] = r;
                 op->reg = r;
                 snprintf(op->asm_str, sizeof(op->asm_str), "[%s]", reg64[r]);
+            } else if (is_fp) {
+                if (op->is_output) {
+                    // FP output: get address for store-back, use d0 in template
+                    int r = gen_addr(op->expr);
+                    op_addr[i] = r;
+                    op_is_fp[i] = 1;
+                    op->reg = -1;
+                    snprintf(op->asm_str, sizeof(op->asm_str), "d0");
+                } else {
+                    // FP input treated as integer register for now
+                    int r = gen(op->expr);
+                    op_regs[i] = r;
+                    op->reg = r;
+                    snprintf(op->asm_str, sizeof(op->asm_str), "%s", reg64[r]);
+                }
+            } else if (is_zero) {
+                // Zero constraint: always xzr, no register allocation needed
+                snprintf(op->asm_str, sizeof(op->asm_str), "xzr");
+                // op_regs[i] stays -1
+            } else if (is_imm) {
+                // Immediate constraint (I,K,L,M,N): emit as #value in the template.
+                // Try to extract compile-time constant; fall back to register.
+                int64_t cval = 0;
+                if (try_const_int(op->expr, &cval)) {
+                    snprintf(op->asm_str, sizeof(op->asm_str), "#0x%llx",
+                             (unsigned long long)(uint64_t)cval);
+                    // op_regs[i] stays -1, no register needed
+                } else {
+                    int r = gen(op->expr);
+                    op_regs[i] = r;
+                    op->reg = r;
+                    snprintf(op->asm_str, sizeof(op->asm_str), "%s", reg64[r]);
+                }
+            } else if (op->is_output && !op->is_rw) {
+                // Output-only register (=r, =&r, etc.):
+                // Allocate a fresh x register for the asm, store back after.
+                // Always use x (64-bit) register in the template; %wN modifier handles 32-bit.
+                int r_addr = gen_addr(op->expr);
+                op_addr[i] = r_addr;
+                int r = alloc_reg();
+                op_regs[i] = r;
+                op->reg = r;
+                snprintf(op->asm_str, sizeof(op->asm_str), "%s", reg64[r]);
+            } else if (op->is_rw) {
+                // Read-write register (+r):
+                // Allocate fresh x register, load current value, store back after.
+                int r_addr = gen_addr(op->expr);
+                op_addr[i] = r_addr;
+                int r = alloc_reg();
+                op_regs[i] = r;
+                op->reg = r;
+                emit_load(op->expr->ty, r, format("[%s]", reg64[r_addr]));
+                snprintf(op->asm_str, sizeof(op->asm_str), "%s", reg64[r]);
             } else {
+                // Input register (r) or symbol address (S):
                 int r = gen(op->expr);
                 op_regs[i] = r;
                 op->reg = r;
-                int sz = op->expr->ty ? op->expr->ty->size : 4;
-                snprintf(op->asm_str, sizeof(op->asm_str), "%s", reg(r, sz));
+                snprintf(op->asm_str, sizeof(op->asm_str), "%s", reg64[r]);
+            }
+        }
+
+        // Resolve matching constraints (digit): share register with referenced output.
+        // Also load the input value into the shared register before the asm.
+        for (int i = 0; i < node->asm_noperands; i++) {
+            if (op_regs[i] != -2) continue;
+            AsmOperand *op = &node->asm_ops[i];
+            const char *c = op->constraint;
+            while (*c == '=' || *c == '+' || *c == '&') c++;
+            int ref = *c - '0';
+            if (ref >= 0 && ref < node->asm_noperands) {
+                int r = op_regs[ref];
+                op_regs[i] = r;
+                op->reg = r;
+                snprintf(op->asm_str, sizeof(op->asm_str), "%s",
+                         node->asm_ops[ref].asm_str);
+                // Load the input value into the shared register (it acts as the initial
+                // value for a read-write operand linked to the output).
+                if (r >= 0) {
+                    int r_in = gen(op->expr);
+                    if (r_in != r)
+                        printf("  mov %s, %s\n", reg64[r], reg64[r_in]);
+                    free_reg(r_in);
+                }
             }
         }
 
@@ -3464,7 +3591,7 @@ static int gen(Node *node) {
         }
         adj[alen] = '\0';
 
-        // Substitute %N and %l[name] in template
+        // Substitute %N, %wN, %xN, %dN, %l[label], %[name] in template
         char out[4096];
         int olen = 0;
         const char *p = adj;
@@ -3479,14 +3606,22 @@ static int gen(Node *node) {
                 p++;
                 continue;
             }
+            // Check for modifier letter(s): w, x, d, s, l, h
             char mod = 0;
-            if (*p == 'l') { mod = *p++; }
+            if (*p == 'w' || *p == 'x' || *p == 'd' || *p == 's' ||
+                *p == 'l' || *p == 'h') {
+                // peek: if next char is '[' or digit, it's a modifier
+                if (*(p + 1) == '[' || (*(p + 1) >= '0' && *(p + 1) <= '9'))
+                    mod = *p++;
+            }
+
             if (mod == 'l' && *p == '[') {
+                // %l[name] → goto label
                 p++;
                 const char *end = strchr(p, ']');
                 if (!end) {
                     out[olen++] = '%';
-                    if (mod) out[olen++] = mod;
+                    out[olen++] = 'l';
                     out[olen++] = '[';
                     continue;
                 }
@@ -3496,23 +3631,92 @@ static int gen(Node *node) {
                 if (olen < (int)sizeof(out) - 1) out[olen++] = '.';
                 for (const char *s = p; s < end && olen < (int)sizeof(out) - 1;) out[olen++] = *s++;
                 p = end + 1;
+            } else if (*p == '[') {
+                // %[name] → named operand (not a goto label)
+                p++;
+                const char *end = strchr(p, ']');
+                if (!end) {
+                    out[olen++] = '%';
+                    out[olen++] = '[';
+                    continue;
+                }
+                // find operand with matching name
+                char namebuf[32];
+                int nlen = (int)(end - p) < 31 ? (int)(end - p) : 31;
+                memcpy(namebuf, p, nlen);
+                namebuf[nlen] = '\0';
+                p = end + 1;
+                const char *sub = NULL;
+                for (int j = 0; j < node->asm_noperands; j++) {
+                    if (strcmp(node->asm_ops[j].name, namebuf) == 0) {
+                        sub = node->asm_ops[j].asm_str;
+                        break;
+                    }
+                }
+                if (!sub) sub = "";
+                // Apply modifier to named operand
+                if (sub[0] && (mod == 'w' || mod == 'x') && sub[0] == 'x') {
+                    if (mod == 'w') {
+                        if (olen < (int)sizeof(out) - 1) out[olen++] = 'w';
+                        sub++; // skip leading 'x'
+                    }
+                }
+                while (*sub && olen < (int)sizeof(out) - 1) out[olen++] = *sub++;
             } else if (*p >= '0' && *p <= '9') {
                 int n = *p - '0';
                 p++;
                 if (n < node->asm_noperands) {
                     const char *s = node->asm_ops[n].asm_str;
+                    // Apply modifier
+                    if (mod == 'w' && s[0] == 'x') {
+                        if (olen < (int)sizeof(out) - 1) out[olen++] = 'w';
+                        s++; // skip 'x'
+                    } else if (mod == 'd') {
+                        // FP double form: dN where N is the reg number
+                        if (op_is_fp[n]) {
+                            // already stored as "d0" etc
+                        } else {
+                            if (olen < (int)sizeof(out) - 1) out[olen++] = 'd';
+                            // s points to the register name like "x5" → "d5"
+                            if (*s == 'x' || *s == 'w') s++;
+                            while (*s && olen < (int)sizeof(out) - 1) out[olen++] = *s++;
+                            goto next_char;
+                        }
+                    }
                     while (*s && olen < (int)sizeof(out) - 1) out[olen++] = *s++;
                 }
             } else {
                 out[olen++] = '%';
                 if (mod) out[olen++] = mod;
+                // pass through the character that wasn't a modifier/operand
+                if (*p && *p != '%') out[olen++] = *p++;
             }
+        next_char:;
         }
         out[olen] = '\0';
         printf("%s\n", out);
 
+        // Store back output register operands to their C variables
+        for (int i = 0; i < node->asm_noperands; i++) {
+            AsmOperand *op = &node->asm_ops[i];
+            if (op_addr[i] < 0) continue;
+            if (op_is_fp[i]) {
+                // Store FP result (d0) back to variable
+                int sz = op->expr->ty ? op->expr->ty->size : 8;
+                if (sz <= 4)
+                    printf("  str s0, [%s]\n", reg64[op_addr[i]]);
+                else
+                    printf("  str d0, [%s]\n", reg64[op_addr[i]]);
+            } else {
+                emit_store(op->expr->ty, op_regs[i], format("[%s]", reg64[op_addr[i]]));
+            }
+        }
+
+        // Free registers: value regs first, then address regs
         for (int i = 0; i < node->asm_noperands; i++)
             if (op_regs[i] >= 0) free_reg(op_regs[i]);
+        for (int i = 0; i < node->asm_noperands; i++)
+            if (op_addr[i] >= 0) free_reg(op_addr[i]);
         return -1;
 #else
         // Evaluate operands: outputs (memory addr) then inputs (register value)

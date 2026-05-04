@@ -579,7 +579,7 @@ static Token *read_type_attrs(Token *tok, int *align, VarAttr *attr) {
             continue;
         }
 
-        if (equalc(tok, "__asm__") || equalc(tok, "__asm")) {
+        if (equalc(tok, "__asm__") || equalc(tok, "__asm") || equalc(tok, "asm")) {
             Token *start = tok;
             tok = tok->next;
             // Before consuming "(", check if next is "(" — if not, it's not an asm attribute
@@ -1053,8 +1053,8 @@ static Type *declarator(Token **rest, Token *tok, Type *ty, char **name) {
         break;
     }
 
-    // __asm__ is not a declarator identifier — let stmt() handle inline asm
-    if (equalc(tok, "__asm__") || equalc(tok, "__asm")) {
+    // asm/__asm__/__asm is not a declarator identifier — let stmt() handle inline asm
+    if (equalc(tok, "asm") || equalc(tok, "__asm__") || equalc(tok, "__asm")) {
         if (name) *name = NULL;
         *rest = tok;
         return ty;
@@ -2844,8 +2844,15 @@ static Node *parse_asm_stmt(Token **rest, Token *tok) {
         first = false;
         if (nops >= MAX_ASM_OPERANDS) error_tok(tok, "too many asm operands");
         AsmOperand *op = &ops[nops++];
-        if (equalc(tok, "[")) { // skip named operand [id]
-            tok = tok->next->next;
+        op->name[0] = '\0';
+        if (equalc(tok, "[")) { // named operand [id]
+            tok = tok->next;
+            if (tok->kind == TK_IDENT) {
+                int nlen = tok->len < (int)sizeof(op->name) - 1 ? tok->len : (int)sizeof(op->name) - 1;
+                memcpy(op->name, tok->loc, nlen);
+                op->name[nlen] = '\0';
+                tok = tok->next;
+            }
             tok = skip(tok, "]");
         }
         if (tok->kind != TK_STR) error_tok(tok, "expected constraint string");
@@ -2874,8 +2881,15 @@ static Node *parse_asm_stmt(Token **rest, Token *tok) {
             first = false;
             if (nops >= MAX_ASM_OPERANDS) error_tok(tok, "too many asm operands");
             AsmOperand *op = &ops[nops++];
+            op->name[0] = '\0';
             if (equalc(tok, "[")) {
-                tok = tok->next->next;
+                tok = tok->next;
+                if (tok->kind == TK_IDENT) {
+                    int nlen = tok->len < (int)sizeof(op->name) - 1 ? tok->len : (int)sizeof(op->name) - 1;
+                    memcpy(op->name, tok->loc, nlen);
+                    op->name[nlen] = '\0';
+                    tok = tok->next;
+                }
                 tok = skip(tok, "]");
             }
             if (tok->kind != TK_STR) error_tok(tok, "expected constraint string");
@@ -4889,7 +4903,7 @@ Program *parse(Token *tok) {
             }
             continue;
         }
-        if (equalc(tok, "__asm__") || equalc(tok, "__asm")) {
+        if (equalc(tok, "__asm__") || equalc(tok, "__asm") || equalc(tok, "asm")) {
             tok = tok->next;
             char *str = parse_toplevel_asm(&tok, tok);
             TLItem *item = arena_alloc(sizeof(TLItem));
