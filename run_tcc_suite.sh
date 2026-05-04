@@ -17,6 +17,10 @@ TEST_DIR="${2:-$SCRIPT_DIR/tinycc/tests/tests2}"
 RCCFLAGS="${3:-}"
 REPORT_FILE=tcc_test_linux.md
 
+if [ ! -e tcc_tests ]; then
+    ln -s tinycc/tests/tests2 tcc_tests
+fi
+
 # Locate rcc binary
 if [ -z "$RCC" ]; then
 	for candidate in "$SCRIPT_DIR/rcc" "$SCRIPT_DIR/rcc.exe"; do
@@ -665,7 +669,7 @@ if [ "$REPORT_FILE" = "$SCRIPT_DIR/tcc_test_arm64.md" ]; then
 elif [ "$RCC" = "$SCRIPT_DIR/darwin-cross.sh" ]; then
     [ "$passed" -ge 146 ]
 elif [ "$RCC" = "$SCRIPT_DIR/arm64-cross.sh" ]; then
-    [ "$passed" -ge 147 ]
+    [ "$passed" -ge 152 ]
 elif [ "$RCC" = "$SCRIPT_DIR/mingw-cross.sh" ]; then
     [ "$passed" -ge 148 ]
 else

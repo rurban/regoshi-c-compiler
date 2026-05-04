@@ -22,6 +22,23 @@ void error(char *fmt, ...) {
     exit(1);
 }
 
+// Compute the reported line number for a location in the preprocessed source.
+static int compute_line_no(char *loc) {
+    char *line = loc;
+    while (current_input < line && line[-1] != '\n')
+        line--;
+    int reported_line = line_num;
+    if (current_line_offset == 0 || loc < current_input + current_line_offset) {
+        reported_line = 1;
+        for (char *p = current_input; p < line; p++)
+            if (*p == '\n') reported_line++;
+    } else {
+        for (char *p = current_input + current_line_offset; p < line; p++)
+            if (*p == '\n') reported_line++;
+    }
+    return reported_line;
+}
+
 // Gorgeous error reporting with pointing carets.
 // TODO not-returning attribute
 static void verror_at(char *loc, int len, char *fmt, va_list ap) {
@@ -34,17 +51,7 @@ static void verror_at(char *loc, int len, char *fmt, va_list ap) {
     while (*end != '\n' && *end != '\0')
         end++;
 
-    int reported_line = line_num;
-    if (current_line_offset == 0 || loc < current_input + current_line_offset) {
-        reported_line = 1;
-        for (char *p = current_input; p < line; p++)
-            if (*p == '\n')
-                reported_line++;
-    } else {
-        for (char *p = current_input + current_line_offset; p < line; p++)
-            if (*p == '\n')
-                reported_line++;
-    }
+    int reported_line = compute_line_no(loc);
 
     // Print filename and line info
     fprintf(stderr, "\033[1;37m%s:%d: \033[0m", current_filename, reported_line);
@@ -74,6 +81,21 @@ void error_at(char *loc, char *fmt, ...) {
     va_list ap;
     va_start(ap, fmt);
     verror_at(loc, 1, fmt, ap);
+    exit(1);
+}
+
+// Like error_tok but prints filename:line: error: message only (no source context).
+// Used for inline-asm validation errors so output matches TCC's assembler format.
+// cppcheck-suppress va_end_missing
+__attribute__((noreturn)) void error_tok_simple(Token *tok, char *fmt, ...) {
+    va_list ap;
+    va_start(ap, fmt);
+    int lineno = tok && tok->loc ? compute_line_no(tok->loc) : 1;
+    fprintf(stderr, "%s:%d: error: ",
+            current_filename ? current_filename : "<unknown>", lineno);
+    vfprintf(stderr, fmt, ap);
+    fprintf(stderr, "\n");
+    va_end(ap);
     exit(1);
 }
 

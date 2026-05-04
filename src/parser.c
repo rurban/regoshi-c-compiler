@@ -2804,6 +2804,27 @@ static bool is_asm_keyword(Token *tok) {
     return equalc(tok, "asm") || equalc(tok, "__asm__") || equalc(tok, "__asm");
 }
 
+#ifdef ARCH_ARM64
+// Validate an ARM64 clobber register name.
+static bool arm64_is_valid_clobber(const char *s) {
+    if (!s || !*s) return false;
+    if (strcmp(s, "memory") == 0 || strcmp(s, "cc") == 0) return true;
+    // Integer registers: x0-x30, w0-w30, xzr, wzr, sp, wsp
+    if ((s[0] == 'x' || s[0] == 'w') && s[1] >= '0' && s[1] <= '9') {
+        int n = atoi(s + 1);
+        return (n >= 0 && n <= 30) && (s[2] == '\0' || (n >= 10 && s[3] == '\0'));
+    }
+    if (strcmp(s, "xzr") == 0 || strcmp(s, "wzr") == 0 || strcmp(s, "sp") == 0 || strcmp(s, "wsp") == 0) return true;
+    // FP/SIMD: d0-d31, s0-s31, q0-q31, v0-v31, h0-h31, b0-b31
+    if ((s[0] == 'd' || s[0] == 's' || s[0] == 'q' || s[0] == 'v' || s[0] == 'h' || s[0] == 'b') &&
+        s[1] >= '0' && s[1] <= '9') {
+        int n = atoi(s + 1);
+        return (n >= 0 && n <= 31);
+    }
+    return false;
+}
+#endif
+
 static Node *parse_asm_stmt(Token **rest, Token *tok) {
     Node *node = new_node(ND_ASM, tok);
     tok = tok->next; // skip asm/__asm__/__asm
@@ -2905,11 +2926,15 @@ static Node *parse_asm_stmt(Token **rest, Token *tok) {
                 if (*p == 'm') op->is_memory = true;
         }
 
-        // Skip clobbers
+        // Parse and validate clobbers
         if (!equalc(tok, ")")) {
             tok = skip(tok, ":");
             while (!equalc(tok, ":") && !equalc(tok, ")")) {
                 if (tok->kind != TK_STR) error_tok(tok, "expected clobber string");
+#ifdef ARCH_ARM64
+                if (!arm64_is_valid_clobber(tok->str))
+                    error_tok_simple(tok, "invalid clobber register '%s'", tok->str);
+#endif
                 tok = tok->next;
                 if (equalc(tok, ",")) tok = tok->next;
             }
@@ -2936,6 +2961,19 @@ static Node *parse_asm_stmt(Token **rest, Token *tok) {
     node->asm_ops = ops;
     node->asm_nout = nout;
     node->asm_noperands = nops;
+
+#ifdef ARCH_ARM64
+    // Validate matching constraint references for extended inline asm
+    for (int i = nout; i < nops; i++) {
+        const char *c = ops[i].constraint;
+        while (*c == '=' || *c == '+' || *c == '&') c++;
+        if (*c >= '0' && *c <= '9') {
+            int ref = *c - '0';
+            if (ref >= nops)
+                error_tok_simple(node->tok, "invalid reference in constraint %d ('%c')", i, *c);
+        }
+    }
+#endif
 
     tok = skip(tok, ")");
     *rest = skip(tok, ";");

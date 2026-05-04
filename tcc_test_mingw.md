@@ -1,6 +1,6 @@
 # TCC Test Suite Report for RCC
 
-Generated on: 05/04/2026 12:38:55
+Generated on: 05/05/2026 11:31:03
 
 ## Summary
 
@@ -140,3 +140,6 @@ Generated on: 05/04/2026 12:38:55
 | 135_func_arg_struct_compare | PASS      | Output matches               |
 | 136_atomic_gcc_style        | PASS      | Output matches               |
 | 137_funcall_struct_args     | PASS      | Output matches               |
+| 138_arm64_encoding          | SKIP      | Skipped                      |
+| 139_arm64_errors            | SKIP      | Skipped                      |
+| 140_arm64_extasm            | SKIP      | Skipped                      |
