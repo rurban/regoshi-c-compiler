@@ -226,10 +226,10 @@ DT_TESTS="
 "
 
 # Extract test names from a source file in source order
+# Uses grep -E for POSIX compatibility (macOS grep lacks -P)
 extract_dt_tests() {
-    grep -n 'defined\s*(*test_\w*' "$1" 2>/dev/null | \
-        grep -oP 'test_\w+' | while read -r t; do echo "$t"; done | \
-        awk '!seen[$0]++'
+    grep -nE 'defined[[:space:]]*\(?test_[_[:alnum:]]+' "$1" 2>/dev/null | \
+        grep -oE 'test_[_[:alnum:]]+' | awk '!seen[$0]++'
 }
 
 is_skipped() {
@@ -246,7 +246,8 @@ $1
 "*) return 0 ;; esac
         fi
 	if [ "$RCC" = "$SCRIPT_DIR/arm64-cross.sh" ] || \
-           [ "$RCC" = "$SCRIPT_DIR/darwin-cross.sh" ]; then
+           [ "$RCC" = "$SCRIPT_DIR/darwin-cross.sh" ] || \
+           [ "$is_arm64" = "1" ]; then
 		case "$ARM64_SKIP_TESTS" in *"
 $1
 "*) return 0 ;; esac
@@ -628,6 +629,7 @@ fi
 
 # Markdown report
 {
+        LC_TIME=en
 	printf '# TCC Test Suite Report for RCC\n'
 	printf 'Generated: %s\n\n' "$(date '+%B %Y')"
 	printf '## Summary\n'
@@ -645,7 +647,7 @@ printf "Report saved to %s\n" "$REPORT_FILE"
 
 # arm64-darwin native
 if [ "$REPORT_FILE" = "$SCRIPT_DIR/tcc_test_arm64.md" ]; then
-    [ "$passed" -ge 134 ]
+    [ "$passed" -ge 141 ]
 elif [ "$RCC" = "$SCRIPT_DIR/darwin-cross.sh" ]; then
     [ "$passed" -ge 146 ]
 elif [ "$RCC" = "$SCRIPT_DIR/arm64-cross.sh" ]; then

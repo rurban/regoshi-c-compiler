@@ -8,7 +8,23 @@
 #           gotson/crossbuild:latest container for assemble+link
 
 scriptdir="$(cd "$(dirname "$0")" && pwd)"
-RUNTIME="${RUNTIME:-podman}"
+
+# Auto-detect container runtime (podman on Fedora, docker on Ubuntu)
+if command -v podman >/dev/null 2>&1; then
+    RUNTIME="${RUNTIME:-podman}"
+elif command -v docker >/dev/null 2>&1; then
+    RUNTIME="${RUNTIME:-docker}"
+else
+    echo "darwin-cross.sh: neither podman nor docker found" >&2
+    exit 1
+fi
+
+# SELinux volume label: podman on Fedora needs :Z, docker on Ubuntu does not
+SELINUX_LABEL=""
+if [ "$RUNTIME" = "podman" ] && command -v selinuxenabled >/dev/null 2>&1 && selinuxenabled 2>/dev/null; then
+    SELINUX_LABEL=":Z"
+fi
+
 IMAGE="docker.io/gotson/crossbuild:latest"
 
 rcc_bin="$scriptdir/rcc-darwin"
@@ -67,8 +83,8 @@ TMP_EXE_DIR="$(mktemp -d /tmp/darwin_exe_XXXXXX)"
 
 # shellcheck disable=SC2086
 if ! $RUNTIME run --rm \
-    -v "$(realpath "$TMP_S"):/work/input.s:Z" \
-    -v "$TMP_EXE_DIR:/out:Z" \
+    -v "$(realpath "$TMP_S"):/work/input.s${SELINUX_LABEL}" \
+    -v "$TMP_EXE_DIR:/out${SELINUX_LABEL}" \
     "$IMAGE" \
     sh -c "export PATH=/usr/osxcross/bin:\$PATH && aarch64-apple-darwin20.4-clang $ld_flags -Wl,-undefined,dynamic_lookup /work/input.s -o /out/$outbase 2>&1"; then
     rm -rf "$TMP_S" "$TMP_EXE_DIR"

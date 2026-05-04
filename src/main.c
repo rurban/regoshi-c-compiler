@@ -285,7 +285,7 @@ int main(int argc, char **argv) {
             snprintf(cmd, sizeof(cmd), GCC " -c -o %s", out_path);
         } else {
 #ifdef __APPLE__
-            snprintf(cmd, sizeof(cmd), "cc -o %s -arch arm64 -isysroot /Library/Developer/CommandLineTools/SDKs/MacOSX.sdk", out_path);
+            snprintf(cmd, sizeof(cmd), "cc -o %s -arch arm64 -isysroot /Library/Developer/CommandLineTools/SDKs/MacOSX.sdk -Wl,-undefined,dynamic_lookup", out_path);
 #else
             snprintf(cmd, sizeof(cmd), GCC " -no-pie -o %s", out_path);
 #endif
@@ -299,10 +299,12 @@ int main(int argc, char **argv) {
         }
 
 
+#if defined(_WIN32) || defined(__MINGW32__) || defined(__APPLE__)
+        struct stat libst;
+#endif
 #if defined(_WIN32) || defined(__MINGW32__)
         // Link mingw runtime lib (provides on_exit etc.)
         // Check local dev tree first, then installed path
-        struct stat libst;
 #ifdef RCC_INCDIR
         // cppcheck-suppress syntaxError
         const char *rcc_lib = RCC_INCDIR "/../lib/mingw.obj";
@@ -312,6 +314,18 @@ int main(int argc, char **argv) {
 #endif
             if (stat("lib/mingw.obj", &libst) == 0)
             snprintf(cmd + strlen(cmd), sizeof(cmd) - strlen(cmd), " lib/mingw.obj");
+#endif
+#ifdef __APPLE__
+        // Link Darwin runtime lib (provides on_exit etc. on macOS)
+        if (stat("lib/darwin.o", &libst) == 0)
+            snprintf(cmd + strlen(cmd), sizeof(cmd) - strlen(cmd), " lib/darwin.o");
+#ifdef RCC_INCDIR
+        else {
+            const char *rcc_darwin = RCC_INCDIR "/../lib/darwin.o";
+            if (stat(rcc_darwin, &libst) == 0)
+                snprintf(cmd + strlen(cmd), sizeof(cmd) - strlen(cmd), " %s", rcc_darwin);
+        }
+#endif
 #endif
 
         if (libs_len)

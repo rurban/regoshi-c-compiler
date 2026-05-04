@@ -5348,8 +5348,16 @@ void codegen(Program *prog) {
                     stack_param++;
                 }
             }
+#ifdef __APPLE__
+            // Apple ARM64: unnamed variadic args go on the stack, not in registers.
+            // Set va offsets past the register save area so va_arg immediately
+            // reads from the overflow (stack) area.
+            va_gp_start = 64;
+            va_fp_start = 192;
+#else
             va_gp_start = gp_param * 8;
             va_fp_start = 64 + fp_param * 16;
+#endif
             va_st_start = 16 + stack_param * 8;
         }
 #endif

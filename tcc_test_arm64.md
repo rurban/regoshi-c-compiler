@@ -5,9 +5,9 @@ Generated: May 2026
 ## Summary
 
 - **Total**: 147
-- **Passed**: 134
-- **Failed**: 13
-- **Pass Rate**: 91%
+- **Passed**: 141
+- **Failed**: 6
+- **Pass Rate**: 95%
 
 ## Detailed Results
 
@@ -35,7 +35,7 @@ Generated: May 2026
 | 19_pointer_arithmetic       | PASS         | Output matches                |
 | 20_pointer_comparison       | PASS         | Output matches                |
 | 21_char_array               | PASS         | Output matches                |
-| 22_floating_point           | MISMATCH     | Output does not match .expect |
+| 22_floating_point           | PASS         | Output matches                |
 | 23_type_coercion            | PASS         | Output matches                |
 | 24_math_library             | PASS         | Output matches                |
 | 25_quicksort                | PASS         | Output matches                |
@@ -75,7 +75,7 @@ Generated: May 2026
 | 70_floating_point_literals  | PASS         | Output matches                |
 | 71_macro_empty_arg          | PASS         | Output matches                |
 | 72_long_long_constant       | PASS         | Output matches                |
-| 73_arm64                    | EXEC_FAIL    | non-zero exit                 |
+| 73_arm64                    | PASS         | Output matches                |
 | 75_array_in_struct_init     | PASS         | Output matches                |
 | 76_dollars_in_identifiers   | PASS         | Output matches                |
 | 77_push_pop_macro           | PASS         | Output matches                |
@@ -86,7 +86,7 @@ Generated: May 2026
 | 82_attribs_position         | PASS         | Output matches                |
 | 83_utf8_in_identifiers      | PASS         | Output matches                |
 | 84_hex-float                | PASS         | Output matches                |
-| 85_asm-outside-function     | COMPILE_FAIL | executable missing            |
+| 85_asm-outside-function     | PASS         | Output matches                |
 | 86_memory-model             | PASS         | Output matches                |
 | 87_dead_code                | PASS         | Output matches                |
 | 88_codeopt                  | PASS         | Output matches                |
@@ -97,20 +97,20 @@ Generated: May 2026
 | 93_integer_promotion        | PASS         | Output matches                |
 | 94_generic                  | PASS         | Output matches                |
 | 95_bitfields                | PASS         | Output matches                |
-| 95_bitfields_ms             | PASS         | Output matches                |
+| 95_bitfields_ms             | SKIP         | Skipped                       |
 | 96_nodata_wanted            | SKIP         | Skipped                       |
 | 97_utf8_string_literal      | PASS         | Output matches                |
 | 98_al_ax_extend             | SKIP         | Skipped                       |
 | 99_fastcall                 | SKIP         | Skipped                       |
 | 100_c99array-decls          | PASS         | Output matches                |
-| 101_cleanup                 | MISMATCH     | Output does not match .expect |
+| 101_cleanup                 | PASS         | Output matches                |
 | 102_alignas                 | PASS         | Output matches                |
 | 103_implicit_memmove        | PASS         | Output matches                |
-| 104_inline                  | COMPILE_FAIL | executable missing            |
+| 104_inline                  | PASS         | Output matches                |
 | 105_local_extern            | PASS         | Output matches                |
 | 106_versym                  | COMPILE_FAIL | executable missing            |
 | 107_stack_safe              | PASS         | Output matches                |
-| 108_constructor             | COMPILE_FAIL | executable missing            |
+| 108_constructor             | MISMATCH     | Output does not match .expect |
 | 109_float_struct_calling    | PASS         | Output matches                |
 | 110_average                 | PASS         | Output matches                |
 | 111_conversion              | PASS         | Output matches                |
@@ -122,15 +122,15 @@ Generated: May 2026
 | 117_builtins                | PASS         | Output matches                |
 | 118_switch                  | PASS         | Output matches                |
 | 119_random_stuff            | COMPILE_FAIL | executable missing            |
-| 120_alias                   | COMPILE_FAIL | executable missing            |
+| 120_alias                   | EXEC_FAIL    | non-zero exit                 |
 | 121_struct_return           | PASS         | Output matches                |
 | 122_vla_reuse               | PASS         | Output matches                |
 | 123_vla_bug                 | PASS         | Output matches                |
 | 124_atomic_counter          | COMPILE_FAIL | executable missing            |
-| 125_atomic_misc             | MISMATCH     | Output differs                |
+| 125_atomic_misc             | PASS         | Output matches                |
 | 126_bound_global            | SKIP         | Skipped                       |
-| 127_asm_goto                | COMPILE_FAIL | executable missing            |
-| 128_run_atexit              | COMPILE_FAIL | executable missing            |
+| 127_asm_goto                | SKIP         | Skipped                       |
+| 128_run_atexit              | MISMATCH     | Output does not match .expect |
 | 129_scopes                  | PASS         | Output matches                |
 | 130_large_argument          | PASS         | Output matches                |
 | 131_return_struct_in_reg    | PASS         | Output matches                |
@@ -141,6 +141,8 @@ Generated: May 2026
 | 136_atomic_gcc_style        | PASS         | Output matches                |
 | 137_funcall_struct_args     | PASS         | Output matches                |
 | test_arm64_asm              | PASS         | exit=0                        |
+| test_atomic_op              | PASS         | exit=0                        |
+| test_atomic_op2             | PASS         | exit=0                        |
 | test_bitfields              | PASS         | exit=0                        |
 | test_builtins               | PASS         | exit=0                        |
 | test_elif2                  | PASS         | exit=0                        |

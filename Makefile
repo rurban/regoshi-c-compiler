@@ -83,7 +83,14 @@ DEF_INCDIR = -DRCC_INCDIR='"$(RCC_INCDIR)"'
 VERSION ?= $(shell git describe --long --tags --always 2>/dev/null || echo "v1.2-dev")
 MACHINE ?= $(shell $(CC) -dumpmachine 2>/dev/null || echo "unknown")
 
-$(TARGET): $(OBJS) $(MINGW_O)
+ifneq ($(findstring apple,$(MACHINE)),)
+DARWIN_O = lib/darwin.o
+TARGET_DEPS = $(OBJS) $(DARWIN_O)
+else
+TARGET_DEPS = $(OBJS) $(MINGW_O)
+endif
+
+$(TARGET): $(TARGET_DEPS)
 	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $^
 
 src/sysinc_paths.h:
@@ -97,6 +104,8 @@ src/sysinc_paths.h:
 src/gcc_predefined.h:
 	$(CC) -dM -E - < /dev/null | awk -f tools/get-gcc-predefined.awk > $@
 
+$(DARWIN_O): lib/darwin.c
+	$(CC) $(CFLAGS) -c $< -o $@
 $(MINGW_O): lib/mingw.c
 	$(CC) $(CFLAGS) -c $< -o $@
 src/main$(OBJ_EXT): src/main.c src/sysinc_paths.h
@@ -189,7 +198,7 @@ endif
 
 clean:
 	rm -f $(OBJS) $(TARGET) $(TARGET).exe rcc_prof src/sysinc_paths.h src/gcc_predefined.h \
-              fred.txt *.s qemu*.core src/*.obj src/*.darwin.o src/*.arm64.o
+              fred.txt *.s qemu*.core src/*.obj src/*.darwin.o src/*.arm64.o lib/darwin.o lib/darwin$(OBJ_EXT)
 	if command -v git > /dev/null 2>&1; then \
 	  cd tinycc && git reset --hard && git clean -dxf tests/tests2; fi
 

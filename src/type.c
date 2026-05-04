@@ -22,7 +22,13 @@ Type *ty_llong   = &(Type){.kind=TY_LLONG,   .size=8,  .align=8};
 Type *ty_ullong  = &(Type){.kind=TY_LLONG,   .size=8,  .align=8,  .is_unsigned=true};
 Type *ty_float   = &(Type){.kind=TY_FLOAT,   .size=4,  .align=4};
 Type *ty_double  = &(Type){.kind=TY_DOUBLE,  .size=8,  .align=8};
+// Apple ARM64: long double is 64-bit (same as double).
+// Linux ARM64/x86-64: long double is 128-bit (80-bit x87 padded, or IEEE quad).
+#ifdef __APPLE__
+Type *ty_ldouble = &(Type){.kind=TY_LDOUBLE, .size=8, .align=8};
+#else
 Type *ty_ldouble = &(Type){.kind=TY_LDOUBLE, .size=16, .align=16};
+#endif
 // clang-format on
 
 bool is_integer(Type *ty) {
