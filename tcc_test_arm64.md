@@ -4,8 +4,8 @@ Generated: May 2026
 
 ## Summary
 
-- **Total**: 147
-- **Passed**: 141
+- **Total**: 149
+- **Passed**: 143
 - **Failed**: 6
 - **Pass Rate**: 95%
 
@@ -148,7 +148,9 @@ Generated: May 2026
 | test_elif2                  | PASS         | exit=0                        |
 | test_elif_simple            | PASS         | exit=0                        |
 | test_err                    | PASS         | compile error as expected     |
+| test_fallthrough            | PASS         | exit=0                        |
 | test_func                   | PASS         | exit=0                        |
+| test_gperf                  | PASS         | exit=0                        |
 | test_if                     | PASS         | exit=0                        |
 | test_if2                    | PASS         | exit=0                        |
 | test_if3                    | PASS         | exit=0                        |

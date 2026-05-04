@@ -1776,10 +1776,11 @@ static void append_reloc(LVar *var, int offset, char *label, int addend) {
     }
 }
 
-static bool read_global_label_initializer(Token **rest, Token *tok, char **label) {
+static bool read_global_label_initializer(Token **rest, Token *tok, char **label, int *addend) {
     if (tok->kind == TK_STR) {
         StrLit *s = new_str_lit(tok->str, tok->len, tok->string_literal_prefix, 1);
         *label = format(".LC%d", s->id);
+        if (addend) *addend = 0;
         *rest = tok->next;
         return true;
     }
@@ -1790,6 +1791,7 @@ static bool read_global_label_initializer(Token **rest, Token *tok, char **label
             *label = format(".L.label.%s.%s", parser_current_fn, tok->next->name);
         else
             *label = tok->next->name;
+        if (addend) *addend = 0;
         *rest = tok->next->next;
         return true;
     }
@@ -1799,7 +1801,37 @@ static bool read_global_label_initializer(Token **rest, Token *tok, char **label
 
     if (tok->kind == TK_IDENT) {
         *label = tok->name;
+        if (addend) *addend = 0;
         *rest = tok->next;
+
+        // Handle &identifier[constant] — array subscript in global initializer
+        if (equalc(*rest, "[")) {
+            Token *sub = (*rest)->next;
+            Node *idx = assign(&sub, sub);
+            add_type(idx);
+            long long ival;
+            if (sub->kind != TK_EOF && equalc(sub, "]") && eval_const_expr(idx, &ival)) {
+                LVar *var = find_global_name(*label);
+                if (var && var->ty && var->ty->kind == TY_ARRAY)
+                    ival *= var->ty->base->size;
+                if (addend) *addend = (int)ival;
+                *rest = sub->next;
+            }
+        }
+
+        // Handle &identifier.member — struct member access in global initializer
+        if (equalc(*rest, ".")) {
+            LVar *var = find_global_name(*label);
+            Token *member_tok = (*rest)->next;
+            if (var && var->ty && member_tok && member_tok->kind == TK_IDENT) {
+                Member *mem = find_member(var->ty, member_tok);
+                if (mem) {
+                    if (addend) *addend += mem->offset;
+                    *rest = member_tok->next;
+                }
+            }
+        }
+
         return true;
     }
 
@@ -2256,9 +2288,10 @@ static Token *global_init_one(Token *tok, LVar *var, Type *ty, int offset) {
     // Pointer to label/function
     if (ty->kind == TY_PTR) {
         char *label = NULL;
+        int addend = 0;
         Token *next = tok;
-        if (read_global_label_initializer(&next, tok, &label)) {
-            append_reloc(var, offset, label, 0);
+        if (read_global_label_initializer(&next, tok, &label, &addend)) {
+            append_reloc(var, offset, label, addend);
             return next;
         }
     }
@@ -4654,10 +4687,11 @@ static void global_initializer(Token **rest, Token *tok, LVar *var) {
 
     if (var->ty->kind == TY_PTR) {
         char *label = NULL;
-        if (read_global_label_initializer(&tok, tok, &label)) {
+        int addend = 0;
+        if (read_global_label_initializer(&tok, tok, &label, &addend)) {
             var->init_data = arena_alloc(var->ty->size ? var->ty->size : 1);
             var->init_size = var->ty->size;
-            append_reloc(var, 0, label, 0);
+            append_reloc(var, 0, label, addend);
             *rest = tok;
             return;
         }
