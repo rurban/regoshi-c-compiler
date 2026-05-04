@@ -2782,14 +2782,22 @@ static int gen(Node *node) {
 #endif
         } else if (is_integer(from) && is_flonum(to)) {
 #ifdef ARCH_ARM64
-            printf("  scvtf d0, %s\n", from->size < 4 ? reg32[r] : reg(r, from->size));
+            if (from->is_unsigned) {
+                printf("  ucvtf d0, %s\n", from->size < 4 ? reg32[r] : reg(r, from->size));
+            } else {
+                printf("  scvtf d0, %s\n", from->size < 4 ? reg32[r] : reg(r, from->size));
+            }
             if (to->kind == TY_FLOAT) {
                 printf("  fcvt s0, d0\n");
                 printf("  fcvt d0, s0\n");
             }
             printf("  fmov %s, d0\n", reg64[r]);
 #else
-            printf("  cvtsi2sd xmm0, %s\n", from->size < 4 ? reg32[r] : reg(r, from->size));
+            if (from->is_unsigned && from->size == 4) {
+                printf("  cvtsi2sd xmm0, %s\n", reg64[r]);
+            } else {
+                printf("  cvtsi2sd xmm0, %s\n", from->size < 4 ? reg32[r] : reg(r, from->size));
+            }
             if (to->kind == TY_FLOAT) {
                 printf("  cvtsd2ss xmm0, xmm0\n");
                 printf("  cvtss2sd xmm0, xmm0\n");
