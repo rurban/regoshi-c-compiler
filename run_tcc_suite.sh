@@ -213,16 +213,31 @@ SKIP_TESTS="
 MINGW_SKIP_TESTS="
 "
 
+INTEL_SKIP_TESTS="
+73_arm64
+138_arm64_encoding
+139_arm64_errors
+140_arm64_extasm
+"
+
 # we provide our own arm64 asm_goto test, this is x86_64 only. tcc bug to be filed
 ARM64_SKIP_TESTS="
 95_bitfields_ms
 127_asm_goto
 "
 
+# Tests that need to be compiled and run in the test directory (for __FILE__ or .expect path handling)
+CD_TESTS="
+125_atomic_misc
+129_scopes
+139_arm64_errors
+"
+
 # Tests that use tcc's -dt flag: multi-sub-test files with .expect
 # Each test name is extracted from '#if defined test_' / '#elif defined test_'
 DT_TESTS="
 125_atomic_misc
+139_arm64_errors
 "
 
 # Extract test names from a source file in source order
@@ -233,10 +248,6 @@ extract_dt_tests() {
 }
 
 is_skipped() {
-	# Enable 73_arm64 test on ARM64 native/cross; skip otherwise
-	if [ "$1" = "73_arm64" ] && [ "$is_arm64" != "1" ] && [ "$RCC" != "$SCRIPT_DIR/arm64-cross.sh" ]; then
-		return 0
-	fi
 	case "$SKIP_TESTS" in *"
 $1
 "*) return 0 ;; esac
@@ -249,6 +260,10 @@ $1
            [ "$RCC" = "$SCRIPT_DIR/darwin-cross.sh" ] || \
            [ "$is_arm64" = "1" ]; then
 		case "$ARM64_SKIP_TESTS" in *"
+$1
+"*) return 0 ;; esac
+        else
+		case "$INTEL_SKIP_TESTS" in *"
 $1
 "*) return 0 ;; esac
         fi
@@ -306,22 +321,17 @@ while IFS= read -r src; do
 
 	printf "  %-40s " "$base..."
 
-	if [ "$src" = "$TEST_DIR/129_scopes.c" ]; then
+	in_cd_dir=
+	if echo "$CD_TESTS" | grep -qw "$base"; then
 		orig_RCC="$RCC"
 		RCC="$(realpath "$RCC")"
 		cd "$TEST_DIR" || exit
-		src=129_scopes.c
-		# 129_scopes uses __TINYC__ to decide __leading_underscore convention
-		if echo "$RCC" | grep -q mingw-cross; then
+		src="$base.c"
+		in_cd_dir=1
+		if [ "$base" = "129_scopes" ] && echo "$RCC" | grep -q mingw-cross; then
 			p_src="-D__TINYC__"
 		fi
         fi
-	if [ "$src" = "$TEST_DIR/125_atomic_misc.c" ]; then
-		orig_RCC="$RCC"
-		RCC="$(realpath "$RCC")"
-		cd "$TEST_DIR" || exit
-		src=125_atomic_misc.c
-	fi
         # 1. Compile (capture warnings/notes to TMP_OUT; errors abort)
         # Handle -dt multi-sub-test files
         # shellcheck disable=SC2086,SC2129
@@ -347,10 +357,11 @@ while IFS= read -r src; do
                 echo "" >>"$TMP_OUT"
             done
             rm -f "$TMP_OUT".err
-            if [ "$src" = "125_atomic_misc.c" ]; then
+            if [ -n "$in_cd_dir" ]; then
                 cd - >/dev/null || exit
-                src="$TEST_DIR/125_atomic_misc.c"
+                src="$TEST_DIR/$base.c"
                 RCC="$orig_RCC"
+                in_cd_dir=
             fi
             # Darwin: skip execution, treat compile+link as success
             if [ "$is_darwin" = "1" ]; then
@@ -418,10 +429,11 @@ while IFS= read -r src; do
 		add_row "$base" "COMPILE_FAIL" "rcc returned non-zero"
 		print_change "$base" "COMPILE_FAIL"
 		[ -n "$p_src" ] && p_src=
-		if [ "$src" = "129_scopes.c" ]; then
+		if [ -n "$in_cd_dir" ]; then
 			cd - >/dev/null || exit
-			src="$TEST_DIR/129_scopes.c"
+			src="$TEST_DIR/$base.c"
 			RCC="$orig_RCC"
+			in_cd_dir=
 		fi
 		continue
 	    fi
@@ -434,17 +446,19 @@ while IFS= read -r src; do
 		add_row "$base" "COMPILE_FAIL" "executable missing"
 		print_change "$base" "COMPILE_FAIL"
 		[ -n "$p_src" ] && p_src=
-		if [ "$src" = "129_scopes.c" ]; then
+		if [ -n "$in_cd_dir" ]; then
 			cd - >/dev/null || exit
-			src="$TEST_DIR/129_scopes.c"
+			src="$TEST_DIR/$base.c"
 			RCC="$orig_RCC"
+			in_cd_dir=
 		fi
 		continue
 	fi
-	if [ "$src" = "129_scopes.c" ]; then
+	if [ -n "$in_cd_dir" ]; then
 		cd - >/dev/null || exit
-		src="$TEST_DIR/129_scopes.c"
+		src="$TEST_DIR/$base.c"
 		RCC="$orig_RCC"
+		in_cd_dir=
 	fi
 
         # 2a. Darwin: compile+link only (can't execute Mach-O on Linux)

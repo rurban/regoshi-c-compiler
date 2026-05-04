@@ -66,8 +66,8 @@ Not yet: C23, -fpie, -fpic
 
 Top-level `__asm__("...")` statements in AT&T, Intel or ARM syntax are supported and emitted in source order. Unlike GCC (which hoists all file-scope `asm` blocks to the top of the output at `-O2`/`-O3` unless `-fno-toplevel-reorder` is used), rcc always preserves their original position relative to functions.
 
-The tcc suite has 148/148 test passed (100%) on linux and mingw-cross,
-147/147 on arm64-cross, 144/144 on darwin-cross,
+The tcc suite has 150/150 test passed (100%) on linux and mingw-cross,
+148/150 on arm64-cross, 149/151 on darwin-cross,
 109/111 on windows native, 134/147 on arm64-darwin native.
 
 Three tcc core and test bugs have been detected so far. Fixes in the work.
@@ -138,12 +138,12 @@ The original windows repo is now at https://github.com/DocDamage/realtime-c-comp
 
 This fork passes now:
 
-- [148/148 tests](tcc_test_linux.md) on linux (x86-64)
+- [150/150 tests](tcc_test_linux.md) on linux (x86-64)
 - [148/148 tests](tcc_test_mingw_cross.md) on mingw-cross (x86-64)
-- [147/147 tests](tcc_test_arm64_cross.md) on arm64-cross (ELF)
-- [144/144 tests](tcc_test_darwin_cross.md) on darwin-cross (Mach-O, compile+link only)
+- [148/151 tests](tcc_test_arm64_cross.md) on arm64-cross (ELF)
+- [149/151 tests](tcc_test_darwin_cross.md) on darwin-cross (Mach-O, compile+link only)
 - [143/149 tests](tcc_test_arm64.md) on arm64-darwin native
-- [109/112 tests](tcc_test_mingw.md) on windows native via powershell testing
+- [109/111 tests](tcc_test_mingw.md) on windows native via powershell testing
 - For the c-testsuite it passes 220/220 tests on all platforms.
 
 ## License

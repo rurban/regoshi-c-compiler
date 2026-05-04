@@ -45,7 +45,6 @@ if (-not $RCC) {
 # (bound-checker, backtrace, btdll, builtins are TCC-runtime-only)
 $SkipTests = @(
     "60_errors_and_warnings", # no main; TCC -dt mode
-    "73_arm64",
     "96_nodata_wanted",       # no main; TCC -dt mode
     "104_inline",             # needs multi-file 104+_inline.c
     "106_versym",             # requires -pthread
@@ -61,6 +60,24 @@ $SkipTests = @(
     "99_fastcall",            # x86-32bit specific, skipped by TCC on x86_64
     "128_run_atexit"          # needs TCC-specific -dt multi-snippet runner
 )
+
+# Tests skipped on Intel hosts (arm64-specific tests)
+$IntelSkipTests = @(
+    "73_arm64",
+    "138_arm64_encoding",
+    "139_arm64_errors",
+    "140_arm64_extasm"
+)
+
+# Tests that need to be compiled from the test directory (for __FILE__ or .expect path handling)
+$CdTests = @(
+    "125_atomic_misc",
+    "129_scopes",
+    "139_arm64_errors"
+)
+
+# Combine base skips with Intel skips (this is always x86_64 Windows/Mingw)
+$SkipTests += $IntelSkipTests
 
 $TestFiles = Get-ChildItem -Path $TestDir -Filter "*.c" | Sort-Object {
     $base = $_.BaseName
@@ -117,15 +134,15 @@ foreach ($file in $TestFiles) {
         }
     }
 
-    # 129_scopes needs to be compiled from the test directory so __FILE__ is just the basename
-    $inScopesDir = $false
-    if ($base -eq "129_scopes") {
+    # Tests that need to be compiled from the test directory (for __FILE__ or .expect handling)
+    $inTestDir = $false
+    if ($CdTests -contains $base) {
         $origRCC = $RCC
         $origSrc = $src
         $RCC = (Resolve-Path $RCC).Path
         Push-Location $TestDir
-        $src = "129_scopes.c"
-        $inScopesDir = $true
+        $src = "$base.c"
+        $inTestDir = $true
     }
 
     $extraFlags = ""
@@ -147,7 +164,7 @@ foreach ($file in $TestFiles) {
     Remove-Item $tmpErr -Force -ErrorAction SilentlyContinue
     $compileEnd = Get-Date
 
-    if ($inScopesDir) {
+    if ($inTestDir) {
         Pop-Location
         $src = $origSrc
         $RCC = $origRCC

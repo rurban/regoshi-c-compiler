@@ -137,6 +137,9 @@ Generated: May 2026
 | 135_func_arg_struct_compare              | PASS         | Output matches                       |
 | 136_atomic_gcc_style                     | PASS         | Output matches                       |
 | 137_funcall_struct_args                  | PASS         | Output matches                       |
+| 138_arm64_encoding                       | SKIP         | Skipped                              |
+| 139_arm64_errors                         | SKIP         | Skipped                              |
+| 140_arm64_extasm                         | SKIP         | Skipped                              |
 | test_arm64_asm                           | PASS         | exit=0                               |
 | test_atomic_op                           | PASS         | exit=0                               |
 | test_atomic_op2                          | PASS         | exit=0                               |
