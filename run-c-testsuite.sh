@@ -11,6 +11,9 @@ fi
 if [ ! -f c-testsuite/single-exec ]; then
     git submodule update --init --recursive
 fi
+if [ ! -f c-testsuite/fred.txt ] && command -v git >/dev/null 2>&1; then
+    cd c-testsuite && git clean -dxf
+fi
 
 TO_TMP=""
 if ! command -v timeout >/dev/null 2>&1; then
