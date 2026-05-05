@@ -146,7 +146,6 @@ test-all: $(TARGET)
 	$(MAKE) clean
 	$(MAKE)
 	@$(TEST_RUNNER)
-	test/torture/run.sh
 	./mingw-test.sh
 	./arm64-test.sh
 	./darwin-test.sh

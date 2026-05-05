@@ -4761,8 +4761,7 @@ static int peep_pattern2(char **lines, int li, int lj) {
         // mov wN, xN is not a valid ARM64 instruction.
         if (sr[0] != dr[0])
             return 0;
-        char *newl = format("  mov %s, %s", dr, sr);
-        lines[lj] = strdup(newl);
+        lines[lj] = format("  mov %s, %s", dr, sr);
         return 1;
     }
 #else
@@ -4773,13 +4772,13 @@ static int peep_pattern2(char **lines, int li, int lj) {
             off1 == off2 && !strcmp(sz, "dword")) {
             const char *r32 = to32(sr);
             if (r32) {
-                lines[lj] = strdup(format("  mov %s, %s", dr, r32));
+                lines[lj] = format("  mov %s, %s", dr, r32);
                 return 1;
             }
         }
         if (peep_mov_reg_rbp(lines[lj], dr, sizeof(dr), sz, &off2) &&
             off1 == off2 && !strcmp(sz, "qword")) {
-            lines[lj] = strdup(format("  mov %s, %s", dr, sr));
+            lines[lj] = format("  mov %s, %s", dr, sr);
             return 1;
         }
     }
@@ -4789,7 +4788,7 @@ static int peep_pattern2(char **lines, int li, int lj) {
         if (peep_mov_rbp_imm(lines[li], &off1, &val) &&
             peep_mov_reg_rbp(lines[lj], dr, sizeof(dr), sz, &off2) &&
             off1 == off2 && !strcmp(sz, "dword")) {
-            lines[lj] = strdup(format("  mov %s, %d", dr, val));
+            lines[lj] = format("  mov %s, %d", dr, val);
             return 1;
         }
     }
@@ -4846,7 +4845,7 @@ static int peep_pattern4(char **lines, int nlines, int li, int lj) {
             (!strcmp(op, "imul") && imm_val == 1)) {
             lines[lj][0] = '\0';
         } else {
-            lines[lj] = strdup(format("  %s %s, %d", op, od, imm_val));
+            lines[lj] = format("  %s %s, %d", op, od, imm_val);
         }
         if (rd_pid >= 0 && !reg_live_after(lines, nlines, lj, rd_pid))
             lines[li][0] = '\0';
@@ -4871,8 +4870,8 @@ static int peep_pattern5(char **lines, int nlines, int li, int lj) {
         int r1_pid = phys_reg_id(r1);
         if (r1_pid >= 0 && reg_live_after(lines, nlines, lk, r1_pid))
             return 0;
-        lines[li] = strdup(format("  mov %s, %s", d3, mem1));
-        lines[lj] = strdup(format("  %s %s, %s", op2, d3, imm2));
+        lines[li] = format("  mov %s, %s", d3, mem1);
+        lines[lj] = format("  %s %s, %s", op2, d3, imm2);
         lines[lk][0] = '\0';
         return 1;
     }
@@ -4898,8 +4897,8 @@ static int peep_pattern5(char **lines, int nlines, int li, int lj) {
             while (*val == ' ') val++;
         } else
             val = imm2;
-        lines[li] = strdup(format("  ldr %s, %s", d3, mem1));
-        lines[lj] = strdup(format("  %s %s, %s, %s", op2, d3, d3, val));
+        lines[li] = format("  ldr %s, %s", d3, mem1);
+        lines[lj] = format("  %s %s, %s, %s", op2, d3, d3, val);
         lines[lk][0] = '\0';
         return 1;
     }
@@ -4941,9 +4940,7 @@ static void emit_peephole_body(char *body_text) {
                     if (peep_mov_reg_reg(plines[li], d1, sizeof(d1), s1, sizeof(s1)) &&
                         peep_mov_reg_reg(plines[lj], d2, sizeof(d2), s2, sizeof(s2)) &&
                         !strcmp(s2, d1) && is_reg(d1) && is_reg(s1)) {
-                        char newline[200];
-                        snprintf(newline, sizeof(newline), "  mov %s, %s", d2, s1);
-                        plines[lj] = strdup(newline);
+                        plines[lj] = format("  mov %s, %s", d2, s1);
                         int pid = phys_reg_id(d1);
                         if (pid >= 0 && !reg_live_after(plines, nlines, lj, pid))
                             plines[li] = "";
@@ -5040,7 +5037,7 @@ void codegen(Program *prog) {
                 }
             }
             emitted_syms = realloc(emitted_syms, (emitted_count + 1) * sizeof(char *));
-            emitted_syms[emitted_count++] = strdup(canon);
+            emitted_syms[emitted_count++] = (char *)canon;
             bool reserved = !var->asm_name && is_asm_reserved(var->name);
             char *safe_label = reserved ? format(".L_rcc_%s", var->name) : label;
             if (var->ty->align > 1)
@@ -5085,8 +5082,6 @@ void codegen(Program *prog) {
                 printf("  .zero %d\n", var->ty->size);
             }
         }
-        for (int i = 0; i < emitted_count; i++)
-            free(emitted_syms[i]);
         free(emitted_syms);
         for (StrLit *s = prog->strs; s; s = s->next) {
             printf(".LC%d:\n", s->id);

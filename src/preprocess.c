@@ -533,10 +533,10 @@ void add_define(char *def) {
     char *body;
     if (eq) {
         name = pp_strndup(def, eq - def);
-        body = strdup(eq + 1);
+        body = pp_strndup(eq + 1, strlen(eq));
     } else {
-        name = strdup(def);
-        body = strdup("1");
+        name = pp_strndup(def, strlen(def));
+        body = pp_strndup("1", 1);
     }
     Macro *m = arena_alloc(sizeof(Macro));
     m->name = name;
