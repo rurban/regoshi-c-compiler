@@ -94,9 +94,14 @@ static int spill_offset(int r) {
 #define SPILL_R14 96
 #define SPILL_R15 104
 #define SPILL_RSI 112
-#define SPILL_LOGAND 120
-#define SPILL_ATOMIC_OLD 128
+static int SPILL_LOGAND = 120;
+static int SPILL_ATOMIC_OLD = 128;
 #define ALL_REGS_MASK ((1 << NUM_REGS) - 1)
+
+static void init_spill_offsets(int stack_size) {
+    SPILL_LOGAND = stack_size < 80 ? stack_size - 8 : stack_size - 72;
+    SPILL_ATOMIC_OLD = stack_size < 88 ? stack_size - 16 : stack_size - 80;
+}
 
 static int spill_offset(int r) {
     static int offsets[] = {SPILL_R10, SPILL_R11, SPILL_RBX,
@@ -5644,6 +5649,7 @@ void codegen(Program *prog) {
         current_fn = fn->name;
         current_fn_def = fn;
         current_fn_stack_size = fn->stack_size;
+        init_spill_offsets(fn->stack_size);
         fn_struct_ret_off = 0;
         fn_struct_ret_total = 0;
 

@@ -5009,22 +5009,29 @@ Program *parse(Token *tok) {
                     tok = tok->next;
                     if (!equalc(tok, ")") && !equalc(tok, "...") && !is_typename(tok)) {
                         // K&R function definition: param list has identifiers, not types
-                        LVar head = {};
-                        LVar *cur = &head;
+                        // First pass: collect parameter names and declarations
+                        typedef struct KRParam KRParam;
+                        struct KRParam {
+                            KRParam *next;
+                            char *name;
+                            Type *ty;
+                        };
+                        KRParam kr_head = {};
+                        KRParam *kr_cur = &kr_head;
                         while (!equalc(tok, ")")) {
-                            if (cur != &head)
+                            if (kr_cur != &kr_head)
                                 tok = skip(tok, ",");
                             if (tok->kind != TK_IDENT)
                                 error_tok(tok, "expected parameter name");
-                            LVar *var = new_var(tok->name, ty_int, true);
+                            KRParam *krp = arena_alloc(sizeof(KRParam));
+                            krp->name = tok->name;
+                            krp->ty = NULL;
                             tok = tok->next;
-                            cur = cur->param_next = var;
+                            kr_cur = kr_cur->next = krp;
                         }
-                        params = head.param_next;
                         tok = skip(tok, ")");
                         tok = skip_attributes(tok);
-                        current_fn_scope_locals = params;
-                        // Parse K&R parameter declarations between ) and {
+                        // Parse K&R parameter declarations between ) and {, match by name
                         while (!equalc(tok, "{")) {
                             VarAttr dattr = {};
                             Type *dty = declspec(&tok, tok, &dattr);
@@ -5032,9 +5039,9 @@ Program *parse(Token *tok) {
                                 char *dname = NULL;
                                 Type *ddecl = declarator(&tok, tok, copy_type(dty), &dname);
                                 if (dname) {
-                                    for (LVar *p = params; p; p = p->param_next) {
-                                        if (strcmp(p->name, dname) == 0) {
-                                            p->ty = ddecl;
+                                    for (KRParam *krp = kr_head.next; krp; krp = krp->next) {
+                                        if (strcmp(krp->name, dname) == 0) {
+                                            krp->ty = ddecl;
                                             break;
                                         }
                                     }
@@ -5045,18 +5052,17 @@ Program *parse(Token *tok) {
                             }
                             tok = skip(tok, ";");
                         }
-                        // Recalculate stack offsets with correct types
-                        stack_offset = 80;
-                        for (LVar *p = params; p; p = p->param_next) {
-                            int size = p->ty->size < 4 ? 4 : p->ty->size;
-                            int align = p->ty->align < 4 ? 4 : p->ty->align;
-                            stack_offset = align_to(stack_offset + size, align);
-                            p->offset = stack_offset;
+                        // Second pass: create LVars with correct types and offsets
+                        LVar head = {};
+                        LVar *cur = &head;
+                        for (KRParam *krp = kr_head.next; krp; krp = krp->next) {
+                            if (!krp->ty)
+                                krp->ty = ty_int;
+                            LVar *var = new_var(krp->name, krp->ty, true);
+                            cur = cur->param_next = var;
                         }
-                        for (LVar *p = params; p; p = p->param_next) {
-                            if (!p->ty)
-                                p->ty = ty_int;
-                        }
+                        params = head.param_next;
+                        current_fn_scope_locals = params;
                     } else {
                         params = parse_params(&tok, tok, &is_variadic);
                         tok = skip(tok, ")");
