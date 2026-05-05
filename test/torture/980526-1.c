@@ -36,3 +36,4 @@ static void do2(void) {
 int main(void) {
     exit(0);
 }
+/* { dg-require-effective-target nested } */

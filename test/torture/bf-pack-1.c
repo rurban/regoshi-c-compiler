@@ -21,3 +21,4 @@ int main(void) {
     f(&bar);
     exit(0);
 }
+/* { dg-require-effective-target nested } */

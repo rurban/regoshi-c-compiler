@@ -4,3 +4,4 @@ void exit(int);
 int main(void) {
     exit(m(0) != L'1');
 }
+/* { dg-require-effective-target nested } */

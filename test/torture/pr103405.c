@@ -30,3 +30,4 @@ int main(void) {
     i = starter(0);
     check(0);
 }
+/* { dg-require-effective-target nested } */

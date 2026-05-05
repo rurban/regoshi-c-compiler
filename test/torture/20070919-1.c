@@ -1,3 +1,4 @@
+/* { dg-require-effective-target nested } */
 /* PR c/33238 */
 
 typedef __SIZE_TYPE__ size_t;

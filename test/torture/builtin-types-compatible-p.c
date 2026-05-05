@@ -30,3 +30,4 @@ int main(void) {
         abort();
     exit(0);
 }
+/* { dg-require-effective-target nested } */

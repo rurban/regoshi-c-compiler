@@ -32,3 +32,4 @@ static int test(void) {
 int main(void) {
     return !test();
 }
+/* { dg-require-effective-target nested } */

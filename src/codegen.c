@@ -1046,9 +1046,23 @@ static int gen_funcall(Node *node, int hidden_ret_reg) {
     for (int i = 0; i < nargs; i++) {
         if (arg_stack_idx[i] >= 0)
             continue;
-        if ((argv[i]->ty->kind == TY_STRUCT || argv[i]->ty->kind == TY_UNION) && argv[i]->ty->size > 8)
-            arg_regs[i] = gen_addr(argv[i]);
-        else
+        if ((argv[i]->ty->kind == TY_STRUCT || argv[i]->ty->kind == TY_UNION) && argv[i]->ty->size > 8) {
+            int addr = gen_addr(argv[i]);
+            if (addr < 0) {
+                // Non-lvalue (e.g. cast to struct): allocate temp, evaluate, store
+                int alloc = (argv[i]->ty->size + 7) & ~7;
+                fn_struct_ret_off += alloc;
+                if (fn_struct_ret_off > fn_struct_ret_total)
+                    fn_struct_ret_total = fn_struct_ret_off;
+                int tmp_slot = current_fn_stack_size + fn_struct_ret_off;
+                addr = alloc_reg();
+                printf("  lea %s, [rbp-%d]\n", reg64[addr], tmp_slot);
+                int val = gen(argv[i]);
+                printf("  mov [%s], %s\n", reg64[addr], reg(val, argv[i]->ty->size));
+                free_reg(val);
+            }
+            arg_regs[i] = addr;
+        } else
             arg_regs[i] = gen(argv[i]);
     }
 
@@ -2176,8 +2190,11 @@ static int gen_addr(Node *node) {
     }
     case ND_CAST:
         // Struct/union cast: treat as address of the inner expression
-        if (node->ty && (node->ty->kind == TY_STRUCT || node->ty->kind == TY_UNION || node->ty->kind == TY_ARRAY))
-            return gen_addr(node->lhs);
+        if (node->ty && (node->ty->kind == TY_STRUCT || node->ty->kind == TY_UNION || node->ty->kind == TY_ARRAY)) {
+            int r = gen_addr(node->lhs);
+            if (r >= 0) return r;
+            return -1; // caller should handle non-lvalue
+        }
         error_tok(node->tok, "lvalue required as left operand of assignment");
         return -1;
     case ND_COMMA: {
@@ -2194,6 +2211,28 @@ static int gen_addr(Node *node) {
             return gen_funcall(node, -1);
         error_tok(node->tok, "lvalue required as left operand of assignment");
         return -1;
+    case ND_ASSIGN:
+        // Assignment expression used as lvalue: return address of lhs
+        return gen_addr(node->lhs);
+    case ND_STMT_EXPR: {
+        // Statement expression used as lvalue (e.g. d = ({ bar(); }))
+        // Evaluate the block and return address of the last expression
+        int result = -1;
+        for (Node *n = node->body; n; n = n->next) {
+            int r = gen(n);
+            if (node->stmt_expr_result && n->kind == ND_EXPR_STMT && n->lhs == node->stmt_expr_result) {
+                result = gen_addr(node->stmt_expr_result);
+            }
+            if (r != -1) free_reg(r);
+        }
+        if (result != -1)
+            return result;
+        error_tok(node->tok, "lvalue required as left operand of assignment");
+        return -1;
+    }
+    case ND_NUM:
+    case ND_FNUM:
+        return -1; // not an lvalue; caller should handle via temp allocation
     default:
         error_tok(node->tok, "lvalue required as left operand of assignment");
         return -1;

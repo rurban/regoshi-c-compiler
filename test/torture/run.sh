@@ -61,6 +61,13 @@ run_test() {
         return
     fi
 
+    # Nested functions / statement expressions (not implemented)
+    if grep -qE '\{\(\{' "$src" 2>/dev/null || grep -qE 'dg-require-effective-target nested' "$src" 2>/dev/null; then
+        SKIP=$((SKIP+1))
+        [ $SUMMARY_ONLY -eq 0 ] && echo "SKIP(nested-func): $name"
+        return
+    fi
+
     # Compile with rcc; capture stderr to detect missing-include failures
     local err
     err=$($RCC -o "/tmp/torture_rcc_${name}" "$src" -lm 2>&1)

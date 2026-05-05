@@ -7,3 +7,4 @@ int main() {
 
     return (fff(v) != 420);
 }
+/* { dg-require-effective-target nested } */

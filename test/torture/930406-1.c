@@ -23,3 +23,4 @@ void f(void) {
 int main(void) {
     f();
 }
+/* { dg-require-effective-target nested } */

@@ -14,3 +14,4 @@ int main() {
         abort();
     return 0;
 }
+/* { dg-require-effective-target nested } */

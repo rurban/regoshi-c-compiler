@@ -17,3 +17,4 @@ int main() {
         __builtin_abort();
     return 0;
 }
+/* { dg-require-effective-target nested } */

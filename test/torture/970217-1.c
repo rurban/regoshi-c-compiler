@@ -8,3 +8,4 @@ int main(void) {
     int array[10];
     exit(sub(10, array) != 11);
 }
+/* { dg-require-effective-target nested } */

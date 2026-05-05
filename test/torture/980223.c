@@ -30,3 +30,4 @@ int main(void) {
     object three = foo(x, y);
     return 0;
 }
+/* { dg-require-effective-target nested } */

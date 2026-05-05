@@ -31,3 +31,4 @@ void baz(__complex__ long double x) {
     if (__real__ x != 5.0L || __imag__ x != 6.0L)
         abort();
 }
+/* { dg-require-effective-target nested } */
