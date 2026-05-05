@@ -165,6 +165,7 @@ elif [ "$RCC" = "$SCRIPT_DIR/arm64-cross.sh" ]; then
 elif [ "$RCC" = "$SCRIPT_DIR/darwin-cross.sh" ]; then
 	# Darwin Mach-O can't execute on Linux — compile+link only
 	is_darwin=1
+	is_arm64=1
 elif [ "$(uname -m)" = "aarch64" ] || [ "$(uname -m)" = "arm64" ]; then
 	is_arm64=1
 fi
