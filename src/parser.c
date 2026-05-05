@@ -3421,9 +3421,10 @@ static Node *primary(Token **rest, Token *tok) {
         node = new_node(ND_STR, tok);
         node->str = tok->str;
         // Set the type based on the string literal prefix
+        // Use array type so sizeof works correctly; decays to pointer where needed
         switch (tok->string_literal_prefix) {
         case 0: // Regular string
-            node->ty = pointer_to(ty_char);
+            node->ty = array_of(ty_char, tok->len + 1);
             break;
         case 'L': // Wide string
 #ifdef _WIN32
