@@ -4316,8 +4316,35 @@ static Node *unary(Token **rest, Token *tok) {
                 result->ty = var->ty;
             } else if (ty->kind == TY_STRUCT || ty->kind == TY_UNION) {
                 // Struct compound literal: assign each member
+                // Support designated initializers: .member = value
                 Member *mem = ty->members;
                 while (!equalc(tok, "}") && mem) {
+                    // Designated initializer: .member[.sub]... [= value]
+                    if (equalc(tok, ".") && tok->next && tok->next->kind == TK_IDENT) {
+                        Member *found = NULL;
+                        Type *cur_ty = ty;
+                        Token *save = tok;
+                        while (equalc(tok, ".") && tok->next && tok->next->kind == TK_IDENT) {
+                            char *mname = tok->next->name;
+                            Member *m = NULL;
+                            for (Member *mm = cur_ty->members; mm; mm = mm->next) {
+                                if (strcmp(mm->name, mname) == 0) {
+                                    m = mm;
+                                    break;
+                                }
+                            }
+                            if (!m) break;
+                            found = m;
+                            cur_ty = m->ty;
+                            tok = tok->next->next;
+                        }
+                        if (found) {
+                            mem = found;
+                            tok = skip(tok, "=");
+                        } else {
+                            tok = save; // restore for error recovery
+                        }
+                    }
                     if (mem->ty->kind == TY_ARRAY) {
                         // Array member: assign elements, handle optional braces
                         int len = array_len(mem->ty);
