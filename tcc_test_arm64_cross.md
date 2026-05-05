@@ -4,8 +4,8 @@ Generated: May 2026
 
 ## Summary
 
-- **Total**: 151
-- **Passed**: 148
+- **Total**: 152
+- **Passed**: 149
 - **Failed**: 3
 - **Pass Rate**: 98%
 
@@ -122,7 +122,7 @@ Generated: May 2026
 | 117_builtins                | PASS         | Output matches            |
 | 118_switch                  | PASS         | Output matches            |
 | 119_random_stuff            | PASS         | Output matches            |
-| 120_alias                   | SKIP         | Skipped                   |
+| 120_alias                   | PASS         | Output matches            |
 | 121_struct_return           | PASS         | Output matches            |
 | 122_vla_reuse               | PASS         | Output matches            |
 | 123_vla_bug                 | PASS         | Output matches            |
@@ -141,7 +141,7 @@ Generated: May 2026
 | 136_atomic_gcc_style        | PASS         | Output matches            |
 | 137_funcall_struct_args     | PASS         | Output matches            |
 | 138_arm64_encoding          | COMPILE_FAIL | rcc returned non-zero     |
-| 139_arm64_errors            | COMPILE_FAIL | rcc returned non-zero     |
+| 139_arm64_errors            | MISMATCH     | Output differs            |
 | 140_arm64_extasm            | COMPILE_FAIL | rcc returned non-zero     |
 | test_arm64_asm              | PASS         | exit=0                    |
 | test_atomic_op              | PASS         | exit=0                    |
@@ -171,7 +171,7 @@ Generated: May 2026
 | test_ptr                    | PASS         | exit=0                    |
 | test_real                   | PASS         | exit=0                    |
 | test_self_include2          | PASS         | exit=1                    |
-| test_signextend             | PASS         | exit=0                    |
+| test_signextend             | PASS         | exit=1                    |
 | test_simple                 | PASS         | exit=1                    |
 | test_simple2                | PASS         | exit=1                    |
 | test_str                    | PASS         | exit=0                    |

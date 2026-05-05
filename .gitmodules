@@ -4,4 +4,5 @@
 	branch = mob
 [submodule "c-testsuite"]
 	path = c-testsuite
-	url = https://git.sr.ht/~jprotopopov/c-testsuite
+	#url = https://git.sr.ht/~jprotopopov/c-testsuite
+	url = https://github.com/c-testsuite/c-testsuite

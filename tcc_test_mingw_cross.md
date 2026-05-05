@@ -4,8 +4,8 @@ Generated: May 2026
 
 ## Summary
 
-- **Total**: 148
-- **Passed**: 148
+- **Total**: 150
+- **Passed**: 150
 - **Failed**: 0
 - **Pass Rate**: 100%
 
@@ -140,6 +140,9 @@ Generated: May 2026
 | 135_func_arg_struct_compare | PASS   | Output matches            |
 | 136_atomic_gcc_style        | PASS   | Output matches            |
 | 137_funcall_struct_args     | PASS   | Output matches            |
+| 138_arm64_encoding          | SKIP   | Skipped                   |
+| 139_arm64_errors            | SKIP   | Skipped                   |
+| 140_arm64_extasm            | SKIP   | Skipped                   |
 | test_arm64_asm              | PASS   | exit=0                    |
 | test_atomic_op              | PASS   | exit=0                    |
 | test_atomic_op2             | PASS   | exit=0                    |
@@ -148,7 +151,9 @@ Generated: May 2026
 | test_elif2                  | PASS   | exit=0                    |
 | test_elif_simple            | PASS   | exit=0                    |
 | test_err                    | PASS   | compile error as expected |
+| test_fallthrough            | PASS   | exit=0                    |
 | test_func                   | PASS   | exit=0                    |
+| test_gperf                  | PASS   | exit=0                    |
 | test_if                     | PASS   | exit=0                    |
 | test_if2                    | PASS   | exit=0                    |
 | test_if3                    | PASS   | exit=0                    |

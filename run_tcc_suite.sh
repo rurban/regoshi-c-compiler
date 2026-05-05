@@ -643,7 +643,7 @@ fi
 
 # Markdown report
 {
-        LC_TIME=en
+        LC_TIME=en_US.UTF-8
 	printf '# TCC Test Suite Report for RCC\n'
 	printf 'Generated: %s\n\n' "$(date '+%B %Y')"
 	printf '## Summary\n'

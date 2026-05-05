@@ -4,8 +4,8 @@ Generated: May 2026
 
 ## Summary
 
-- **Total**: 151
-- **Passed**: 149
+- **Total**: 152
+- **Passed**: 150
 - **Failed**: 2
 - **Pass Rate**: 98%
 
@@ -122,7 +122,7 @@ Generated: May 2026
 | 117_builtins                | COMPILE_OK   | linked, (execution skipped) |
 | 118_switch                  | COMPILE_OK   | linked, (execution skipped) |
 | 119_random_stuff            | COMPILE_OK   | linked, (execution skipped) |
-| 120_alias                   | SKIP         | Skipped                     |
+| 120_alias                   | COMPILE_OK   | linked, (execution skipped) |
 | 121_struct_return           | COMPILE_OK   | linked, (execution skipped) |
 | 122_vla_reuse               | COMPILE_OK   | linked, (execution skipped) |
 | 123_vla_bug                 | COMPILE_OK   | linked, (execution skipped) |
