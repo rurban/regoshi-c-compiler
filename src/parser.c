@@ -2034,8 +2034,22 @@ static void remove_reloc(LVar *var, int offset) {
     }
 }
 
+static void ensure_init_size(LVar *var, int offset, int size) {
+    int need = offset + size;
+    if (need > var->init_size) {
+        char *new_data = arena_alloc(need);
+        if (var->init_data) {
+            memcpy(new_data, var->init_data, var->init_size);
+            memset(new_data + var->init_size, 0, need - var->init_size);
+        }
+        var->init_data = new_data;
+        var->init_size = need;
+    }
+}
+
 static void write_scalar_bytes(LVar *var, int offset, int size, int64_t val) {
-    if (offset < 0 || offset + size > var->init_size) return;
+    if (offset < 0) return;
+    ensure_init_size(var, offset, size);
     // Remove any reloc at this offset (scalar value overrides pointer reloc)
     remove_reloc(var, offset);
     if (size == 1) {
@@ -2125,7 +2139,8 @@ static Token *global_init_one(Token *tok, LVar *var, Type *ty, int offset) {
     // String literal for char array
     if (ty->kind == TY_ARRAY && ty->base->kind == TY_CHAR && tok->kind == TK_STR) {
         int len = strlen(tok->str) + 1;
-        if (len > ty->size) len = ty->size;
+        if (ty->size > 0 && len > ty->size) len = ty->size;
+        ensure_init_size(var, offset, len);
         memcpy(var->init_data + offset, tok->str, len);
         return tok->next;
     }
