@@ -4183,6 +4183,60 @@ static Node *unary(Token **rest, Token *tok) {
         node->ty = ty_bool;
         return node;
     }
+    if (equalc(tok, "__builtin_constant_p")) {
+        Token *start = tok;
+        tok = skip(tok->next, "(");
+        Node *arg = assign(&tok, tok);
+        *rest = skip(tok, ")");
+        add_type(arg);
+        long long cv;
+        bool is_const = arg->kind == ND_NUM || arg->kind == ND_FNUM || arg->kind == ND_STR || eval_const_expr(arg, &cv);
+        return new_num(is_const ? 1 : 0, start);
+    }
+    if (equalc(tok, "__builtin_types_compatible_p")) {
+        Token *start = tok;
+        tok = skip(tok->next, "(");
+        Type *t1 = type_name(&tok, tok);
+        tok = skip(tok, ",");
+        Type *t2 = type_name(&tok, tok);
+        *rest = skip(tok, ")");
+        int compat = 0;
+        if (t1->kind == t2->kind) {
+            switch (t1->kind) {
+            case TY_VOID:
+            case TY_BOOL: compat = 1; break;
+            case TY_CHAR:
+            case TY_SHORT:
+            case TY_INT:
+            case TY_LONG:
+            case TY_LLONG:
+                compat = t1->size == t2->size && t1->is_unsigned == t2->is_unsigned;
+                break;
+            case TY_FLOAT:
+            case TY_DOUBLE:
+            case TY_LDOUBLE:
+                compat = t1->size == t2->size;
+                break;
+            case TY_PTR:
+                compat = t1->base && t2->base &&
+                    t1->base->kind == t2->base->kind &&
+                    t1->base->size == t2->base->size &&
+                    t1->base->is_unsigned == t2->base->is_unsigned &&
+                    t1->base->qual == t2->base->qual;
+                break;
+            case TY_ARRAY:
+                if (t1->base && t2->base && t1->base->kind == t2->base->kind &&
+                    t1->base->size == t2->base->size)
+                    compat = t1->array_len == 0 || t2->array_len == 0 ||
+                        t1->array_len == t2->array_len;
+                break;
+            case TY_STRUCT:
+            case TY_UNION: compat = t1 == t2; break;
+            default: compat = t1->size == t2->size && t1->is_unsigned == t2->is_unsigned;
+            }
+        }
+        return new_num(compat, start);
+    }
     if (equalc(tok, "++")) {
         Token *start = tok;
         Node *lhs = unary(&tok, tok->next);

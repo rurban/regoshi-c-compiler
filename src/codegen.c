@@ -465,6 +465,231 @@ static int gen_funcall(Node *node, int hidden_ret_reg) {
 
     bool has_hidden_retbuf = node->ty && (node->ty->kind == TY_STRUCT || node->ty->kind == TY_UNION);
 
+    // Cross-architecture builtins (x86_64 and arm64)
+    if (call_target && !has_hidden_retbuf) {
+        bool is_bswap16 = strcmp(call_target, "__builtin_bswap16") == 0;
+        bool is_bswap32 = strcmp(call_target, "__builtin_bswap32") == 0;
+        bool is_bswap64 = strcmp(call_target, "__builtin_bswap64") == 0;
+        bool is_clz = strcmp(call_target, "__builtin_clz") == 0;
+        bool is_clzl = strcmp(call_target, "__builtin_clzl") == 0;
+        bool is_clzll = strcmp(call_target, "__builtin_clzll") == 0;
+        bool is_ctz = strcmp(call_target, "__builtin_ctz") == 0;
+        bool is_ctzl = strcmp(call_target, "__builtin_ctzl") == 0;
+        bool is_ctzll = strcmp(call_target, "__builtin_ctzll") == 0;
+        bool is_popcnt = strcmp(call_target, "__builtin_popcount") == 0;
+        bool is_popcntl = strcmp(call_target, "__builtin_popcountl") == 0;
+        bool is_popcntll = strcmp(call_target, "__builtin_popcountll") == 0;
+        bool is_parity = strcmp(call_target, "__builtin_parity") == 0;
+        bool is_parityl = strcmp(call_target, "__builtin_parityl") == 0;
+        bool is_parityll = strcmp(call_target, "__builtin_parityll") == 0;
+        bool is_clrsb = strcmp(call_target, "__builtin_clrsb") == 0;
+        bool is_clrsbl = strcmp(call_target, "__builtin_clrsbl") == 0;
+        bool is_clrsbll = strcmp(call_target, "__builtin_clrsbll") == 0;
+        bool is_prefetch = strcmp(call_target, "__builtin_prefetch") == 0;
+        bool is_frame_addr = strcmp(call_target, "__builtin_frame_address") == 0;
+
+        if (is_bswap16 || is_bswap32 || is_bswap64) {
+            Node *arg = node->args;
+            if (arg && !arg->next) {
+                int r = gen(arg);
+#ifdef ARCH_ARM64
+                if (is_bswap16) {
+                    printf("  rev16 %s, %s\n", reg32[r], reg32[r]);
+                    printf("  and %s, %s, #0xffff\n", reg32[r], reg32[r]);
+                } else if (is_bswap32) {
+                    printf("  rev %s, %s\n", reg32[r], reg32[r]);
+                } else {
+                    printf("  rev %s, %s\n", reg64[r], reg64[r]);
+                }
+#else
+                if (is_bswap16) {
+                    printf("  rol %s, 8\n", reg16[r]);
+                    printf("  movzx %s, %s\n", reg32[r], reg16[r]);
+                } else if (is_bswap32) {
+                    printf("  bswap %s\n", reg32[r]);
+                } else {
+                    printf("  bswap %s\n", reg64[r]);
+                }
+#endif
+                return r;
+            }
+        }
+
+        if (is_clz || is_clzl || is_clzll) {
+            Node *arg = node->args;
+            if (arg && !arg->next) {
+                int r = gen(arg);
+                int r2 = alloc_reg();
+                bool is64 = is_clzll || (is_clzl && sizeof(long) == 8);
+#ifdef ARCH_ARM64
+                if (is64)
+                    printf("  clz %s, %s\n", reg64[r2], reg64[r]);
+                else
+                    printf("  clz %s, %s\n", reg32[r2], reg32[r]);
+#else
+                if (is64) {
+                    printf("  lzcnt %s, %s\n", reg64[r2], reg64[r]);
+                } else {
+                    printf("  lzcnt %s, %s\n", reg32[r2], reg32[r]);
+                }
+#endif
+                free_reg(r);
+                return r2;
+            }
+        }
+
+        if (is_ctz || is_ctzl || is_ctzll) {
+            Node *arg = node->args;
+            if (arg && !arg->next) {
+                int r = gen(arg);
+                int r2 = alloc_reg();
+                bool is64 = is_ctzll || (is_ctzl && sizeof(long) == 8);
+#ifdef ARCH_ARM64
+                if (is64) {
+                    printf("  rbit %s, %s\n", reg64[r], reg64[r]);
+                    printf("  clz %s, %s\n", reg64[r2], reg64[r]);
+                } else {
+                    printf("  rbit %s, %s\n", reg32[r], reg32[r]);
+                    printf("  clz %s, %s\n", reg32[r2], reg32[r]);
+                }
+#else
+                if (is64) {
+                    printf("  tzcnt %s, %s\n", reg64[r2], reg64[r]);
+                } else {
+                    printf("  tzcnt %s, %s\n", reg32[r2], reg32[r]);
+                }
+#endif
+                free_reg(r);
+                return r2;
+            }
+        }
+
+        if (is_popcnt || is_popcntl || is_popcntll || is_parity || is_parityl || is_parityll) {
+            Node *arg = node->args;
+            if (arg && !arg->next) {
+                int r = gen(arg);
+                int r2 = alloc_reg();
+                bool is64 = is_popcntll || is_parityll ||
+                    ((is_popcntl || is_parityl) && sizeof(long) == 8);
+#ifdef ARCH_ARM64
+                // Software popcount via NEON cnt
+                char *tmp = is64 ? "v30.8b" : "v30.8b";
+                if (is64) {
+                    printf("  fmov d30, %s\n", reg64[r]);
+                } else {
+                    printf("  fmov s30, %s\n", reg32[r]);
+                }
+                printf("  cnt v30.8b, v30.8b\n");
+                printf("  addv b30, v30.8b\n");
+                printf("  fmov %s, s30\n", reg32[r2]);
+                printf("  and %s, %s, #0xff\n", reg32[r2], reg32[r2]);
+                (void)tmp;
+#else
+                if (is64) {
+                    printf("  popcnt %s, %s\n", reg64[r2], reg64[r]);
+                } else {
+                    printf("  popcnt %s, %s\n", reg32[r2], reg32[r]);
+                }
+#endif
+                if (is_parity || is_parityl || is_parityll)
+                    printf("  and %s, 1\n", reg32[r2]);
+                free_reg(r);
+                return r2;
+            }
+        }
+
+        if (is_clrsb || is_clrsbl || is_clrsbll) {
+            Node *arg = node->args;
+            if (arg && !arg->next) {
+                int r = gen(arg);
+                int r2 = alloc_reg();
+                bool is64 = is_clrsbll || (is_clrsbl && sizeof(long) == 8);
+#ifdef ARCH_ARM64
+                if (is64) {
+                    printf("  cls %s, %s\n", reg64[r2], reg64[r]);
+                } else {
+                    printf("  cls %s, %s\n", reg32[r2], reg32[r]);
+                }
+#else
+                // clrsb(x) = (x>=0 ? clz(x) : clz(~x)) - 1
+                int lbl = ++rcc_label_count;
+                int r3 = alloc_reg();
+                if (is64) {
+                    printf("  mov %s, %s\n", reg64[r3], reg64[r]);
+                    printf("  sar %s, 63\n", reg64[r3]);
+                    printf("  xor %s, %s\n", reg64[r], reg64[r3]);
+                    printf("  lzcnt %s, %s\n", reg64[r2], reg64[r]);
+                    printf("  dec %s\n", reg64[r2]);
+                } else {
+                    printf("  mov %s, %s\n", reg32[r3], reg32[r]);
+                    printf("  sar %s, 31\n", reg32[r3]);
+                    printf("  xor %s, %s\n", reg32[r], reg32[r3]);
+                    printf("  lzcnt %s, %s\n", reg32[r2], reg32[r]);
+                    printf("  dec %s\n", reg32[r2]);
+                }
+                free_reg(r3);
+                (void)lbl;
+#endif
+                free_reg(r);
+                return r2;
+            }
+        }
+
+        if (is_prefetch) {
+            Node *addr = node->args;
+            int rw = 0, locality = 3;
+            // Parse rw and locality from constant args
+            if (addr && addr->next && addr->next->kind == ND_NUM)
+                rw = (int)addr->next->val;
+            if (addr && addr->next && addr->next->next && addr->next->next->kind == ND_NUM)
+                locality = (int)addr->next->next->val;
+            if (addr) {
+                int r = gen(addr);
+#ifdef ARCH_ARM64
+                // prfm: pld/pst + l1/l2/l3 + keep/strm
+                const char *hint = "pldl1keep";
+                if (rw == 1 && locality == 0) hint = "pstl1strm";
+                else if (rw == 1)
+                    hint = "pstl1keep";
+                else if (locality == 0)
+                    hint = "pldl1strm";
+                printf("  prfm %s, [%s]\n", hint, reg64[r]);
+#else
+                // x86: prefetchw for write, otherwise nta/t0/t1/t2 by locality
+                const char *hint = (rw == 1) ? "prefetchw" : locality == 0 ? "prefetchnta"
+                    : locality == 1                                        ? "prefetcht2"
+                    : locality == 2                                        ? "prefetcht1"
+                                                                           : "prefetcht0";
+                printf("  %s byte ptr [%s]\n", hint, reg64[r]);
+#endif
+                free_reg(r);
+                // Evaluate remaining args for side effects (if any expressions)
+                for (Node *a = addr->next; a; a = a->next) {
+                    if (a->kind != ND_NUM) {
+                        int ar = gen(a);
+                        if (ar >= 0) free_reg(ar);
+                    }
+                }
+            }
+            return -1; // void
+        }
+
+        if (is_frame_addr) {
+            Node *arg = node->args;
+            int r = alloc_reg();
+            int depth = (arg && arg->kind == ND_NUM) ? (int)arg->val : 0;
+            if (depth == 0) {
+                printf("  mov %s, " FRAME_PTR "\n", reg64[r]);
+            } else {
+                // Follow frame pointer chain: load saved fp from [fp+0]
+                printf("  mov %s, " FRAME_PTR "\n", reg64[r]);
+                for (int i = 0; i < depth; i++)
+                    printf("  mov %s, [%s]\n", reg64[r], reg64[r]);
+            }
+            return r;
+        }
+    }
+
     // Inline expansion for common libc builtins (x86_64 only for now)
     bool skip_builtins = false;
 #ifdef ARCH_ARM64

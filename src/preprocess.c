@@ -1854,14 +1854,16 @@ char *preprocess(char *filename, char *p) {
         /* TODO need parser/builtin support, no libc equivalent):
            __builtin_add_overflow, __builtin_sub_overflow,
            __builtin_mul_overflow, __builtin_mul_overflow_p,
-           __builtin_bswap32, __builtin_bswap64, __builtin_classify_type,
-           __builtin_clrsb/clrsbl/clrsbll, __builtin_clz/clzl/clzll,
-           __builtin_ctz/ctzl/ctzll,
-           __builtin_popcount/popcountl/popcountll,
-           __builtin_parity/parityl/parityll, __builtin_constant_p,
-           __builtin_frame_address, __builtin_longjmp, __builtin_offsetof,
-           __builtin_prefetch, __builtin_return_address, __builtin_setjmp,
-           __builtin_types_compatible_p */
+           __builtin_classify_type, __builtin_return_address
+           (implemented in parser): __builtin_constant_p,
+             __builtin_types_compatible_p
+           (implemented in codegen gen_funcall):
+             __builtin_bswap16/32/64,
+             __builtin_clrsb/clrsbl/clrsbll, __builtin_clz/clzl/clzll,
+             __builtin_ctz/ctzl/ctzll,
+             __builtin_popcount/popcountl/popcountll,
+             __builtin_parity/parityl/parityll,
+             __builtin_frame_address, __builtin_prefetch */
 #undef define_pre
         saved_macros = macros;
         macros_inited = true;
