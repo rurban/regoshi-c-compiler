@@ -6318,6 +6318,7 @@ void codegen(Program *prog) {
         printf("\n.section .ctors,\"w\"\n");
 #elif defined(__APPLE__)
         printf("\n.section __DATA,__mod_init_func\n");
+        printf("  .balign 8\n");
 #else
                 printf("\n.section .init_array,\"aw\",@init_array\n");
 #endif
@@ -6331,6 +6332,7 @@ void codegen(Program *prog) {
         printf("\n.section .dtors,\"w\"\n");
 #elif defined(__APPLE__)
         printf("\n.section __DATA,__mod_term_func\n");
+        printf("  .balign 8\n");
 #else
                 printf("\n.section .fini_array,\"aw\",@fini_array\n");
 #endif
