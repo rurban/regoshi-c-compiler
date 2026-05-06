@@ -25,7 +25,7 @@ $TestDir = if (Test-Path (Join-Path $ScriptDir "tinycc\tests\tests2")) {
 } else {
     Join-Path $ScriptDir "tinycc\tests\tests2"
 }
-$ReportFile = Join-Path $ScriptDir "tcc_test_mingw.md"
+$ReportFile = Join-Path $ScriptDir "test\tcc_test_mingw.md"
 
 $RCC = $null
 @("rcc.exe", "rcc.exe", "rcc") | ForEach-Object {
@@ -350,6 +350,16 @@ $( $Results | ForEach-Object { "| $($_.Test) | $($_.Status) | $($_.Message) |" }
 $report = $report -replace "`r`n", "`n" -replace "`r", "`n"
 if (-not $report.EndsWith("`n")) { $report += "`n" }
 [System.IO.File]::WriteAllText($ReportFile, $report, [System.Text.UTF8Encoding]::new($false))
+
+# Write machine-readable summary for unified report
+$summary = @"
+SUITE=tcc
+TOTAL=$Total
+PASS=$Passed
+FAIL=$Failed
+"@
+$summaryFile = Join-Path $ScriptDir "test-tcc-mingw.summary"
+[System.IO.File]::WriteAllText($summaryFile, $summary, [System.Text.UTF8Encoding]::new($false))
 
 Write-Host "`nTest complete. Summary: $Passed Passed, $Failed Failed." -ForegroundColor Cyan
 Write-Host "Full report saved to $ReportFile"

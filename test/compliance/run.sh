@@ -56,3 +56,22 @@ echo "=== PASS=$PASS FAIL=$FAIL ==="
 if [ -n "$ERRORS" ]; then
   echo -e "Failures:$ERRORS"
 fi
+
+# Detect native platform for summary filename
+detect_platform() {
+    case "$(uname -s)" in
+        Linux)  echo "linux" ;;
+        Darwin) echo "arm64" ;;
+        MINGW*|MSYS*|CYGWIN*) echo "mingw" ;;
+        *)      echo "linux" ;;
+    esac
+}
+
+# Write machine-readable summary for unified report (native platform only)
+TOTAL=$((PASS + FAIL))
+{
+    printf 'SUITE=compliance\n'
+    printf 'TOTAL=%d\n' "$TOTAL"
+    printf 'PASS=%d\n' "$PASS"
+    printf 'FAIL=%d\n' "$FAIL"
+} > "../../test-compliance-$(detect_platform).summary"

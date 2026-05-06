@@ -30,8 +30,10 @@ fi
 
 # Detect cross-compilation wrapper and set runner for test execution
 RUNNER=""
+PLATFORM=linux
 case "$RCC" in
     *arm64-cross*|*rcc-arm64*)
+        PLATFORM=arm64_cross
         if command -v qemu-aarch64 >/dev/null 2>&1; then
             for p in /usr/aarch64-linux-gnu /usr/aarch64-redhat-linux/sys-root/fc43 \
                      /usr/aarch64-linux-gnu/sys-root; do
@@ -44,9 +46,17 @@ case "$RCC" in
         fi
         ;;
     *mingw-cross*|*rcc.exe*)
+        PLATFORM=mingw_cross
         if command -v wine >/dev/null 2>&1; then
             RUNNER="wine"
         fi
+        ;;
+    *)
+        case "$(uname -s)" in
+            Darwin) PLATFORM=arm64 ;;
+            MINGW*|MSYS*|CYGWIN*) PLATFORM=mingw ;;
+            *) PLATFORM=linux ;;
+        esac
         ;;
 esac
 
@@ -161,6 +171,18 @@ if [ -n "$RUNTIME_ERRORS" ]; then
     echo ""
     echo "Runtime failures:$RUNTIME_ERRORS" | fold -s -w 80
 fi
+
+# Write machine-readable summary for unified report
+cd ../../ || true
+{
+    printf 'SUITE=torture\n'
+    printf 'TOTAL=%d\n' "$TOTAL"
+    printf 'PASS=%d\n' "$PASS"
+    printf 'FAIL=%d\n' "$((FAIL_COMPILE + FAIL_RUNTIME))"
+    printf 'FAIL_COMPILE=%d\n' "$FAIL_COMPILE"
+    printf 'FAIL_RUNTIME=%d\n' "$FAIL_RUNTIME"
+    printf 'SKIP=%d\n' "$SKIP"
+} > "test-torture-$PLATFORM.summary"
 
 # shellcheck disable=SC2143
 if [ "$RCC" = "../../arm64-cross.sh" ]; then

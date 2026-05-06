@@ -1,0 +1,5 @@
+SUITE=c-testsuite
+PASS=220
+FAIL=0
+SKIP=0
+TOTAL=220

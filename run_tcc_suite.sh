@@ -12,10 +12,13 @@
 set -u
 cd "$(dirname "$0")" || exit
 SCRIPT_DIR=.
+REPORT_DIR="test"
 RCC="${1:-}"
 TEST_DIR="${2:-$SCRIPT_DIR/tinycc/tests/tests2}"
 RCCFLAGS="${3:-}"
-REPORT_FILE=tcc_test_linux.md
+
+PLATFORM=linux
+REPORT_FILE=$REPORT_DIR/tcc_test_linux.md
 
 if [ ! -e tcc_tests ]; then
     ln -s tinycc/tests/tests2 tcc_tests
@@ -28,7 +31,8 @@ if [ -z "$RCC" ]; then
 			RCC="$candidate"
 			if [ "$RCC" = "$SCRIPT_DIR/rcc.exe" ]; then
 				RCC="$SCRIPT_DIR/mingw-cross.sh"
-				REPORT_FILE="$SCRIPT_DIR/tcc_test_mingw_cross.md"
+				PLATFORM=mingw_cross
+				REPORT_FILE="$REPORT_DIR/tcc_test_mingw_cross.md"
                                 if command -v winetricks>/dev/null 2>&1; then
                                     winetricks nocrashdialog
                                 fi
@@ -45,14 +49,17 @@ fi
 # If arm64-cross.sh is available and rcc not found natively, use arm64 cross
 if [ "$RCC" = "./rcc-arm64" ] || [ "$RCC" = "./arm64-cross.sh" ]; then
 	RCC="$SCRIPT_DIR/arm64-cross.sh"
-	REPORT_FILE="$SCRIPT_DIR/tcc_test_arm64_cross.md"
+	PLATFORM=arm64_cross
+	REPORT_FILE="$REPORT_DIR/tcc_test_arm64_cross.md"
 fi
 if [ "$RCC" = "./rcc-darwin" ] || [ "$RCC" = "./darwin-cross.sh" ]; then
 	RCC="$SCRIPT_DIR/darwin-cross.sh"
-	REPORT_FILE="$SCRIPT_DIR/tcc_test_darwin_cross.md"
+	PLATFORM=darwin_cross
+	REPORT_FILE="$REPORT_DIR/tcc_test_darwin_cross.md"
 fi
 if [ "$(uname -m)" = "aarch64" ] || [ "$(uname -m)" = "arm64" ]; then
-    REPORT_FILE="$SCRIPT_DIR/tcc_test_arm64.md"
+    PLATFORM=arm64
+    REPORT_FILE="$REPORT_DIR/tcc_test_arm64.md"
 fi
 
 if [ -z "$RCC" ] || [ ! -x "$RCC" ]; then
@@ -662,6 +669,14 @@ fi
 
 rm -f "$TMP_OUT"
 
+# Write machine-readable summary for unified report
+{
+    printf 'SUITE=tcc\n'
+    printf 'TOTAL=%d\n' "$total"
+    printf 'PASS=%d\n' "$passed"
+    printf 'FAIL=%d\n' "$failed"
+} > "$SCRIPT_DIR/test-tcc-$PLATFORM.summary"
+
 # Summary
 echo ""
 if [ "$total" -gt 0 ]; then
@@ -727,7 +742,7 @@ fi
 printf "Report saved to %s\n" "$REPORT_FILE"
 
 # arm64-darwin native
-if [ "$REPORT_FILE" = "$SCRIPT_DIR/tcc_test_arm64.md" ]; then
+if [ "$REPORT_FILE" = "$REPORT_DIR/tcc_test_arm64.md" ]; then
     [ "$passed" -ge 145 ]
 elif [ "$RCC" = "$SCRIPT_DIR/darwin-cross.sh" ]; then
     [ "$passed" -ge 152 ]

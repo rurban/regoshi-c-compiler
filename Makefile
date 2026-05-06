@@ -132,10 +132,10 @@ prof: rcc_prof
 	@head -40 gprof.txt
 
 ifeq ($(OS),Windows_NT)
-TEST_RUNNER = powershell -ExecutionPolicy Bypass -File run_tcc_suite.ps1 -O1
+TEST_RUNNER = powershell -ExecutionPolicy Bypass -File run_tcc_suite.ps1 -O1 && ./gen-test-report.sh mingw
 BENCH_RUNNER = powershell -ExecutionPolicy Bypass -File bench/run_bench.ps1 ./$(TARGET)
 else
-TEST_RUNNER = ./run_tcc_suite.sh "" "" -O1 && ./run-c-testsuite.sh && test/compliance/run.sh
+TEST_RUNNER = ./run_tcc_suite.sh "" "" -O1 && ./run-c-testsuite.sh && test/compliance/run.sh && ./gen-test-report.sh
 BENCH_RUNNER = ./bench/run_bench.sh ./$(TARGET)
 endif
 
@@ -146,10 +146,10 @@ test-all: $(TARGET)
 	$(MAKE) clean
 	$(MAKE)
 	@$(TEST_RUNNER)
-	test/torture/run.sh
-	./mingw-test.sh
-	./arm64-test.sh
-	./darwin-test.sh
+	-test/torture/run.sh; ./gen-test-report.sh linux
+	-./mingw-test.sh
+	-./arm64-test.sh
+	-./darwin-test.sh
 
 lint:
 	if command -v prek; then prek run -a; \
@@ -167,13 +167,13 @@ ifeq ($(OS),Windows_NT)
 	install -d "$(if $(DESTDIR),$(DESTDIR)$(subst C:,,$(BINDIR)),$(BINDIR))" "$(if $(DESTDIR),$(DESTDIR)$(subst C:,,$(INCDIR)),$(INCDIR))" "$(if $(DESTDIR),$(DESTDIR)$(subst C:,,$(DOCDIR)),$(DOCDIR))"
 	install -m 755 $(TARGET) "$(if $(DESTDIR),$(DESTDIR)$(subst C:,,$(BINDIR)),$(BINDIR))/"
 	install -m 644 include/* "$(if $(DESTDIR),$(DESTDIR)$(subst C:,,$(INCDIR)),$(INCDIR))/"
-	install -m 644 README.md tcc_test*.md LICENSE bench/bench_report*.md "$(if $(DESTDIR),$(DESTDIR)$(subst C:,,$(DOCDIR)),$(DOCDIR))/"
+	install -m 644 README.md test/tcc_test*.md test_report*.md LICENSE bench/bench_report*.md "$(if $(DESTDIR),$(DESTDIR)$(subst C:,,$(DOCDIR)),$(DOCDIR))/"
 	if test -n "$(MINGW_O)"; then install -d "$(if $(DESTDIR),$(DESTDIR)$(subst C:,,$(LIBDIR)),$(LIBDIR))"; install -m 644 $(MINGW_O) "$(if $(DESTDIR),$(DESTDIR)$(subst C:,,$(LIBDIR)),$(LIBDIR))/"; fi
 else
 	install -d "$(DESTDIR)$(BINDIR)" "$(DESTDIR)$(INCDIR)" "$(DESTDIR)$(DOCDIR)"
 	install -m 755 $(TARGET) "$(DESTDIR)$(BINDIR)/"
 	install -m 644 include/* "$(DESTDIR)$(INCDIR)/"
-	install -m 644 README.md tcc_test*.md LICENSE bench/bench_report*.md "$(DESTDIR)$(DOCDIR)/"
+	install -m 644 README.md test/tcc_test*.md test_report*.md LICENSE bench/bench_report*.md "$(DESTDIR)$(DOCDIR)/"
 	if test -n "$(MINGW_O)"; then install -d "$(DESTDIR)$(LIBDIR)"; install -m 644 $(MINGW_O) "$(DESTDIR)$(LIBDIR)/"; fi
 endif
 

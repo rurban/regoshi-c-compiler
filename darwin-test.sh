@@ -4,7 +4,7 @@
 # Usage: ./darwin-test.sh [test-name]
 set -e
 
-trap 'make -s clean; make -s' EXIT
+trap './gen-test-report.sh darwin_cross; make -s clean; make -s' EXIT
 
 echo "==> Building rcc-darwin (host binary, Darwin-targeted codegen)..."
 make -s clean

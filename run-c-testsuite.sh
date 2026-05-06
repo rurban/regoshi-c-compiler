@@ -61,6 +61,22 @@ if [ "$fails" -gt "$MAX_FAILS" ]; then
 fi
 echo "OK: $fails failures, within limit of $MAX_FAILS"
 
+# Detect native platform for summary filename
+detect_platform() {
+    case "$(uname -s)" in
+        Linux)  echo "linux" ;;
+        Darwin) echo "arm64" ;;
+        MINGW*|MSYS*|CYGWIN*) echo "mingw" ;;
+        *)      echo "linux" ;;
+    esac
+}
+
+# Write machine-readable summary for unified report (native platform only)
+{
+    printf 'SUITE=c-testsuite\n'
+    awk '{if($1=="pass") printf "PASS=%d\n",$2; if($1=="fail") printf "FAIL=%d\n",$2; if($1=="skip") printf "SKIP=%d\n",$2; if($1=="total") printf "TOTAL=%d\n",$2}' ../c-testsuite.tap.txt
+} > "../test-ctest-$(detect_platform).summary"
+
 if [ -n "$TO_TMP" ]; then
     rm -rf "$TO_TMP"
 fi
