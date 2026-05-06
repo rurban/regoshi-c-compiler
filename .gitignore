@@ -40,3 +40,4 @@ c-testsuite.tap.txt
 arm64-run.sh
 qemu_*.core
 gmon.out
+test-*.summary

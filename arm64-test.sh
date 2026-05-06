@@ -37,4 +37,5 @@ if [ -n "${1:-}" ]; then
 else
     ./run_tcc_suite.sh ./rcc-arm64
     test/torture/run.sh ../../arm64-cross.sh
+    ./gen-test-report.sh arm64_cross
 fi

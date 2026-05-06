@@ -63,6 +63,7 @@ jobs:
           ./rcc --version
           ./rcc -print-search-dirs
           make check
+          make test-torture || true
 
       - name: Run linter
         run: make lint

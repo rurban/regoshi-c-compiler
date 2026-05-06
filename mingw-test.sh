@@ -8,3 +8,4 @@ WINE_DISABLE_RANDR=1
 export WINE_DISABLE_RANDR
 ./run_tcc_suite.sh
 test/torture/run.sh ../../mingw-cross.sh
+./gen-test-report.sh mingw_cross

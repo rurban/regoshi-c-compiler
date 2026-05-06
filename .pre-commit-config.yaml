@@ -12,7 +12,7 @@ repos:
       - id: check-yaml # checks yaml files for parseable syntax.
       - id: detect-private-key # detects the presence of private keys.
       - id: end-of-file-fixer # ensures that a file is either empty, or ends with one newline.
-        exclude: tinycc/|\.expect
+        exclude: tinycc/|\.expect|test_report_linux\.md
       - id: fix-byte-order-marker # removes utf-8 byte order marker.
       - id: mixed-line-ending # replaces or checks mixed line ending.
       - id: requirements-txt-fixer # sorts entries in requirements.txt.
@@ -29,6 +29,7 @@ repos:
     hooks:
       - id: prettier
         types: ["markdown"]
+        exclude: test_report_linux\.md
 
   - repo: https://github.com/shellcheck-py/shellcheck-py
     rev: v0.11.0.1

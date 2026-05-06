@@ -28,5 +28,6 @@ else
     echo "==> Running TCC test suite via darwin-cross.sh..."
     echo ""
     ./run_tcc_suite.sh ./rcc-darwin
-    echo "Report saved to tcc_test_darwin_cross.md"
+    echo "Report saved to test/tcc_test_darwin_cross.md"
+    #test/torture/run.sh ../../darwin-cross.sh
 fi

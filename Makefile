@@ -142,11 +142,15 @@ endif
 test check: $(TARGET)
 	@$(TEST_RUNNER)
 
-test-all: $(TARGET)
+test-torture: $(TARGET)
+	test/torture/run.sh
+	./gen-test-report.sh
+
+test-full: $(TARGET)
 	$(MAKE) clean
 	$(MAKE)
 	@$(TEST_RUNNER)
-	-test/torture/run.sh; ./gen-test-report.sh linux
+	$(MAKE) test-torture
 	-./mingw-test.sh
 	-./arm64-test.sh
 	-./darwin-test.sh
@@ -199,7 +203,8 @@ endif
 
 clean:
 	rm -f $(OBJS) $(TARGET) $(TARGET).exe rcc_prof src/sysinc_paths.h src/gcc_predefined.h \
-              fred.txt *.s qemu*.core src/*.obj src/*.darwin.o src/*.arm64.o lib/darwin.o lib/darwin$(OBJ_EXT)
+              fred.txt *.s qemu*.core src/*.obj src/*.darwin.o src/*.arm64.o lib/darwin.o \
+              lib/darwin$(OBJ_EXT) test-*.summary
 	if command -v git > /dev/null 2>&1; then \
 	  cd tinycc && git reset --hard && git clean -dxf tests/tests2 && cd ..; \
 	  cd c-testsuite && git clean -dxf . && cd ..; \
@@ -208,4 +213,4 @@ clean:
 TAGS: $(SRCS) src/rcc.h
 	etags -a --language=c src/*.c src/*.h
 
-.PHONY: clean test check lint bench install dist bench test-all prof
+.PHONY: clean test check test-full test-torture lint bench install dist bench prof

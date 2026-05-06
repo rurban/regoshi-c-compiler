@@ -4,8 +4,8 @@ Generated: May 2026
 
 ## Summary
 
-- **Total**: 152
-- **Passed**: 152
+- **Total**: 155
+- **Passed**: 155
 - **Failed**: 0
 - **Pass Rate**: 100%
 
@@ -141,8 +141,14 @@ Generated: May 2026
 | 136_atomic_gcc_style        | COMPILE_OK | linked, (execution skipped) |
 | 137_funcall_struct_args     | COMPILE_OK | linked, (execution skipped) |
 | 138_arm64_encoding          | COMPILE_OK | linked, (execution skipped) |
+| 138_narrow_return_promotion | COMPILE_OK | linked, (execution skipped) |
 | 139_arm64_errors            | COMPILE_OK | linked, (execution skipped) |
+| 139_narrow_type_conversion  | COMPILE_OK | linked, (execution skipped) |
 | 140_arm64_extasm            | COMPILE_OK | linked, (execution skipped) |
+| 140_int_sign_extension      | COMPILE_OK | linked, (execution skipped) |
+| 141_riscv_asm_pseudo        | SKIP       | Skipped                     |
+| 142_riscv_asm_longlong      | SKIP       | Skipped                     |
+| 143_riscv_asm_farith        | SKIP       | Skipped                     |
 | test_arm64_asm              | PASS       | exit=126                    |
 | test_atomic_op              | PASS       | exit=126                    |
 | test_atomic_op2             | PASS       | exit=126                    |
