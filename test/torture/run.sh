@@ -10,6 +10,7 @@
 
 cd "$(dirname "$0")" || exit
 RCC="${1:-../../rcc}"
+CFLAGS="-O1"
 PASS=0
 FAIL_COMPILE=0
 FAIL_RUNTIME=0
@@ -129,7 +130,7 @@ run_test() {
 
     # Compile with rcc; capture stderr to detect missing-include failures
     local err
-    err=$($RCC -I . -o "/tmp/torture_rcc_${name}" "$src" -lm 2>&1)
+    err=$($RCC $CFLAGS -I . -o "/tmp/torture_rcc_${name}" "$src" -lm 2>&1)
     local rc=$?
     if [ $rc -ne 0 ]; then
             # Missing include file = test infrastructure gap, not a compiler bug

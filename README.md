@@ -148,6 +148,19 @@ This fork passes now:
 - The gcc-torture tests pass ~823/995 tests on all platforms.
 - The ncc/compliance tests pass 15/15 tests on all platforms.
 
+## Known Limitations
+
+- **GNU Assembler (GAS) ≥2.45 on x86-64**: `call` and `jmp` to global labels in
+  Intel syntax cause `operand type mismatch` errors. RCC emits `.intel_syntax noprefix`
+  by default, but GAS ≥2.45 rejects direct branches to global symbols in this mode.
+  Local labels (`.L.xxx`) work fine. Tests with user-defined function calls
+  (`bitops-1`, `fprintf-1`, etc.) may fail to assemble under these versions.
+  Root cause: rcc emits lea r11, [rip + sI] but GAS requires AT&T sI(%rip) for globals.
+  Affected: most of the big torture tests with many global structs —
+  20040709-1/2/3, 20071018-1, 20071030-1, 20080502-1, 20080506-1, 930106-1
+  Workaround: assemble with `as --32` or use an older binutils (<2.45).
+  A fix to emit AT&T syntax for branch instructions is planned.
+
 ## License
 
 LGPL-2.1 — see [LICENSE](LICENSE) file.
