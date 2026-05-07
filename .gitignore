@@ -27,6 +27,7 @@ tmp*.c
 amazon_bug_bounty/
 test/*.out
 /compile_commands.json
+/tools/__pycache__
 /.cache
 /AGENTS.md
 /CLAUDE.md

@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: LGPL-2.1-or-later
-CC     = gcc
+CC     := gcc
 CFLAGS = -std=c11 -Wall -Wextra -O3 -g
 TARGET = rcc
 MINGW_O =

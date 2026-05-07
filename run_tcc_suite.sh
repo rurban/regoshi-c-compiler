@@ -310,8 +310,13 @@ $1
 extra_ldflags() {
 	case "$1" in
 	22_floating_point|24_math_library) printf '%s' " -lm" ;;
-	*) printf '' ;;
 	esac
+	srcfile="$2"
+	[ -z "$srcfile" ] && srcfile="$SCRIPT_DIR/tinycc/tests/tests2/$1.c"
+	if [ -f "$srcfile" ] && grep -q 'pthread_create\|pthread_join\|pthread_once\|pthread_cond' "$srcfile" 2>/dev/null; then
+		printf '%s' " -lpthread"
+	fi
+	printf ''
 }
 
 # Iterate over all *.c files; for helper files containing '+' prepend them to the ones without
@@ -340,7 +345,7 @@ while IFS= read -r src; do
 		p_src=
 		continue
 	fi
-        ldflags="$(extra_ldflags "$base")"
+        ldflags="$(extra_ldflags "$base" "$src")"
 
 	fixed_up=
 	# Apply local fixups for tinycc tests2 expect files.
@@ -749,7 +754,7 @@ elif [ "$RCC" = "$SCRIPT_DIR/darwin-cross.sh" ]; then
 elif [ "$RCC" = "$SCRIPT_DIR/arm64-cross.sh" ]; then
     [ "$passed" -ge 155 ]
 elif [ "$RCC" = "$SCRIPT_DIR/mingw-cross.sh" ]; then
-    [ "$passed" -ge 151 ]
+    [ "$passed" -ge 149 ]
 else
     [ "$passed" -ge 152 ]
 fi

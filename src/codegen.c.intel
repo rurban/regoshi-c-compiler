@@ -60,10 +60,10 @@ static char *reg32[] = {"w10", "w11", "w12", "w13", "w14", "w15", "w19", "w20", 
 
 #else
 // x86_64: 8 allocatable GP registers
-static char *reg64[] = {"%r10", "%r11", "%rbx", "%r12", "%r13", "%r14", "%r15", "%rsi"};
-static char *reg32[] = {"%r10d", "%r11d", "%ebx", "%r12d", "%r13d", "%r14d", "%r15d", "%esi"};
-static char *reg16[] = {"%r10w", "%r11w", "%bx", "%r12w", "%r13w", "%r14w", "%r15w", "%si"};
-static char *reg8[] = {"%r10b", "%r11b", "%bl", "%r12b", "%r13b", "%r14b", "%r15b", "%sil"};
+static char *reg64[] = {"r10", "r11", "rbx", "r12", "r13", "r14", "r15", "rsi"};
+static char *reg32[] = {"r10d", "r11d", "ebx", "r12d", "r13d", "r14d", "r15d", "esi"};
+static char *reg16[] = {"r10w", "r11w", "bx", "r12w", "r13w", "r14w", "r15w", "si"};
+static char *reg8[] = {"r10b", "r11b", "bl", "r12b", "r13b", "r14b", "r15b", "sil"};
 #define NUM_REGS 8
 #define FRAME_PTR "rbp"
 #define STACK_REG "rsp"
@@ -215,9 +215,9 @@ static void emit_cleanup_var(LVar *var) {
             printf("  sub x0, %s, x16\n", FRAME_PTR);
         }
 #elif defined(_WIN32)
-        printf("  leaq -%d(%%rbp), %%rcx\n", var->offset);
+        printf("  lea rcx, [rbp-%d]\n", var->offset);
 #else
-        printf("  leaq -%d(%%rbp), %%rdi\n", var->offset);
+        printf("  lea rdi, [rbp-%d]\n", var->offset);
 #endif
         emit_direct_call(var->cleanup_func);
         return;
@@ -244,9 +244,9 @@ static void emit_cleanup_var(LVar *var) {
             printf("  sub x0, %s, x16\n", FRAME_PTR);
         }
 #elif defined(_WIN32)
-        printf("  leaq -%d(%%rbp), %%rcx\n", var->offset - i * elem_size);
+        printf("  lea rcx, [rbp-%d]\n", var->offset - i * elem_size);
 #else
-        printf("  leaq -%d(%%rbp), %%rdi\n", var->offset - i * elem_size);
+        printf("  lea rdi, [rbp-%d]\n", var->offset - i * elem_size);
 #endif
         emit_direct_call(func);
     }
@@ -317,7 +317,7 @@ static void emit_vla_dealloc(LVar *begin, LVar *end) {
         arm64_load_from_fp_minus(outermost_vla->offset, "x16");
         printf("  mov sp, x16\n");
 #else
-        printf("  movq -%d(%%rbp), %%rsp\n", outermost_vla->offset);
+        printf("  mov rsp, [rbp-%d]\n", outermost_vla->offset);
 #endif
     }
 }
@@ -336,17 +336,33 @@ static void emit_alloca(void) {
            "  ret\n",
            sym_name("__rcc_alloca"));
 #else
-    printf("\n%s:\n  popq %%rdx\n", sym_name("__rcc_alloca"));
+    printf("\n"
+           "%s:\n"
+           "  pop rdx\n",
+           sym_name("__rcc_alloca"));
 #ifdef _WIN32
-    printf("  movq %%rcx, %%rax\n");
+    printf("  mov rax, rcx\n");
 #else
-    printf("  movq %%rdi, %%rax\n");
+    printf("  mov rax, rdi\n");
 #endif
-    printf("  addq $15, %%rax\n  andq $-16, %%rax\n  jz .Lalloca3\n");
+    printf("  add rax, 15\n"
+           "  and rax, -16\n"
+           "  jz .Lalloca3\n");
 #ifdef _WIN32
-    printf(".Lalloca1:\n  cmpq $4096, %%rax\n  jb .Lalloca2\n  testq %%rax, -4096(%%rsp)\n  subq $4096, %%rsp\n  subq $4096, %%rax\n  jmp .Lalloca1\n");
+    printf(".Lalloca1:\n"
+           "  cmp rax, 4096\n"
+           "  jb .Lalloca2\n"
+           "  test [rsp-4096], rax\n"
+           "  sub rsp, 4096\n"
+           "  sub rax, 4096\n"
+           "  jmp .Lalloca1\n");
 #endif
-    printf(".Lalloca2:\n  subq %%rax, %%rsp\n  movq %%rsp, %%rax\n.Lalloca3:\n  pushq %%rdx\n  ret\n");
+    printf(".Lalloca2:\n"
+           "  sub rsp, rax\n"
+           "  mov rax, rsp\n"
+           ".Lalloca3:\n"
+           "  push rdx\n"
+           "  ret\n");
 #endif
 }
 
@@ -424,9 +440,9 @@ static int gen_funcall(Node *node, int hidden_ret_reg) {
         call_target = var_label(node->lhs->var);
 
 #ifdef _WIN32
-    char *argreg32[] = {"%ecx", "%edx", "%r8d", "%r9d"};
-    char *argreg64[] = {"%rcx", "%rdx", "%r8", "%r9"};
-    char *argxmm[] = {"%xmm0", "%xmm1", "%xmm2", "%xmm3"};
+    char *argreg32[] = {"ecx", "edx", "r8d", "r9d"};
+    char *argreg64[] = {"rcx", "rdx", "r8", "r9"};
+    char *argxmm[] = {"xmm0", "xmm1", "xmm2", "xmm3"};
     int shadow_space = 32;
     int max_gp_args = 4;
 #elif defined(ARCH_ARM64)
@@ -439,9 +455,9 @@ static int gen_funcall(Node *node, int hidden_ret_reg) {
     int max_fp_args = 8;
     //int shadow_space = 0;
 #else
-    char *argreg32[] = {"%edi", "%esi", "%edx", "%ecx", "%r8d", "%r9d"};
-    char *argreg64[] = {"%rdi", "%rsi", "%rdx", "%rcx", "%r8", "%r9"};
-    char *argxmm[] = {"%xmm0", "%xmm1", "%xmm2", "%xmm3", "%xmm4", "%xmm5", "%xmm6", "%xmm7"};
+    char *argreg32[] = {"edi", "esi", "edx", "ecx", "r8d", "r9d"};
+    char *argreg64[] = {"rdi", "rsi", "rdx", "rcx", "r8", "r9"};
+    char *argxmm[] = {"xmm0", "xmm1", "xmm2", "xmm3", "xmm4", "xmm5", "xmm6", "xmm7"};
     int max_gp_args = 6;
     int max_fp_args = 8;
     int shadow_space = 0;
@@ -472,12 +488,10 @@ static int gen_funcall(Node *node, int hidden_ret_reg) {
         bool is_prefetch = strcmp(call_target, "__builtin_prefetch") == 0;
         bool is_frame_addr = strcmp(call_target, "__builtin_frame_address") == 0;
         bool is_ret_addr = strcmp(call_target, "__builtin_return_address") == 0;
-#ifndef ARCH_ARM64
         bool is_add_overflow = strcmp(call_target, "__builtin_add_overflow") == 0;
         bool is_sub_overflow = strcmp(call_target, "__builtin_sub_overflow") == 0;
         bool is_mul_overflow = strcmp(call_target, "__builtin_mul_overflow") == 0;
         bool is_mul_overflow_p = strcmp(call_target, "__builtin_mul_overflow_p") == 0;
-#endif
 
         if (is_bswap16 || is_bswap32 || is_bswap64) {
             Node *arg = node->args;
@@ -494,8 +508,8 @@ static int gen_funcall(Node *node, int hidden_ret_reg) {
                 }
 #else
                 if (is_bswap16) {
-                    printf("  rol $8, %s\n", reg16[r]);
-                    printf("  movzwl %s, %s\n", reg16[r], reg32[r]);
+                    printf("  rol %s, 8\n", reg16[r]);
+                    printf("  movzx %s, %s\n", reg32[r], reg16[r]);
                 } else if (is_bswap32) {
                     printf("  bswap %s\n", reg32[r]);
                 } else {
@@ -519,9 +533,9 @@ static int gen_funcall(Node *node, int hidden_ret_reg) {
                     printf("  clz %s, %s\n", reg32[r2], reg32[r]);
 #else
                 if (is64) {
-                    printf("  lzcnt %s, %s\n", reg64[r], reg64[r2]);
+                    printf("  lzcnt %s, %s\n", reg64[r2], reg64[r]);
                 } else {
-                    printf("  lzcnt %s, %s\n", reg32[r], reg32[r2]);
+                    printf("  lzcnt %s, %s\n", reg32[r2], reg32[r]);
                 }
 #endif
                 free_reg(r);
@@ -545,9 +559,9 @@ static int gen_funcall(Node *node, int hidden_ret_reg) {
                 }
 #else
                 if (is64) {
-                    printf("  tzcnt %s, %s\n", reg64[r], reg64[r2]);
+                    printf("  tzcnt %s, %s\n", reg64[r2], reg64[r]);
                 } else {
-                    printf("  tzcnt %s, %s\n", reg32[r], reg32[r2]);
+                    printf("  tzcnt %s, %s\n", reg32[r2], reg32[r]);
                 }
 #endif
                 free_reg(r);
@@ -577,16 +591,16 @@ static int gen_funcall(Node *node, int hidden_ret_reg) {
                 (void)tmp;
 #else
                 if (is64) {
-                    printf("  popcnt %s, %s\n", reg64[r], reg64[r2]);
+                    printf("  popcnt %s, %s\n", reg64[r2], reg64[r]);
                 } else {
-                    printf("  popcnt %s, %s\n", reg32[r], reg32[r2]);
+                    printf("  popcnt %s, %s\n", reg32[r2], reg32[r]);
                 }
 #endif
                 if (is_parity || is_parityl || is_parityll)
 #ifdef ARCH_ARM64
                     printf("  and %s, %s, #1\n", reg32[r2], reg32[r2]);
 #else
-                    printf("  and $1, %s\n", reg32[r2]);
+                    printf("  and %s, 1\n", reg32[r2]);
 #endif
                 free_reg(r);
                 return r2;
@@ -610,16 +624,16 @@ static int gen_funcall(Node *node, int hidden_ret_reg) {
                 int lbl = ++rcc_label_count;
                 int r3 = alloc_reg();
                 if (is64) {
-                    printf("  mov %s, %s\n", reg64[r], reg64[r3]);
-                    printf("  sar $63, %s\n", reg64[r3]);
-                    printf("  xor %s, %s\n", reg64[r3], reg64[r]);
-                    printf("  lzcnt %s, %s\n", reg64[r], reg64[r2]);
+                    printf("  mov %s, %s\n", reg64[r3], reg64[r]);
+                    printf("  sar %s, 63\n", reg64[r3]);
+                    printf("  xor %s, %s\n", reg64[r], reg64[r3]);
+                    printf("  lzcnt %s, %s\n", reg64[r2], reg64[r]);
                     printf("  dec %s\n", reg64[r2]);
                 } else {
-                    printf("  mov %s, %s\n", reg32[r], reg32[r3]);
-                    printf("  sar $31, %s\n", reg32[r3]);
-                    printf("  xor %s, %s\n", reg32[r3], reg32[r]);
-                    printf("  lzcnt %s, %s\n", reg32[r], reg32[r2]);
+                    printf("  mov %s, %s\n", reg32[r3], reg32[r]);
+                    printf("  sar %s, 31\n", reg32[r3]);
+                    printf("  xor %s, %s\n", reg32[r], reg32[r3]);
+                    printf("  lzcnt %s, %s\n", reg32[r2], reg32[r]);
                     printf("  dec %s\n", reg32[r2]);
                 }
                 free_reg(r3);
@@ -655,7 +669,7 @@ static int gen_funcall(Node *node, int hidden_ret_reg) {
                     : locality == 1                                        ? "prefetcht2"
                     : locality == 2                                        ? "prefetcht1"
                                                                            : "prefetcht0";
-                printf("  %s (%s)\n", hint, reg64[r]);
+                printf("  %s byte ptr [%s]\n", hint, reg64[r]);
 #endif
                 free_reg(r);
                 // Evaluate remaining args for side effects (if any expressions)
@@ -674,12 +688,12 @@ static int gen_funcall(Node *node, int hidden_ret_reg) {
             int r = alloc_reg();
             int depth = (arg && arg->kind == ND_NUM) ? (int)arg->val : 0;
             if (depth == 0) {
-                printf("  movq %%rbp, %s\n", reg64[r]);
+                printf("  mov %s, " FRAME_PTR "\n", reg64[r]);
             } else {
                 // Follow frame pointer chain: load saved fp from [fp+0]
-                printf("  movq %%rbp, %s\n", reg64[r]);
+                printf("  mov %s, " FRAME_PTR "\n", reg64[r]);
                 for (int i = 0; i < depth; i++)
-                    printf("  mov (%s), %s\n", reg64[r], reg64[r]);
+                    printf("  mov %s, [%s]\n", reg64[r], reg64[r]);
             }
             return r;
         }
@@ -695,17 +709,17 @@ static int gen_funcall(Node *node, int hidden_ret_reg) {
                 printf("  ldr %s, [%s]\n", reg64[r], reg64[r]);
             printf("  ldr %s, [%s, #8]\n", reg64[r], reg64[r]);
 #else
-            printf("  movq %%rbp, %s\n", reg64[r]);
+            printf("  mov %s, " FRAME_PTR "\n", reg64[r]);
             for (int i = 0; i < depth; i++)
-                printf("  mov (%s), %s\n", reg64[r], reg64[r]);
-            printf("  mov 8(%s), %s\n", reg64[r], reg64[r]);
+                printf("  mov %s, [%s]\n", reg64[r], reg64[r]);
+            printf("  mov %s, [%s + 8]\n", reg64[r], reg64[r]);
 #endif
             return r;
         }
-#ifndef ARCH_ARM64
         if (is_add_overflow || is_sub_overflow || is_mul_overflow || is_mul_overflow_p) {
             Node *arga = node->args;
             Node *argb = arga ? arga->next : NULL;
+#ifndef ARCH_ARM64
             Node *argres = argb ? argb->next : NULL;
             // x86-64: use add/sub/mul tracking unsigned overflow (carry flag)
             int ra = gen(arga);
@@ -713,49 +727,49 @@ static int gen_funcall(Node *node, int hidden_ret_reg) {
             int sz = arga && arga->ty && arga->ty->size > 4 ? 8 : 4;
             if (is_add_overflow) {
                 printf("  %s %s, %s\n", sz == 8 ? "add" : "add", reg(ra, sz), reg(rb, sz));
-                printf("  setc %%al\n");
+                printf("  setc al\n");
                 if (argres) {
                     int rr = gen_addr(argres);
-                    printf("  mov %s, (%s)\n", reg(ra, sz), reg64[rr]);
+                    printf("  mov [%s], %s\n", reg64[rr], reg(ra, sz));
                     free_reg(rr);
                 }
             } else if (is_sub_overflow) {
-                printf("  sub %s, %s\n", reg(rb, sz), reg(ra, sz));
-                printf("  setc %%al\n");
+                printf("  sub %s, %s\n", reg(ra, sz), reg(rb, sz));
+                printf("  setc al\n");
                 if (argres) {
                     int rr = gen_addr(argres);
-                    printf("  mov %s, (%s)\n", reg(ra, sz), reg64[rr]);
+                    printf("  mov [%s], %s\n", reg64[rr], reg(ra, sz));
                     free_reg(rr);
                 }
             } else if (is_mul_overflow || is_mul_overflow_p) {
                 int r2 = alloc_reg();
                 if (sz == 8) {
-                    printf("  movq %s, %%rax\n", reg(ra, sz));
+                    printf("  mov rax, %s\n", reg(ra, sz));
                     printf("  mul %s\n", reg(rb, sz));
-                    printf("  movq %%rax, %s\n", reg64[ra]);
-                    printf("  movq %%rdx, %s\n", reg64[r2]);
+                    printf("  mov %s, rax\n", reg64[ra]);
+                    printf("  mov %s, rdx\n", reg64[r2]);
                 } else {
-                    printf("  movl %s, %%eax\n", reg(ra, 4));
+                    printf("  mov eax, %s\n", reg(ra, 4));
                     printf("  mul %s\n", reg(rb, 4));
-                    printf("  movl %%eax, %s\n", reg(ra, 4));
-                    printf("  movl %%edx, %s\n", reg(r2, 4));
+                    printf("  mov %s, eax\n", reg(ra, 4));
+                    printf("  mov %s, edx\n", reg(r2, 4));
                 }
-                printf("  cmp $0, %s\n", reg(r2, sz));
-                printf("  setne %%al\n");
+                printf("  cmp %s, 0\n", reg(r2, sz));
+                printf("  setne al\n");
                 free_reg(r2);
                 if (argres && !is_mul_overflow_p) {
                     int rr = gen_addr(argres);
-                    printf("  mov %s, (%s)\n", reg(ra, sz), reg64[rr]);
+                    printf("  mov [%s], %s\n", reg64[rr], reg(ra, sz));
                     free_reg(rr);
                 }
             }
             int r_result = alloc_reg();
-            printf("  movzbl %%al, %s\n", reg(r_result, 4));
+            printf("  movzx %s, al\n", reg(r_result, 4));
             free_reg(ra);
             free_reg(rb);
             return r_result;
-        }
 #endif
+        }
     }
 
     // Inline expansion for common libc builtins (x86_64 only for now)
@@ -787,24 +801,24 @@ static int gen_funcall(Node *node, int hidden_ret_reg) {
                 int dst_r = gen(dst);
                 int v2_r = gen(v2);
                 int len_r = gen(len);
-                printf("  mov %s, %s\n", reg64[dst_r], reg64[r]);
+                printf("  mov %s, %s\n", reg64[r], reg64[dst_r]);
 
                 printf("  cld\n");
-                printf("  pushq %%rdi\n");
-                if (is_memcpy) printf("  pushq %%rsi\n");
-                printf("  pushq %%rcx\n");
-                printf("  movq %s, %%rdi\n", reg64[dst_r]);
-                printf("  movq %s, %%rcx\n", reg64[len_r]);
+                printf("  push rdi\n");
+                if (is_memcpy) printf("  push rsi\n");
+                printf("  push rcx\n");
+                printf("  mov rdi, %s\n", reg64[dst_r]);
+                printf("  mov rcx, %s\n", reg64[len_r]);
                 if (is_memset) {
-                    printf("  movzbl %s, %%eax\n", reg8[v2_r]);
+                    printf("  movzx eax, %s\n", reg8[v2_r]);
                     printf("  rep stosb\n");
                 } else {
-                    printf("  movq %s, %%rsi\n", reg64[v2_r]);
+                    printf("  mov rsi, %s\n", reg64[v2_r]);
                     printf("  rep movsb\n");
                 }
-                printf("  popq %%rcx\n");
-                if (is_memcpy) printf("  popq %%rsi\n");
-                printf("  popq %%rdi\n");
+                printf("  pop rcx\n");
+                if (is_memcpy) printf("  pop rsi\n");
+                printf("  pop rdi\n");
 
                 free_reg(dst_r);
                 free_reg(v2_r);
@@ -824,31 +838,31 @@ static int gen_funcall(Node *node, int hidden_ret_reg) {
                 int len_r = gen(len);
 
                 printf("  cld\n");
-                printf("  pushq %%rdi\n");
-                printf("  pushq %%rsi\n");
-                printf("  pushq %%rcx\n");
-                printf("  movq %s, %%rdi\n", reg64[s1_r]);
-                printf("  movq %s, %%rsi\n", reg64[s2_r]);
-                printf("  movq %s, %%rcx\n", reg64[len_r]);
+                printf("  push rdi\n");
+                printf("  push rsi\n");
+                printf("  push rcx\n");
+                printf("  mov rdi, %s\n", reg64[s1_r]);
+                printf("  mov rsi, %s\n", reg64[s2_r]);
+                printf("  mov rcx, %s\n", reg64[len_r]);
                 printf("  repe cmpsb\n");
                 printf("  jne .L.memcmp_diff.%d\n", ++rcc_label_count);
-                printf("  xorl %%eax, %%eax\n");
+                printf("  xor eax, eax\n");
                 printf("  jmp .L.memcmp_end.%d\n", rcc_label_count);
                 printf(".L.memcmp_diff.%d:\n", rcc_label_count);
-                printf("  movsbl -1(%%rdi), %%eax\n");
-                printf("  movsbl -1(%%rsi), %%ecx\n");
-                printf("  subl %%ecx, %%eax\n");
+                printf("  movsx eax, byte ptr [rdi-1]\n");
+                printf("  movsx ecx, byte ptr [rsi-1]\n");
+                printf("  sub eax, ecx\n");
                 printf(".L.memcmp_end.%d:\n", rcc_label_count);
-                printf("  popq %%rcx\n");
-                printf("  popq %%rsi\n");
-                printf("  popq %%rdi\n");
+                printf("  pop rcx\n");
+                printf("  pop rsi\n");
+                printf("  pop rdi\n");
 
                 free_reg(s1_r);
                 free_reg(s2_r);
                 free_reg(len_r);
 
                 int r = alloc_reg();
-                printf("  movl %%eax, %s\n", reg32[r]);
+                printf("  mov %s, eax\n", reg32[r]);
                 return r;
             }
         }
@@ -859,22 +873,22 @@ static int gen_funcall(Node *node, int hidden_ret_reg) {
                 int str_r = gen(str);
 
                 printf("  cld\n");
-                printf("  pushq %%rdi\n");
-                printf("  pushq %%rcx\n");
-                printf("  movq %s, %%rdi\n", reg64[str_r]);
-                printf("  xorb %%al, %%al\n");
-                printf("  movq $-1, %%rcx\n");
+                printf("  push rdi\n");
+                printf("  push rcx\n");
+                printf("  mov rdi, %s\n", reg64[str_r]);
+                printf("  xor al, al\n");
+                printf("  mov rcx, -1\n");
                 printf("  repne scasb\n");
-                printf("  notq %%rcx\n");
-                printf("  decq %%rcx\n");
-                printf("  movq %%rcx, %%rax\n");
-                printf("  popq %%rcx\n");
-                printf("  popq %%rdi\n");
+                printf("  not rcx\n");
+                printf("  dec rcx\n");
+                printf("  mov rax, rcx\n");
+                printf("  pop rcx\n");
+                printf("  pop rdi\n");
 
                 free_reg(str_r);
 
                 int r = alloc_reg();
-                printf("  movq %%rax, %s\n", reg64[r]);
+                printf("  mov %s, rax\n", reg64[r]);
                 return r;
             }
         }
@@ -886,34 +900,34 @@ static int gen_funcall(Node *node, int hidden_ret_reg) {
                 int r = gen(s1);
                 int r2 = gen(s2);
                 int cl = ++rcc_label_count;
-                printf("  pushq %%rdi\n");
-                printf("  pushq %%rsi\n");
-                printf("  movq %s, %%rdi\n", reg64[r]);
-                printf("  movq %s, %%rsi\n", reg64[r2]);
+                printf("  push rdi\n");
+                printf("  push rsi\n");
+                printf("  mov rdi, %s\n", reg64[r]);
+                printf("  mov rsi, %s\n", reg64[r2]);
                 printf(".L.strcmp_loop.%d:\n", cl);
-                printf("  movb (%%rdi), %%al\n");
-                printf("  cmpb (%%rsi), %%al\n");
+                printf("  mov al, byte ptr [rdi]\n");
+                printf("  cmp al, byte ptr [rsi]\n");
                 printf("  jne .L.strcmp_diff.%d\n", cl);
-                printf("  testb %%al, %%al\n");
+                printf("  test al, al\n");
                 printf("  jz .L.strcmp_eq.%d\n", cl);
-                printf("  incq %%rdi\n");
-                printf("  incq %%rsi\n");
+                printf("  inc rdi\n");
+                printf("  inc rsi\n");
                 printf("  jmp .L.strcmp_loop.%d\n", cl);
                 printf(".L.strcmp_diff.%d:\n", cl);
-                printf("  movzbl %%al, %%eax\n");
-                printf("  movzbl (%%rsi), %%ecx\n");
-                printf("  subl %%ecx, %%eax\n");
+                printf("  movzx eax, al\n");
+                printf("  movzx ecx, byte ptr [rsi]\n");
+                printf("  sub eax, ecx\n");
                 printf("  jmp .L.strcmp_end.%d\n", cl);
                 printf(".L.strcmp_eq.%d:\n", cl);
-                printf("  xorl %%eax, %%eax\n");
+                printf("  xor eax, eax\n");
                 printf(".L.strcmp_end.%d:\n", cl);
                 printf(".L.strcmp_end.%d:\n", cl);
-                printf("  popq %%rsi\n");
-                printf("  popq %%rdi\n");
+                printf("  pop rsi\n");
+                printf("  pop rdi\n");
                 free_reg(r);
                 free_reg(r2);
                 int ret = alloc_reg();
-                printf("  movl %%eax, %s\n", reg32[ret]);
+                printf("  mov %s, eax\n", reg32[ret]);
                 return ret;
             }
         }
@@ -925,29 +939,29 @@ static int gen_funcall(Node *node, int hidden_ret_reg) {
                 int sr = gen(s);
                 int cr = gen(c);
                 int cl = ++rcc_label_count;
-                printf("  pushq %%rdi\n");
-                printf("  pushq %%rcx\n");
-                printf("  movq %s, %%rdi\n", reg64[sr]);
-                printf("  movzbl %s, %%eax\n", reg8[cr]);
+                printf("  push rdi\n");
+                printf("  push rcx\n");
+                printf("  mov rdi, %s\n", reg64[sr]);
+                printf("  movzx eax, %s\n", reg8[cr]);
                 printf(".L.strchr_loop.%d:\n", cl);
-                printf("  cmpb %%al, (%%rdi)\n");
+                printf("  cmp byte ptr [rdi], al\n");
                 printf("  je .L.strchr_found.%d\n", cl);
-                printf("  cmpb $0, (%%rdi)\n");
+                printf("  cmp byte ptr [rdi], 0\n");
                 printf("  je .L.strchr_null.%d\n", cl);
-                printf("  incq %%rdi\n");
+                printf("  inc rdi\n");
                 printf("  jmp .L.strchr_loop.%d\n", cl);
                 printf(".L.strchr_found.%d:\n", cl);
-                printf("  movq %%rdi, %%rax\n");
+                printf("  mov rax, rdi\n");
                 printf("  jmp .L.strchr_end.%d\n", cl);
                 printf(".L.strchr_null.%d:\n", cl);
-                printf("  xorl %%eax, %%eax\n");
+                printf("  xor eax, eax\n");
                 printf(".L.strchr_end.%d:\n", cl);
-                printf("  popq %%rcx\n");
-                printf("  popq %%rdi\n");
+                printf("  pop rcx\n");
+                printf("  pop rdi\n");
                 free_reg(sr);
                 free_reg(cr);
                 int ret = alloc_reg();
-                printf("  movq %%rax, %s\n", reg64[ret]);
+                printf("  mov %s, rax\n", reg64[ret]);
                 return ret;
             }
         }
@@ -1294,12 +1308,12 @@ static int gen_funcall(Node *node, int hidden_ret_reg) {
     // === x86_64 (Windows + Linux) calling convention ===
     int saved_scratch = used_regs & 3;
     if ((saved_scratch & 1) && hidden_ret_reg != 0) {
-        printf("  movq %%r10, -%d(%%rbp)\n", spill_offset(0));
+        printf("  mov [rbp-%d], r10\n", spill_offset(0));
         // Keep r10 marked as in-use so alloc_reg() doesn't reuse it for the
         // hidden ret buffer, which would overwrite a caller's live arg value.
     }
     if ((saved_scratch & 2) && hidden_ret_reg != 1) {
-        printf("  movq %%r11, -%d(%%rbp)\n", spill_offset(1));
+        printf("  mov [rbp-%d], r11\n", spill_offset(1));
         // Same for r11.
     }
 
@@ -1320,18 +1334,18 @@ static int gen_funcall(Node *node, int hidden_ret_reg) {
     }
 
     if (stack_reserve > 0)
-        printf("  subq $%d, %%rsp\n", stack_reserve);
+        printf("  sub rsp, %d\n", stack_reserve);
 
     for (int i = nargs - 1; i >= reg_nargs; i--) {
         int r = gen(argv[i]);
         if (is_flonum(argv[i]->ty)) {
-            printf("  movq %s, %d(%%rsp)\n", reg64[r], shadow_space + (i - reg_nargs) * 8);
+            printf("  mov qword ptr [rsp+%d], %s\n", shadow_space + (i - reg_nargs) * 8, reg64[r]);
         } else {
             if (argv[i]->ty->size == 1)
-                printf("  movzbl %s, %s\n", reg8[r], reg32[r]);
+                printf("  movzx %s, %s\n", reg64[r], reg8[r]);
             else if (argv[i]->ty->size == 4)
                 printf("  mov %s, %s\n", reg32[r], reg32[r]);
-            printf("  movq %s, %d(%%rsp)\n", reg64[r], shadow_space + (i - reg_nargs) * 8);
+            printf("  mov qword ptr [rsp+%d], %s\n", shadow_space + (i - reg_nargs) * 8, reg64[r]);
         }
         free_reg(r);
     }
@@ -1349,9 +1363,9 @@ static int gen_funcall(Node *node, int hidden_ret_reg) {
                     fn_struct_ret_total = fn_struct_ret_off;
                 int tmp_slot = current_fn_stack_size + fn_struct_ret_off;
                 addr = alloc_reg();
-                printf("  lea -%d(%%rbp), %s\n", tmp_slot, reg64[addr]);
+                printf("  lea %s, [rbp-%d]\n", reg64[addr], tmp_slot);
                 int val = gen(argv[i]);
-                printf("  mov %s, (%s)\n", reg(val, argv[i]->ty->size), reg64[addr]);
+                printf("  mov [%s], %s\n", reg64[addr], reg(val, argv[i]->ty->size));
                 free_reg(val);
             }
             arg_regs[i] = addr;
@@ -1369,7 +1383,7 @@ static int gen_funcall(Node *node, int hidden_ret_reg) {
             reg_arg_mask |= (1 << arg_regs[i]);
 
     if (stack_reserve > 0)
-        printf("  subq $%d, %%rsp\n", stack_reserve);
+        printf("  sub rsp, %d\n", stack_reserve);
 
     for (int i = nargs - 1; i >= 0; i--) {
         if (arg_stack_idx[i] < 0)
@@ -1378,9 +1392,9 @@ static int gen_funcall(Node *node, int hidden_ret_reg) {
         // x87: long double args go on stack as 80-bit extended precision
         if (argv[i]->ty->kind == TY_LDOUBLE) {
             int r = gen(argv[i]);
-            printf("  movq %s, %d(%%rsp)\n", reg64[r], shadow_space + arg_stack_idx[i] * 8);
-            printf("  fldl %d(%%rsp)\n", shadow_space + arg_stack_idx[i] * 8);
-            printf("  fstpt %d(%%rsp)\n", shadow_space + arg_stack_idx[i] * 8);
+            printf("  mov qword ptr [rsp+%d], %s\n", shadow_space + arg_stack_idx[i] * 8, reg64[r]);
+            printf("  fld qword ptr [rsp+%d]\n", shadow_space + arg_stack_idx[i] * 8);
+            printf("  fstp tbyte ptr [rsp+%d]\n", shadow_space + arg_stack_idx[i] * 8);
             free_reg(r);
             used_regs |= reg_arg_mask; // restore any bits cleared by free_reg
             continue;
@@ -1391,13 +1405,13 @@ static int gen_funcall(Node *node, int hidden_ret_reg) {
         else
             r = gen(argv[i]);
         if (is_flonum(argv[i]->ty)) {
-            printf("  movq %s, %d(%%rsp)\n", reg64[r], shadow_space + arg_stack_idx[i] * 8);
+            printf("  mov qword ptr [rsp+%d], %s\n", shadow_space + arg_stack_idx[i] * 8, reg64[r]);
         } else {
             if (argv[i]->ty->is_unsigned)
                 zero_extend_to(r, argv[i]->ty->size, 8);
             else
                 sign_extend_to(r, argv[i]->ty->size, 8);
-            printf("  movq %s, %d(%%rsp)\n", reg64[r], shadow_space + arg_stack_idx[i] * 8);
+            printf("  mov qword ptr [rsp+%d], %s\n", shadow_space + arg_stack_idx[i] * 8, reg64[r]);
         }
         free_reg(r);
         used_regs |= reg_arg_mask; // restore any bits cleared by free_reg
@@ -1423,40 +1437,40 @@ static int gen_funcall(Node *node, int hidden_ret_reg) {
             if (fn_struct_ret_off > fn_struct_ret_total)
                 fn_struct_ret_total = fn_struct_ret_off;
             temp_ret_slot = current_fn_stack_size + fn_struct_ret_off;
-            printf("  lea -%d(%%rbp), %s\n", temp_ret_slot, reg64[temp_ret_reg]);
+            printf("  lea %s, [rbp-%d]\n", reg64[temp_ret_reg], temp_ret_slot);
             hidden_ret_reg = temp_ret_reg;
         }
-        printf("  mov %s, %s\n", reg64[hidden_ret_reg], argreg64[0]);
+        printf("  mov %s, %s\n", argreg64[0], reg64[hidden_ret_reg]);
     }
 
 #ifdef _WIN32
     for (int i = 0; i < reg_nargs; i++) {
         int argi = i + (has_hidden_retbuf ? 1 : 0);
         if (arg_is_float[i]) {
-            printf("  movq %s, %s\n", reg64[arg_regs[i]], argxmm[argi]);
-            printf("  mov %s, %s\n", reg64[arg_regs[i]], argreg64[argi]);
+            printf("  movq %s, %s\n", argxmm[argi], reg64[arg_regs[i]]);
+            printf("  mov %s, %s\n", argreg64[argi], reg64[arg_regs[i]]);
         } else if (arg_sizes[i] == 1) {
             if (argv[i]->ty && !argv[i]->ty->is_unsigned)
-                printf("  movsbl %s, %s\n", reg8[arg_regs[i]], argreg32[argi]);
+                printf("  movsx %s, %s\n", argreg32[argi], reg8[arg_regs[i]]);
             else
-                printf("  movzbl %s, %s\n", reg8[arg_regs[i]], argreg32[argi]);
+                printf("  movzx %s, %s\n", argreg64[argi], reg8[arg_regs[i]]);
         } else if (arg_sizes[i] == 2) {
             if (argv[i]->ty && !argv[i]->ty->is_unsigned)
-                printf("  movswl %s, %s\n", reg16[arg_regs[i]], argreg32[argi]);
+                printf("  movsx %s, %s\n", argreg32[argi], reg16[arg_regs[i]]);
             else
-                printf("  movzwl %s, %s\n", reg16[arg_regs[i]], argreg32[argi]);
+                printf("  movzx %s, %s\n", argreg64[argi], reg16[arg_regs[i]]);
         } else if (arg_sizes[i] == 4) {
             if (argv[i]->ty->is_unsigned)
-                printf("  mov %s, %s\n", reg(arg_regs[i], 4), argreg32[argi]);
+                printf("  mov %s, %s\n", argreg32[argi], reg(arg_regs[i], 4));
             else
-                printf("  movslq %s, %s\n", reg(arg_regs[i], 4), argreg64[argi]);
+                printf("  movsxd %s, %s\n", argreg64[argi], reg(arg_regs[i], 4));
         } else {
-            printf("  mov %s, %s\n", reg(arg_regs[i], 8), argreg64[argi]);
+            printf("  mov %s, %s\n", argreg64[argi], reg(arg_regs[i], 8));
         }
         free_reg(arg_regs[i]);
     }
 #else
-    // Two-pass placement: reg64[7]=="%rsi"==argreg64[1], so any arg whose scratch
+    // Two-pass placement: reg64[7]=="rsi"==argreg64[1], so any arg whose scratch
     // register is rsi must be placed before the arg that writes to rsi, otherwise
     // the write clobbers the source value.  Pass 0: rsi-sourced args.  Pass 1: rest.
     for (int pass = 0; pass < 2; pass++) {
@@ -1467,31 +1481,31 @@ static int gen_funcall(Node *node, int hidden_ret_reg) {
             if (pass == 0 && !rsi_src) continue;
             if (pass == 1 && rsi_src) continue;
             if (arg_is_float[i]) {
-                printf("  movq %s, %s\n", reg64[arg_regs[i]], argxmm[arg_fp_idx[i]]);
+                printf("  movq %s, %s\n", argxmm[arg_fp_idx[i]], reg64[arg_regs[i]]);
             } else if (arg_sizes[i] == 1) {
                 if (argv[i]->ty && !argv[i]->ty->is_unsigned)
-                    printf("  movsbl %s, %s\n", reg8[arg_regs[i]], argreg32[arg_gp_idx[i]]);
+                    printf("  movsx %s, %s\n", argreg32[arg_gp_idx[i]], reg8[arg_regs[i]]);
                 else
-                    printf("  movzbl %s, %s\n", reg8[arg_regs[i]], argreg32[arg_gp_idx[i]]);
+                    printf("  movzx %s, %s\n", argreg64[arg_gp_idx[i]], reg8[arg_regs[i]]);
             } else if (arg_sizes[i] == 2) {
                 if (argv[i]->ty && !argv[i]->ty->is_unsigned)
-                    printf("  movswl %s, %s\n", reg16[arg_regs[i]], argreg32[arg_gp_idx[i]]);
+                    printf("  movsx %s, %s\n", argreg32[arg_gp_idx[i]], reg16[arg_regs[i]]);
                 else
-                    printf("  movzwl %s, %s\n", reg16[arg_regs[i]], argreg32[arg_gp_idx[i]]);
+                    printf("  movzx %s, %s\n", argreg64[arg_gp_idx[i]], reg16[arg_regs[i]]);
             } else if (arg_sizes[i] == 4) {
                 if (argv[i]->ty->is_unsigned)
-                    printf("  mov %s, %s\n", reg(arg_regs[i], 4), argreg32[arg_gp_idx[i]]);
+                    printf("  mov %s, %s\n", argreg32[arg_gp_idx[i]], reg(arg_regs[i], 4));
                 else
-                    printf("  movslq %s, %s\n", reg(arg_regs[i], 4), argreg64[arg_gp_idx[i]]);
+                    printf("  movsxd %s, %s\n", argreg64[arg_gp_idx[i]], reg(arg_regs[i], 4));
             } else {
-                printf("  mov %s, %s\n", reg(arg_regs[i], 8), argreg64[arg_gp_idx[i]]);
+                printf("  mov %s, %s\n", argreg64[arg_gp_idx[i]], reg(arg_regs[i], 8));
             }
             free_reg(arg_regs[i]);
         }
     } // end two-pass
 #endif
 
-    printf("  movl $%d, %%eax\n", xmm_args);
+    printf("  mov eax, %d\n", xmm_args);
     if (call_target) {
         if (strcmp(call_target, "alloca") == 0) {
             alloca_needed = true;
@@ -1501,36 +1515,36 @@ static int gen_funcall(Node *node, int hidden_ret_reg) {
             emit_direct_call(call_target);
         }
     } else {
-        printf("  call *%s\n", reg64[callee_reg]);
+        printf("  call %s\n", reg64[callee_reg]);
         free_reg(callee_reg);
     }
 
     if (stack_reserve > 0)
-        printf("  addq $%d, %%rsp\n", stack_reserve);
+        printf("  add rsp, %d\n", stack_reserve);
 
     if ((saved_scratch & 2) && hidden_ret_reg != 1) {
         used_regs |= 2;
-        printf("  movq -%d(%%rbp), %%r11\n", spill_offset(1));
+        printf("  mov r11, [rbp-%d]\n", spill_offset(1));
     }
     if ((saved_scratch & 1) && hidden_ret_reg != 0) {
         used_regs |= 1;
-        printf("  movq -%d(%%rbp), %%r10\n", spill_offset(0));
+        printf("  mov r10, [rbp-%d]\n", spill_offset(0));
     }
 
     if (has_hidden_retbuf) {
         if (temp_ret_reg != -1) {
             // temp_ret_reg (r10/r11) may have been clobbered by the callee; reload
             // the frame-relative address — it is always valid.
-            printf("  lea -%d(%%rbp), %s\n", temp_ret_slot, reg64[temp_ret_reg]);
+            printf("  lea %s, [rbp-%d]\n", reg64[temp_ret_reg], temp_ret_slot);
         }
         return temp_ret_reg != -1 ? temp_ret_reg : hidden_ret_reg;
     }
 
     int r = alloc_reg();
     if (node->ty && is_flonum(node->ty)) {
-        printf("  movq %%xmm0, %s\n", reg64[r]);
+        printf("  movq %s, xmm0\n", reg64[r]);
     } else {
-        printf("  movq %%rax, %s\n", reg64[r]);
+        printf("  mov %s, rax\n", reg64[r]);
     }
     return r;
 #endif
@@ -1538,7 +1552,6 @@ static int gen_funcall(Node *node, int hidden_ret_reg) {
 
 // Map any register name to a physical register ID (for peephole optimization)
 static int phys_reg_id(const char *s) {
-    if (s[0] == '%') s++;
 #ifndef ARCH_ARM64
     if (!strncmp(s, "r10", 3)) return 10;
     if (!strncmp(s, "r11", 3)) return 11;
@@ -1589,22 +1602,22 @@ static int add_float_literal(double val, int size) {
 static bool is_asm_reserved(const char *name) {
     static const char *kw[] = {
         "cs", "ds", "es", "fs", "gs", "ss",
-        "%al", "%ah", "%ax", "%eax", "%rax",
-        "%bl", "%bh", "%bx", "%ebx", "%rbx",
-        "%cl", "%ch", "%cx", "%ecx", "%rcx",
-        "%dl", "%dh", "%dx", "%edx", "%rdx",
-        "%sil", "%si", "%esi", "%rsi",
-        "%dil", "%di", "%edi", "%rdi",
-        "%bpl", "%bp", "%ebp", "%rbp",
-        "%spl", "%sp", "%esp", "%rsp",
-        "%r8", "%r8b", "%r8w", "%r8d",
-        "%r9", "%r9b", "%r9w", "%r9d",
-        "%r10", "%r10b", "%r10w", "%r10d",
-        "%r11", "%r11b", "%r11w", "%r11d",
-        "%r12", "%r12b", "%r12w", "%r12d",
-        "%r13", "%r13b", "%r13w", "%r13d",
-        "%r14", "%r14b", "%r14w", "%r14d",
-        "%r15", "%r15b", "%r15w", "%r15d",
+        "al", "ah", "ax", "eax", "rax",
+        "bl", "bh", "bx", "ebx", "rbx",
+        "cl", "ch", "cx", "ecx", "rcx",
+        "dl", "dh", "dx", "edx", "rdx",
+        "sil", "si", "esi", "rsi",
+        "dil", "di", "edi", "rdi",
+        "bpl", "bp", "ebp", "rbp",
+        "spl", "sp", "esp", "rsp",
+        "r8", "r8b", "r8w", "r8d",
+        "r9", "r9b", "r9w", "r9d",
+        "r10", "r10b", "r10w", "r10d",
+        "r11", "r11b", "r11w", "r11d",
+        "r12", "r12b", "r12w", "r12d",
+        "r13", "r13b", "r13w", "r13d",
+        "r14", "r14b", "r14w", "r14d",
+        "r15", "r15b", "r15w", "r15d",
         "and", "or", "not", "xor", "shl", "shr", "mod",
         "eq", "ne", "lt", "le", "ge", "gt",
         NULL};
@@ -1697,9 +1710,19 @@ static int emit_stack_addr(int offset) {
     return ta;
 #else
     int ta = alloc_reg();
-    printf("  lea -%d(%%rbp), %s\n", offset, reg64[ta]);
+    printf("  lea %s, [rbp-%d]\n", reg64[ta], offset);
     return ta;
 #endif
+}
+#endif
+
+#ifndef ARCH_ARM64
+// arm64: no ptr suffix needed in load/store (size encoded in register name)
+static char *ptr_size(int size) {
+    if (size == 1) return "byte ptr";
+    if (size == 2) return "word ptr";
+    if (size == 4) return "dword ptr";
+    return "qword ptr";
 }
 #endif
 
@@ -1716,15 +1739,6 @@ static Type *promote_int(Type *ty) {
         return ty_int;
     return ty;
 }
-
-#ifndef ARCH_ARM64
-static char size_suffix(int sz) {
-    if (sz == 1) return 'b';
-    if (sz == 2) return 'w';
-    if (sz == 4) return 'l';
-    return 'q';
-}
-#endif
 
 static bool use_unsigned(Type *ty) {
     return ty && is_integer(ty) && ty->is_unsigned;
@@ -1747,38 +1761,38 @@ static void sign_extend_to(int r, int from_size, int to_size) {
 #ifdef ARCH_ARM64
             printf("  sxtw %s, %s\n", reg64[r], reg32[r]);
 #else
-            printf("  movslq %s, %s\n", reg32[r], reg64[r]);
+            printf("  movsxd %s, %s\n", reg64[r], reg32[r]);
 #endif
         else if (from_size == 2)
 #ifdef ARCH_ARM64
             printf("  sxth %s, %s\n", reg64[r], reg32[r]);
 #else
-            printf("  movswq %s, %s\n", reg16[r], reg64[r]);
+            printf("  movsx %s, %s\n", reg64[r], reg16[r]);
 #endif
         else if (from_size == 1)
 #ifdef ARCH_ARM64
             printf("  sxtb %s, %s\n", reg64[r], reg32[r]);
 #else
-            printf("  movsbq %s, %s\n", reg8[r], reg64[r]);
+            printf("  movsx %s, %s\n", reg64[r], reg8[r]);
 #endif
         else
 #ifdef ARCH_ARM64
             printf("  sxtw %s, %s\n", reg64[r], reg32[r]);
 #else
-            printf("  movslq %s, %s\n", reg32[r], reg64[r]);
+            printf("  movsxd %s, %s\n", reg64[r], reg32[r]);
 #endif
     } else if (to_size == 4) {
         if (from_size == 2)
 #ifdef ARCH_ARM64
             printf("  sxth %s, %s\n", reg32[r], reg32[r]);
 #else
-            printf("  movswl %s, %s\n", reg16[r], reg32[r]);
+            printf("  movsx %s, %s\n", reg32[r], reg16[r]);
 #endif
         else if (from_size == 1)
 #ifdef ARCH_ARM64
             printf("  sxtb %s, %s\n", reg32[r], reg32[r]);
 #else
-            printf("  movsbl %s, %s\n", reg8[r], reg32[r]);
+            printf("  movsx %s, %s\n", reg32[r], reg8[r]);
 #endif
         else
             printf("  mov %s, %s\n", reg32[r], reg32[r]);
@@ -1795,13 +1809,13 @@ static void zero_extend_to(int r, int from_size, int to_size) {
 #ifdef ARCH_ARM64
             printf("  uxth %s, %s\n", reg64[r], reg32[r]);
 #else
-            printf("  movzwl %s, %s\n", reg16[r], reg32[r]);
+            printf("  movzx %s, %s\n", reg64[r], reg16[r]);
 #endif
         else if (from_size == 1)
 #ifdef ARCH_ARM64
             printf("  uxtb %s, %s\n", reg64[r], reg32[r]);
 #else
-            printf("  movzbl %s, %s\n", reg8[r], reg32[r]);
+            printf("  movzx %s, %s\n", reg64[r], reg8[r]);
 #endif
         else
             printf("  mov %s, %s\n", reg32[r], reg32[r]);
@@ -1810,13 +1824,13 @@ static void zero_extend_to(int r, int from_size, int to_size) {
 #ifdef ARCH_ARM64
             printf("  uxth %s, %s\n", reg32[r], reg32[r]);
 #else
-            printf("  movzwl %s, %s\n", reg16[r], reg32[r]);
+            printf("  movzx %s, %s\n", reg32[r], reg16[r]);
 #endif
         else if (from_size == 1)
 #ifdef ARCH_ARM64
             printf("  uxtb %s, %s\n", reg32[r], reg32[r]);
 #else
-            printf("  movzbl %s, %s\n", reg8[r], reg32[r]);
+            printf("  movzx %s, %s\n", reg32[r], reg8[r]);
 #endif
         else
             printf("  mov %s, %s\n", reg32[r], reg32[r]);
@@ -1977,18 +1991,18 @@ static void emit_load(Type *ty, int r, char *addr) {
     int load_sz = op_size(ty);
     if (load_sz < 4) load_sz = 4; // movsx/movzx dest must be wider than source
     if (ty->size == 1) {
-        printf("  %s %s, %s\n", ty->is_unsigned ? "movzbl" : "movsbl", addr, reg(r, load_sz));
+        printf("  %s %s, byte ptr %s\n", ty->is_unsigned ? "movzx" : "movsx", reg(r, load_sz), addr);
         return;
     }
     if (ty->size == 2) {
-        printf("  %s %s, %s\n", ty->is_unsigned ? "movzwl" : "movswl", addr, reg(r, load_sz));
+        printf("  %s %s, word ptr %s\n", ty->is_unsigned ? "movzx" : "movsx", reg(r, load_sz), addr);
         return;
     }
     if (ty->size == 4) {
-        printf("  movl %s, %s\n", addr, reg(r, 4));
+        printf("  mov %s, dword ptr %s\n", reg(r, 4), addr);
         return;
     }
-    printf("  movq %s, %s\n", addr, reg(r, 8));
+    printf("  mov %s, qword ptr %s\n", reg(r, 8), addr);
 #endif
 }
 
@@ -2013,7 +2027,7 @@ static int alloc_reg(void) {
 #ifdef ARCH_ARM64
             printf("  str %s, [%s, #-%d]\n", reg64[i], FRAME_PTR, spill_offset(i));
 #else
-            printf("  mov %s, -%d(%%rbp)\n", reg64[i], spill_offset(i));
+            printf("  mov [rbp-%d], %s\n", spill_offset(i), reg64[i]);
 #endif
             spilled_regs |= (1 << i);
             spill_count++;
@@ -2032,7 +2046,7 @@ static void free_reg(int i) {
 #ifdef ARCH_ARM64
         printf("  ldr %s, [%s, #-%d]\n", reg64[i], FRAME_PTR, spill_offset(i));
 #else
-        printf("  mov -%d(%%rbp), %s\n", spill_offset(i), reg64[i]);
+        printf("  mov %s, [rbp-%d]\n", reg64[i], spill_offset(i));
 #endif
         spilled_regs &= ~(1 << i);
     }
@@ -2306,7 +2320,7 @@ static int gen_addr(Node *node) {
 #ifdef ARCH_ARM64
                 printf("  sub %s, %s, #%d\n", reg64[r], FRAME_PTR, node->var->offset - 8);
 #else
-                printf("  lea -%d(%%rbp), %s\n", node->var->offset - 8, reg64[r]);
+                printf("  lea %s, [rbp-%d]\n", reg64[r], node->var->offset - 8);
 #endif
             } else {
 #ifdef ARCH_ARM64
@@ -2325,7 +2339,7 @@ static int gen_addr(Node *node) {
                     printf("  sub %s, %s, %s\n", reg64[r], FRAME_PTR, reg64[r]);
                 }
 #else
-                printf("  lea -%d(%%rbp), %s\n", node->var->offset, reg64[r]);
+                printf("  lea %s, [rbp-%d]\n", reg64[r], node->var->offset);
 #endif
             }
         } else {
@@ -2342,7 +2356,7 @@ static int gen_addr(Node *node) {
             else
                 emit_adrp_add(reg64[r], asm_sym_name(var_sym_label(node->var)));
 #else
-            printf("  lea %s(%%rip), %s\n", var_label(node->var), reg64[r]);
+            printf("  lea %s, [rip + %s]\n", reg64[r], var_label(node->var));
 #endif
         }
         return r;
@@ -2368,7 +2382,7 @@ static int gen_addr(Node *node) {
             free_reg(ti);
         }
 #else
-        printf("  add $%d, %s\n", node->member->offset, reg64[r]);
+        printf("  add %s, %d\n", reg64[r], node->member->offset);
 #endif
         return r;
     }
@@ -2391,16 +2405,16 @@ static int gen_addr(Node *node) {
         free_reg(else_r);
         printf(".L.end.%d:\n", c);
 #else
-        printf("  cmp $0, %s\n", reg(cond, node->cond->ty->size));
+        printf("  cmp %s, 0\n", reg(cond, node->cond->ty->size));
         printf("  je .L.else.%d\n", c);
         free_reg(cond);
         int then_r = gen_addr(node->then);
-        printf("  mov %s, %s\n", reg64[then_r], reg64[r]);
+        printf("  mov %s, %s\n", reg64[r], reg64[then_r]);
         free_reg(then_r);
         printf("  jmp .L.end.%d\n", c);
         printf(".L.else.%d:\n", c);
         int else_r = gen_addr(node->els);
-        printf("  mov %s, %s\n", reg64[else_r], reg64[r]);
+        printf("  mov %s, %s\n", reg64[r], reg64[else_r]);
         free_reg(else_r);
         printf(".L.end.%d:\n", c);
 #endif
@@ -2476,15 +2490,11 @@ static void gen_cond_branch_inv(Node *cond, char *label) {
                 printf("  cmp %s, %s\n", reg(r_lhs, sz), sz <= 4 ? "w16" : "x16");
             }
 #else
-            printf("  cmp $%d, %s\n", (int)cond->rhs->val, reg(r_lhs, sz));
+            printf("  cmp %s, %d\n", reg(r_lhs, sz), (int)cond->rhs->val);
 #endif
         } else {
             int r_rhs = gen(cond->rhs);
-#ifdef ARCH_ARM64
             printf("  cmp %s, %s\n", reg(r_lhs, sz), reg(r_rhs, sz));
-#else
-            printf("  cmp %s, %s\n", reg(r_rhs, sz), reg(r_lhs, sz));
-#endif
             free_reg(r_rhs);
         }
         free_reg(r_lhs);
@@ -2519,7 +2529,7 @@ static void gen_cond_branch_inv(Node *cond, char *label) {
     free_reg(r);
     printf("  b.eq %s\n", label);
 #else
-    printf("  cmp $0, %s\n", reg(r, cond->ty->size));
+    printf("  cmp %s, 0\n", reg(r, cond->ty->size));
     free_reg(r);
     printf("  je %s\n", label);
 #endif
@@ -2553,9 +2563,9 @@ static int gen(Node *node) {
         }
 #else
         if (node->val == (int32_t)node->val) {
-            printf("  mov $%lld, %s\n", (long long)node->val, reg(r, op_size(node->ty)));
+            printf("  mov %s, %lld\n", reg(r, op_size(node->ty)), (long long)node->val);
         } else {
-            printf("  movabs $%lld, %s\n", (long long)node->val, reg64[r]);
+            printf("  movabs %s, %lld\n", reg64[r], (long long)node->val);
         }
 #endif
         return r;
@@ -2568,8 +2578,8 @@ static int gen(Node *node) {
         printf("  ldr d0, [%s]\n", reg64[r]);
         printf("  fmov %s, d0\n", reg64[r]);
 #else
-        printf("  movsd .LF%d(%%rip), %%xmm0\n", id);
-        printf("  movq %%xmm0, %s\n", reg64[r]);
+        printf("  movsd xmm0, [rip + .LF%d]\n", id);
+        printf("  movq %s, xmm0\n", reg64[r]);
 #endif
         return r;
     }
@@ -2584,14 +2594,14 @@ static int gen(Node *node) {
 #ifdef ARCH_ARM64
                 arm64_load_from_fp_minus(node->var->offset - 8, reg64[r]);
 #else
-                printf("  mov -%d(%%rbp), %s\n", node->var->offset - 8, reg64[r]);
+                printf("  mov %s, [rbp-%d]\n", reg64[r], node->var->offset - 8);
 #endif
             } else {
 #ifdef ARCH_ARM64
                 emit_adrp_add(reg64[r], asm_sym_name(var_sym_label(node->var)));
                 printf("  ldr %s, [%s]\n", reg64[r], reg64[r]);
 #else
-                printf("  mov %s(%%rip), %s\n", label, reg64[r]);
+                printf("  mov %s, [rip + %s]\n", reg64[r], label);
 #endif
             }
         } else if (node->var->ty->kind == TY_ARRAY) {
@@ -2612,13 +2622,13 @@ static int gen(Node *node) {
                     printf("  sub %s, %s, %s\n", reg64[r], FRAME_PTR, reg64[r]);
                 }
 #else
-                printf("  lea -%d(%%rbp), %s\n", node->var->offset, reg64[r]);
+                printf("  lea %s, [rbp-%d]\n", reg64[r], node->var->offset);
 #endif
             else
 #ifdef ARCH_ARM64
                 emit_adrp_add(reg64[r], asm_sym_name(var_sym_label(node->var)));
 #else
-                printf("  lea %s(%%rip), %s\n", label, reg64[r]);
+                printf("  lea %s, [rip + %s]\n", reg64[r], label);
 #endif
         } else if (!node->var->is_local && node->var->is_function) {
             if (node->var->is_weak) {
@@ -2634,7 +2644,7 @@ static int gen(Node *node) {
             else
                 emit_adrp_add(reg64[r], asm_sym_name(var_sym_label(node->var)));
 #else
-            printf("  lea %s(%%rip), %s\n", label, reg64[r]);
+            printf("  lea %s, [rip + %s]\n", reg64[r], label);
 #endif
         } else if (is_flonum(node->var->ty)) {
             {
@@ -2644,14 +2654,14 @@ static int gen(Node *node) {
                         printf("  ldr s0, [%s, #-%d]\n", FRAME_PTR, node->var->offset);
                         printf("  fcvt d0, s0\n");
 #else
-                        printf("  movss -%d(%%rbp), %%xmm0\n", node->var->offset);
-                        printf("  cvtss2sd %%xmm0, %%xmm0\n");
+                        printf("  movss xmm0, dword ptr [rbp-%d]\n", node->var->offset);
+                        printf("  cvtss2sd xmm0, xmm0\n");
 #endif
                     } else {
 #ifdef ARCH_ARM64
                         printf("  ldr d0, [%s, #-%d]\n", FRAME_PTR, node->var->offset);
 #else
-                        printf("  movsd -%d(%%rbp), %%xmm0\n", node->var->offset);
+                        printf("  movsd xmm0, qword ptr [rbp-%d]\n", node->var->offset);
 #endif
                     }
                 } else {
@@ -2661,22 +2671,22 @@ static int gen(Node *node) {
                         printf("  ldr s0, [%s]\n", reg64[r]);
                         printf("  fcvt d0, s0\n");
 #else
-                        printf("  movss %s(%%rip), %%xmm0\n", label);
-                        printf("  cvtss2sd %%xmm0, %%xmm0\n");
+                        printf("  movss xmm0, dword ptr [rip + %s]\n", label);
+                        printf("  cvtss2sd xmm0, xmm0\n");
 #endif
                     } else {
 #ifdef ARCH_ARM64
                         emit_adrp_add(reg64[r], asm_sym_name(var_sym_label(node->var)));
                         printf("  ldr d0, [%s]\n", reg64[r]);
 #else
-                        printf("  movsd %s(%%rip), %%xmm0\n", label);
+                        printf("  movsd xmm0, qword ptr [rip + %s]\n", label);
 #endif
                     }
                 }
 #ifdef ARCH_ARM64
                 printf("  fmov %s, d0\n", reg64[r]);
 #else
-                printf("  movq %%xmm0, %s\n", reg64[r]);
+                printf("  movq %s, xmm0\n", reg64[r]);
 #endif
             }
         } else {
@@ -2684,7 +2694,7 @@ static int gen(Node *node) {
 #ifdef ARCH_ARM64
                 emit_load(node->ty, r, format("[%s, #-%d]", FRAME_PTR, node->var->offset));
 #else
-                emit_load(node->ty, r, format("-%d(%%rbp)", node->var->offset));
+                emit_load(node->ty, r, format("[rbp-%d]", node->var->offset));
 #endif
             else {
 #ifdef ARCH_ARM64
@@ -2694,7 +2704,7 @@ static int gen(Node *node) {
                 emit_load(node->ty, r, format("[%s]", reg64[ta]));
                 free_reg(ta);
 #else
-                emit_load(node->ty, r, format("%s(%%rip)", label));
+                emit_load(node->ty, r, format("[rip + %s]", label));
 #endif
             }
         }
@@ -2770,24 +2780,24 @@ static int gen(Node *node) {
                     printf(".L.copy_end.%d:\n", c2);
                 }
 #else
-                    printf("  movq $%d, %%rcx\n", copy_len);
+                    printf("  mov rcx, %d\n", copy_len);
                     printf(".L.copy.%d:\n", c);
-                    printf("  cmpq $0, %%rcx\n");
+                    printf("  cmp rcx, 0\n");
                     printf("  je .L.copy_end.%d\n", c);
-                    printf("  movb -1(%s,%%rcx), %%al\n", reg64[src]);
-                    printf("  movb %%al, -1(%s,%%rcx)\n", reg64[dst]);
-                    printf("  subq $1, %%rcx\n");
+                    printf("  mov al, byte ptr [%s + rcx - 1]\n", reg64[src]);
+                    printf("  mov byte ptr [%s + rcx - 1], al\n", reg64[dst]);
+                    printf("  sub rcx, 1\n");
                     printf("  jmp .L.copy.%d\n", c);
                     printf(".L.copy_end.%d:\n", c);
                 }
                 if (copy_len < lhs_size) {
-                    printf("  movq $%d, %%rcx\n", lhs_size - copy_len);
+                    printf("  mov rcx, %d\n", lhs_size - copy_len);
                     int c2 = ++rcc_label_count;
                     printf(".L.copy.%d:\n", c2);
-                    printf("  cmpq $0, %%rcx\n");
+                    printf("  cmp rcx, 0\n");
                     printf("  je .L.copy_end.%d\n", c2);
-                    printf("  movb $0, %d-1(%s,%%rcx)\n", copy_len, reg64[dst]);
-                    printf("  subq $1, %%rcx\n");
+                    printf("  mov byte ptr [%s + %d + rcx - 1], 0\n", reg64[dst], copy_len);
+                    printf("  sub rcx, 1\n");
                     printf("  jmp .L.copy.%d\n", c2);
                     printf(".L.copy_end.%d:\n", c2);
                 }
@@ -2807,7 +2817,7 @@ static int gen(Node *node) {
 #ifdef ARCH_ARM64
                 emit_store(node->lhs->ty, src, format("[%s]", reg64[dst]));
 #else
-                printf("  mov %s, (%s)\n", reg(src, node->lhs->ty->size), reg64[dst]);
+                printf("  mov [%s], %s\n", reg64[dst], reg(src, node->lhs->ty->size));
 #endif
                 free_reg(src);
                 return dst;
@@ -2824,13 +2834,13 @@ static int gen(Node *node) {
             printf("  b .L.copy.%d\n", c);
             printf(".L.copy_end.%d:\n", c);
 #else
-            printf("  movq $%d, %%rcx\n", node->lhs->ty->size);
+            printf("  mov rcx, %d\n", node->lhs->ty->size);
             printf(".L.copy.%d:\n", c);
-            printf("  cmpq $0, %%rcx\n");
+            printf("  cmp rcx, 0\n");
             printf("  je .L.copy_end.%d\n", c);
-            printf("  movb -1(%s,%%rcx), %%al\n", reg64[src]);
-            printf("  movb %%al, -1(%s,%%rcx)\n", reg64[dst]);
-            printf("  subq $1, %%rcx\n");
+            printf("  mov al, byte ptr [%s + rcx - 1]\n", reg64[src]);
+            printf("  mov byte ptr [%s + rcx - 1], al\n", reg64[dst]);
+            printf("  sub rcx, 1\n");
             printf("  jmp .L.copy.%d\n", c);
             printf(".L.copy_end.%d:\n", c);
 #endif
@@ -2856,23 +2866,23 @@ static int gen(Node *node) {
                 // Store long double as 64-bit double (truncated)
                 int r2 = gen(node->rhs);
                 int r1 = gen_addr(node->lhs);
-                printf("  movq %s, %%xmm0\n", reg64[r2]);
-                printf("  movsd %%xmm0, (%s)\n", reg64[r1]);
+                printf("  movq xmm0, %s\n", reg64[r2]);
+                printf("  movsd qword ptr [%s], xmm0\n", reg64[r1]);
                 free_reg(r2);
                 free_reg(r1);
                 int dummy = alloc_reg();
-                printf("  mov $0, %s\n", reg64[dummy]);
+                printf("  mov %s, 0\n", reg64[dummy]);
                 return dummy;
             }
 #endif
             int r2 = gen(node->rhs);
             int r1 = gen_addr(node->lhs);
-            printf("  movq %s, %%xmm0\n", reg64[r2]);
+            printf("  movq xmm0, %s\n", reg64[r2]);
             if (node->lhs->ty->size == 4) {
-                printf("  cvtsd2ss %%xmm0, %%xmm0\n");
-                printf("  movss %%xmm0, (%s)\n", reg64[r1]);
+                printf("  cvtsd2ss xmm0, xmm0\n");
+                printf("  movss dword ptr [%s], xmm0\n", reg64[r1]);
             } else {
-                printf("  movsd %%xmm0, (%s)\n", reg64[r1]);
+                printf("  movsd qword ptr [%s], xmm0\n", reg64[r1]);
             }
             free_reg(r1);
             return r2;
@@ -2883,7 +2893,7 @@ static int gen(Node *node) {
 #ifdef ARCH_ARM64
             emit_store_offset(node->lhs->ty, r2, FRAME_PTR, -node->lhs->var->offset);
 #else
-            printf("  mov %s, -%d(%%rbp)\n", reg(r2, node->lhs->ty->size), node->lhs->var->offset);
+            printf("  mov [rbp-%d], %s\n", node->lhs->var->offset, reg(r2, node->lhs->ty->size));
 #endif
             // Truncate result to match the variable's type width for unsigned narrow types
             if (node->lhs->ty->is_unsigned && node->lhs->ty->size < 4) {
@@ -2891,7 +2901,7 @@ static int gen(Node *node) {
 #ifdef ARCH_ARM64
                 printf("  and %s, %s, #%d\n", reg(r2, 4), reg(r2, 4), mask);
 #else
-                printf("  and $%d, %s\n", mask, reg(r2, 4));
+                printf("  and %s, %d\n", reg(r2, 4), mask);
 #endif
             }
             return r2;
@@ -2939,16 +2949,16 @@ static int gen(Node *node) {
 } while (0)
 #else
 #define BF_LOAD(sz, ra, rt) do { \
-    if ((sz) == 1) printf("  movzbl (%s), %s\n", reg64[ra], reg32[rt]); \
-    else if ((sz) == 2) printf("  movzwl (%s), %s\n", reg64[ra], reg32[rt]); \
-    else if ((sz) == 4) printf("  movl (%s), %s\n", reg64[ra], reg32[rt]); \
-    else printf("  movq (%s), %s\n", reg64[ra], reg64[rt]); \
+    if ((sz) == 1) printf("  movzx %s, byte ptr [%s]\n", reg32[rt], reg64[ra]); \
+    else if ((sz) == 2) printf("  movzx %s, word ptr [%s]\n", reg32[rt], reg64[ra]); \
+    else if ((sz) == 4) printf("  mov %s, dword ptr [%s]\n", reg32[rt], reg64[ra]); \
+    else printf("  mov %s, qword ptr [%s]\n", reg64[rt], reg64[ra]); \
 } while (0)
 #define BF_STORE(sz, ra, rt) do { \
-    if ((sz) == 1) printf("  movb %s, (%s)\n", reg8[rt], reg64[ra]); \
-    else if ((sz) == 2) printf("  movw %s, (%s)\n", reg(rt, 2), reg64[ra]); \
-    else if ((sz) == 4) printf("  movl %s, (%s)\n", reg(rt, 4), reg64[ra]); \
-    else printf("  movq %s, (%s)\n", reg64[rt], reg64[ra]); \
+    if ((sz) == 1) printf("  mov byte ptr [%s], %s\n", reg64[ra], reg8[rt]); \
+    else if ((sz) == 2) printf("  mov word ptr [%s], %s\n", reg64[ra], reg(rt, 2)); \
+    else if ((sz) == 4) printf("  mov dword ptr [%s], %s\n", reg64[ra], reg(rt, 4)); \
+    else printf("  mov qword ptr [%s], %s\n", reg64[ra], reg64[rt]); \
 } while (0)
 #endif
 
@@ -3004,22 +3014,22 @@ static int gen(Node *node) {
                 printf("  strb %s, [%s]\n", reg32[rt], reg64[ra]);
             }
 #else
-                if (bo > 0) printf("  shr $%d, %s\n", bo, reg64[rt]);
+                if (bo > 0) printf("  shr %s, %d\n", reg64[rt], bo);
                 if (bw < unit_sz * 8) {
                     unsigned long long m = (1ULL << bw) - 1;
-                    printf("  movabsq $%llu, %%rax\n", m);
-                    printf("  andq %%rax, %s\n", reg64[rt]);
+                    printf("  movabs rax, %llu\n", m);
+                    printf("  and %s, rax\n", reg64[rt]);
                 }
                 // Re-load for modify
                 BF_LOAD(unit_sz, ra, rt);
-                printf("  movabsq $%llu, %%rax\n", ~mask);
-                printf("  andq %%rax, %s\n", reg64[rt]);
+                printf("  movabs rax, %llu\n", ~mask);
+                printf("  and %s, rax\n", reg64[rt]);
                 int rv = alloc_reg();
-                printf("  mov %s, %s\n", reg64[r2], reg64[rv]);
-                printf("  movabsq $%llu, %%rax\n", (1ULL << bw) - 1);
-                printf("  andq %%rax, %s\n", reg64[rv]);
-                if (bo > 0) printf("  shl $%d, %s\n", bo, reg64[rv]);
-                printf("  or %s, %s\n", reg64[rv], reg64[rt]);
+                printf("  mov %s, %s\n", reg64[rv], reg64[r2]);
+                printf("  movabs rax, %llu\n", (1ULL << bw) - 1);
+                printf("  and %s, rax\n", reg64[rv]);
+                if (bo > 0) printf("  shl %s, %d\n", reg64[rv], bo);
+                printf("  or %s, %s\n", reg64[rt], reg64[rv]);
                 BF_STORE(unit_sz, ra, rt);
                 free_reg(rv);
                 free_reg(rt);
@@ -3033,28 +3043,28 @@ static int gen(Node *node) {
             int rt = alloc_reg();
             int eff_sz = unit_sz > 8 ? 8 : unit_sz;
             BF_LOAD(eff_sz, ra, rt);
-            printf("  movabsq $%llu, %%rax\n", ~mask);
-            printf("  andq %%rax, %s\n", reg64[rt]);
+            printf("  movabs rax, %llu\n", ~mask);
+            printf("  and %s, rax\n", reg64[rt]);
             int rv = alloc_reg();
-            printf("  mov %s, %s\n", reg64[r2], reg64[rv]);
-            printf("  movabsq $%llu, %%rax\n", (1ULL << bw) - 1);
-            printf("  andq %%rax, %s\n", reg64[rv]);
-            if (bo > 0) printf("  shl $%d, %s\n", bo, reg64[rv]);
-            printf("  or %s, %s\n", reg64[rv], reg64[rt]);
+            printf("  mov %s, %s\n", reg64[rv], reg64[r2]);
+            printf("  movabs rax, %llu\n", (1ULL << bw) - 1);
+            printf("  and %s, rax\n", reg64[rv]);
+            if (bo > 0) printf("  shl %s, %d\n", reg64[rv], bo);
+            printf("  or %s, %s\n", reg64[rt], reg64[rv]);
             BF_STORE(eff_sz, ra, rt);
             // Handle overflow bits beyond the first 8 bytes
             if (unit_sz > 8 && bo + bw > 64) {
                 int overflow = bo + bw - 64;
                 unsigned int ovf_mask = (1u << overflow) - 1;
                 // Read-modify-write the byte at addr+8
-                printf("  add $8, %s\n", reg64[ra]);
-                printf("  movzbl (%s), %s\n", reg64[ra], reg32[rt]);
-                printf("  and $%u, %s\n", (unsigned)(~ovf_mask & 0xFF), reg32[rt]);
-                printf("  mov %s, %s\n", reg64[r2], reg64[rv]);
-                printf("  shr $%d, %s\n", 64 - bo, reg64[rv]);
-                printf("  and $%u, %s\n", ovf_mask, reg32[rv]);
-                printf("  or %s, %s\n", reg32[rv], reg32[rt]);
-                printf("  movb %s, (%s)\n", reg8[rt], reg64[ra]);
+                printf("  add %s, 8\n", reg64[ra]);
+                printf("  movzx %s, byte ptr [%s]\n", reg32[rt], reg64[ra]);
+                printf("  and %s, %u\n", reg32[rt], (unsigned)(~ovf_mask & 0xFF));
+                printf("  mov %s, %s\n", reg64[rv], reg64[r2]);
+                printf("  shr %s, %d\n", reg64[rv], 64 - bo);
+                printf("  and %s, %u\n", reg32[rv], ovf_mask);
+                printf("  or %s, %s\n", reg32[rt], reg32[rv]);
+                printf("  mov byte ptr [%s], %s\n", reg64[ra], reg8[rt]);
             }
 #endif
 #undef BF_LOAD
@@ -3069,7 +3079,7 @@ static int gen(Node *node) {
 #ifdef ARCH_ARM64
         emit_store(node->lhs->ty, r2, format("[%s]", reg64[r1]));
 #else
-        printf("  mov %s, (%s)\n", reg(r2, node->lhs->ty->size), reg64[r1]);
+        printf("  mov [%s], %s\n", reg64[r1], reg(r2, node->lhs->ty->size));
 #endif
         free_reg(r1);
         return r2;
@@ -3083,12 +3093,12 @@ static int gen(Node *node) {
             printf("  fmov %s, d0\n", reg64[r]);
 #else
             // Negate float: xor with sign bit
-            printf("  movq %s, %%xmm0\n", reg64[r]);
+            printf("  movq xmm0, %s\n", reg64[r]);
             // Use pxor with sign bit mask
-            printf("  movabs $%lld, %s\n", (long long)0x8000000000000000LL, reg64[r]);
-            printf("  movq %s, %%xmm1\n", reg64[r]);
-            printf("  xorpd %%xmm1, %%xmm0\n");
-            printf("  movq %%xmm0, %s\n", reg64[r]);
+            printf("  movabs %s, %lld\n", reg64[r], (long long)0x8000000000000000LL);
+            printf("  movq xmm1, %s\n", reg64[r]);
+            printf("  xorpd xmm0, xmm1\n");
+            printf("  movq %s, xmm0\n", reg64[r]);
 #endif
         } else {
 #ifdef ARCH_ARM64
@@ -3105,9 +3115,9 @@ static int gen(Node *node) {
         printf("  cmp %s, #0\n", reg(r, op_size(node->lhs->ty)));
         printf("  cset %s, eq\n", reg(r, 4));
 #else
-        printf("  cmp $0, %s\n", reg(r, op_size(node->lhs->ty)));
-        printf("  sete %%al\n");
-        printf("  movzbl %%al, %s\n", reg(r, 4));
+        printf("  cmp %s, 0\n", reg(r, op_size(node->lhs->ty)));
+        printf("  sete al\n");
+        printf("  movzx %s, al\n", reg(r, 4));
 #endif
         return r;
     }
@@ -3127,12 +3137,12 @@ static int gen(Node *node) {
         printf("  b .L.zero.%d\n", c);
         printf(".L.zero_end.%d:\n", c);
 #else
-        printf("  movq $%d, %%rcx\n", var->ty->size);
+        printf("  mov rcx, %d\n", var->ty->size);
         printf(".L.zero.%d:\n", c);
-        printf("  cmpq $0, %%rcx\n");
+        printf("  cmp rcx, 0\n");
         printf("  je .L.zero_end.%d\n", c);
-        printf("  movb $0, -%d-1(%%rbp,%%rcx)\n", var->offset);
-        printf("  subq $1, %%rcx\n");
+        printf("  mov byte ptr [rbp - %d + rcx - 1], 0\n", var->offset);
+        printf("  sub rcx, 1\n");
         printf("  jmp .L.zero.%d\n", c);
         printf(".L.zero_end.%d:\n", c);
 #endif
@@ -3159,30 +3169,29 @@ static int gen(Node *node) {
         emit_store(node->lhs->ty, r3, format("[%s]", reg64[r]));
         free_reg(r3);
 #else
-        printf("  mov (%s), %s\n", reg64[r], reg(r2, sz));
+        printf("  mov %s, %s [%s]\n", reg(r2, sz), ptr_size(sz), reg64[r]);
         bool is_float = is_flonum(node->lhs->ty);
         if (is_float) {
             int id = add_float_literal(1.0, sz);
-            printf("  movq %s, %%xmm0\n", reg64[r2]);
+            printf("  movq xmm0, %s\n", reg64[r2]);
             if (sz == 4)
-                printf("  %s .LF%d(%%rip), %%xmm0\n",
+                printf("  %s xmm0, [rip + .LF%d]\n",
                        node->kind == ND_POST_INC ? "addss" : "subss", id);
             else
-                printf("  %s .LF%d(%%rip), %%xmm0\n",
+                printf("  %s xmm0, [rip + .LF%d]\n",
                        node->kind == ND_POST_INC ? "addsd" : "subsd", id);
             if (sz == 4)
-                printf("  movss %%xmm0, (%s)\n", reg64[r]);
+                printf("  movss dword ptr [%s], xmm0\n", reg64[r]);
             else
-                printf("  movsd %%xmm0, (%s)\n", reg64[r]);
+                printf("  movsd qword ptr [%s], xmm0\n", reg64[r]);
         } else {
             int delta = 1;
             if (node->lhs->ty->kind == TY_PTR || node->lhs->ty->kind == TY_ARRAY)
                 delta = node->lhs->ty->base->size;
-            char sc = size_suffix(sz);
             if (node->kind == ND_POST_INC)
-                printf("  add%c $%d, (%s)\n", sc, delta, reg64[r]);
+                printf("  add %s [%s], %d\n", ptr_size(sz), reg64[r], delta);
             else
-                printf("  sub%c $%d, (%s)\n", sc, delta, reg64[r]);
+                printf("  sub %s [%s], %d\n", ptr_size(sz), reg64[r], delta);
         }
 #endif
         free_reg(r);
@@ -3205,12 +3214,12 @@ static int gen(Node *node) {
             printf("  fmov %s, d0\n", reg64[r]);
 #else
             if (load_ty->size == 4) {
-                printf("  movss (%s), %%xmm0\n", reg64[r]);
-                printf("  cvtss2sd %%xmm0, %%xmm0\n");
-                printf("  movq %%xmm0, %s\n", reg64[r]);
+                printf("  movss xmm0, dword ptr [%s]\n", reg64[r]);
+                printf("  cvtss2sd xmm0, xmm0\n");
+                printf("  movq %s, xmm0\n", reg64[r]);
             } else {
-                printf("  movsd (%s), %%xmm0\n", reg64[r]);
-                printf("  movq %%xmm0, %s\n", reg64[r]);
+                printf("  movsd xmm0, qword ptr [%s]\n", reg64[r]);
+                printf("  movq %s, xmm0\n", reg64[r]);
             }
 #endif
         } else if (node->member && node->member->bit_width > 0 && node->member->bf_load_size) {
@@ -3221,11 +3230,7 @@ static int gen(Node *node) {
             int r_addr = -1;
             if (ls > 8 && bo + bw > 64) {
                 r_addr = alloc_reg();
-#ifdef ARCH_ARM64
                 printf("  mov %s, %s\n", reg64[r_addr], reg64[r]);
-#else
-                printf("  mov %s, %s\n", reg64[r], reg64[r_addr]);
-#endif
             }
 #ifdef ARCH_ARM64
             if (eff_ls <= 2)
@@ -3260,23 +3265,24 @@ static int gen(Node *node) {
             }
             return r;
 #else
-            if (eff_ls == 1)
-                printf("  movzbl (%s), %s\n", reg64[r], reg32[r]);
-            else if (eff_ls == 2)
-                printf("  movzwl (%s), %s\n", reg64[r], reg32[r]);
+            const char *sz = eff_ls == 1 ? "byte" : eff_ls == 2 ? "word"
+                : eff_ls == 4                                   ? "dword"
+                                                                : "qword";
+            if (eff_ls <= 2)
+                printf("  movzx %s, %s ptr [%s]\n", reg32[r], sz, reg64[r]);
             else if (eff_ls == 4)
-                printf("  movl (%s), %s\n", reg64[r], reg32[r]);
+                printf("  mov %s, %s ptr [%s]\n", reg32[r], sz, reg64[r]);
             else
-                printf("  movq (%s), %s\n", reg64[r], reg64[r]);
+                printf("  mov %s, %s ptr [%s]\n", reg64[r], sz, reg64[r]);
             if (bo > 0)
-                printf("  shr $%d, %s\n", bo, reg64[r]);
+                printf("  shr %s, %d\n", reg64[r], bo);
             if (r_addr >= 0) {
                 int overflow = bo + bw - 64;
                 int tmp = alloc_reg();
-                printf("  movzbl 8(%s), %s\n", reg64[r_addr], reg32[tmp]);
-                printf("  and $%d, %s\n", (1 << overflow) - 1, reg32[tmp]);
-                printf("  shl $%d, %s\n", 64 - bo, reg64[tmp]);
-                printf("  or %s, %s\n", reg64[tmp], reg64[r]);
+                printf("  movzx %s, byte ptr [%s+8]\n", reg32[tmp], reg64[r_addr]);
+                printf("  and %s, %d\n", reg32[tmp], (1 << overflow) - 1);
+                printf("  shl %s, %d\n", reg64[tmp], 64 - bo);
+                printf("  or %s, %s\n", reg64[r], reg64[tmp]);
                 free_reg(tmp);
                 free_reg(r_addr);
             }
@@ -3284,22 +3290,18 @@ static int gen(Node *node) {
             if (bw < load_bits) {
                 if (node->member->ty->is_unsigned || node->member->ty->is_enum) {
                     unsigned long long mask = (1ULL << bw) - 1;
-                    printf("  movabsq $%llu, %%rax\n", mask);
-                    printf("  andq %%rax, %s\n", reg64[r]);
+                    printf("  movabs rax, %llu\n", mask);
+                    printf("  and %s, rax\n", reg64[r]);
                 } else {
                     int shift = 64 - bw;
-                    printf("  shl $%d, %s\n", shift, reg64[r]);
-                    printf("  sar $%d, %s\n", shift, reg64[r]);
+                    printf("  shl %s, %d\n", reg64[r], shift);
+                    printf("  sar %s, %d\n", reg64[r], shift);
                 }
             }
             return r;
 #endif
         } else {
-#ifdef ARCH_ARM64
             emit_load(load_ty, r, format("[%s]", reg64[r]));
-#else
-            emit_load(load_ty, r, format("(%s)", reg64[r]));
-#endif
         }
         if (node->member && node->member->bit_width > 0) {
             int bw = node->member->bit_width;
@@ -3323,16 +3325,16 @@ static int gen(Node *node) {
             }
 #else
             if (bo > 0)
-                printf("  shr $%d, %s\n", bo, reg64[r]);
+                printf("  shr %s, %d\n", reg64[r], bo);
             if (bw < load_bits) {
                 if (node->member->ty->is_unsigned || node->member->ty->is_enum) {
                     unsigned long long mask = (1ULL << bw) - 1;
-                    printf("  movabsq $%llu, %%rax\n", mask);
-                    printf("  andq %%rax, %s\n", reg64[r]);
+                    printf("  movabs rax, %llu\n", mask);
+                    printf("  and %s, rax\n", reg64[r]);
                 } else {
                     int shift = 64 - bw;
-                    printf("  shl $%d, %s\n", shift, reg64[r]);
-                    printf("  sar $%d, %s\n", shift, reg64[r]);
+                    printf("  shl %s, %d\n", reg64[r], shift);
+                    printf("  sar %s, %d\n", reg64[r], shift);
                 }
             }
 #endif
@@ -3354,23 +3356,23 @@ static int gen(Node *node) {
                 printf("  fcvtzs %s, d0\n", reg64[r]);
             }
 #else
-            printf("  movq %s, %%xmm0\n", reg64[r]);
+            printf("  movq xmm0, %s\n", reg64[r]);
             if (to->size == 8 && to->is_unsigned) {
                 int c = ++rcc_label_count;
-                printf("  movq $0x43e0000000000000, %%rax\n");
-                printf("  movq %%rax, %%xmm1\n");
-                printf("  comisd %%xmm1, %%xmm0\n");
+                printf("  mov rax, 0x43e0000000000000\n");
+                printf("  movq xmm1, rax\n");
+                printf("  comisd xmm0, xmm1\n");
                 printf("  jb .L.ucast.%d\n", c);
-                printf("  subsd %%xmm1, %%xmm0\n");
-                printf("  cvttsd2si %%xmm0, %s\n", reg64[r]);
-                printf("  movq $0x8000000000000000, %%rcx\n");
-                printf("  orq %%rcx, %s\n", reg64[r]);
+                printf("  subsd xmm0, xmm1\n");
+                printf("  cvttsd2si %s, xmm0\n", reg64[r]);
+                printf("  mov rcx, 0x8000000000000000\n");
+                printf("  or %s, rcx\n", reg64[r]);
                 printf("  jmp .L.ucast_end.%d\n", c);
                 printf(".L.ucast.%d:\n", c);
-                printf("  cvttsd2si %%xmm0, %s\n", reg64[r]);
+                printf("  cvttsd2si %s, xmm0\n", reg64[r]);
                 printf(".L.ucast_end.%d:\n", c);
             } else {
-                printf("  cvttsd2si %%xmm0, %s\n", to->size == 8 ? reg64[r] : reg32[r]);
+                printf("  cvttsd2si %s, xmm0\n", to->size == 8 ? reg64[r] : reg32[r]);
             }
 #endif
         } else if (is_integer(from) && is_flonum(to)) {
@@ -3387,15 +3389,15 @@ static int gen(Node *node) {
             printf("  fmov %s, d0\n", reg64[r]);
 #else
             if (from->is_unsigned && from->size == 4) {
-                printf("  cvtsi2sd %s, %%xmm0\n", reg64[r]);
+                printf("  cvtsi2sd xmm0, %s\n", reg64[r]);
             } else {
-                printf("  cvtsi2sd %s, %%xmm0\n", from->size < 4 ? reg32[r] : reg(r, from->size));
+                printf("  cvtsi2sd xmm0, %s\n", from->size < 4 ? reg32[r] : reg(r, from->size));
             }
             if (to->kind == TY_FLOAT) {
-                printf("  cvtsd2ss %%xmm0, %%xmm0\n");
-                printf("  cvtss2sd %%xmm0, %%xmm0\n");
+                printf("  cvtsd2ss xmm0, xmm0\n");
+                printf("  cvtss2sd xmm0, xmm0\n");
             }
-            printf("  movq %%xmm0, %s\n", reg64[r]);
+            printf("  movq %s, xmm0\n", reg64[r]);
 #endif
         } else if (is_flonum(from) && is_flonum(to)) {
 #ifdef ARCH_ARM64
@@ -3407,10 +3409,10 @@ static int gen(Node *node) {
             }
 #else
             if (to->kind == TY_FLOAT && from->kind != TY_FLOAT) {
-                printf("  movq %s, %%xmm0\n", reg64[r]);
-                printf("  cvtsd2ss %%xmm0, %%xmm0\n");
-                printf("  cvtss2sd %%xmm0, %%xmm0\n");
-                printf("  movq %%xmm0, %s\n", reg64[r]);
+                printf("  movq xmm0, %s\n", reg64[r]);
+                printf("  cvtsd2ss xmm0, xmm0\n");
+                printf("  cvtss2sd xmm0, xmm0\n");
+                printf("  movq %s, xmm0\n", reg64[r]);
             }
 #endif
         } else if (to->size == 1) {
@@ -3421,9 +3423,9 @@ static int gen(Node *node) {
                 printf("  sxtb %s, %s\n", reg32[r], reg32[r]);
 #else
             if (to->is_unsigned)
-                printf("  movzbl %s, %s\n", reg8[r], reg32[r]);
+                printf("  movzx %s, %s\n", reg32[r], reg8[r]);
             else
-                printf("  movsbl %s, %s\n", reg8[r], reg32[r]);
+                printf("  movsx %s, %s\n", reg32[r], reg8[r]);
 #endif
         } else if (to->size == 2) {
 #ifdef ARCH_ARM64
@@ -3433,9 +3435,9 @@ static int gen(Node *node) {
                 printf("  sxth %s, %s\n", reg32[r], reg32[r]);
 #else
             if (to->is_unsigned)
-                printf("  movzwl %s, %s\n", reg16[r], reg32[r]);
+                printf("  movzx %s, %s\n", reg32[r], reg16[r]);
             else
-                printf("  movswl %s, %s\n", reg16[r], reg32[r]);
+                printf("  movsx %s, %s\n", reg32[r], reg16[r]);
 #endif
         } else if (to->size == 4 && from->size == 8) {
             printf("  mov %s, %s\n", reg32[r], reg32[r]);
@@ -3461,7 +3463,7 @@ static int gen(Node *node) {
 #ifdef ARCH_ARM64
         emit_adrp_add(reg64[r], format(".LC%d", node->str_id));
 #else
-        printf("  lea .LC%d(%%rip), %s\n", node->str_id, reg64[r]);
+        printf("  lea %s, [rip + .LC%d]\n", reg64[r], node->str_id);
 #endif
         return r;
     }
@@ -3480,19 +3482,15 @@ static int gen(Node *node) {
             printf("  fmov %s, d0\n", reg64[r]);
 #else
             if (node->ty->size == 4) {
-                printf("  movss (%s), %%xmm0\n", reg64[r]);
-                printf("  cvtss2sd %%xmm0, %%xmm0\n");
+                printf("  movss xmm0, dword ptr [%s]\n", reg64[r]);
+                printf("  cvtss2sd xmm0, xmm0\n");
             } else {
-                printf("  movsd (%s), %%xmm0\n", reg64[r]);
+                printf("  movsd xmm0, qword ptr [%s]\n", reg64[r]);
             }
-            printf("  movq %%xmm0, %s\n", reg64[r]);
+            printf("  movq %s, xmm0\n", reg64[r]);
 #endif
         } else {
-#ifdef ARCH_ARM64
             emit_load(node->ty, r, format("[%s]", reg64[r]));
-#else
-            emit_load(node->ty, r, format("(%s)", reg64[r]));
-#endif
         }
         return r;
     }
@@ -3534,17 +3532,17 @@ static int gen(Node *node) {
                 printf(".L.retcopy_end.%d:\n", c);
                 printf("  mov x0, x11\n");
 #else
-                printf("  movq -%d(%%rbp), %%r11\n", retbuf_offset);
-                printf("  movq $%d, %%rcx\n", node->lhs->ty->size);
+                printf("  mov r11, [rbp-%d]\n", retbuf_offset);
+                printf("  mov rcx, %d\n", node->lhs->ty->size);
                 printf(".L.retcopy.%d:\n", c);
-                printf("  cmpq $0, %%rcx\n");
+                printf("  cmp rcx, 0\n");
                 printf("  je .L.retcopy_end.%d\n", c);
-                printf("  movb -1(%s,%%rcx), %%al\n", reg64[src]);
-                printf("  movb %%al, -1(%%r11,%%rcx)\n");
-                printf("  subq $1, %%rcx\n");
+                printf("  mov al, byte ptr [%s + rcx - 1]\n", reg64[src]);
+                printf("  mov byte ptr [r11 + rcx - 1], al\n");
+                printf("  sub rcx, 1\n");
                 printf("  jmp .L.retcopy.%d\n", c);
                 printf(".L.retcopy_end.%d:\n", c);
-                printf("  movq %%r11, %%rax\n");
+                printf("  mov rax, r11\n");
 #endif
                 free_reg(src);
             } else {
@@ -3555,7 +3553,7 @@ static int gen(Node *node) {
 #ifdef ARCH_ARM64
                         printf("  fmov d0, %s\n", reg64[r]);
 #else
-                        printf("  movq %s, %%xmm0\n", reg64[r]);
+                        printf("  movq xmm0, %s\n", reg64[r]);
 #endif
                     } else if (ret_ty->size == 4) {
 #ifdef ARCH_ARM64
@@ -3567,7 +3565,7 @@ static int gen(Node *node) {
 #ifdef ARCH_ARM64
                         printf("  scvtf d0, %s\n", reg64[r]);
 #else
-                        printf("  cvtsi2sd %s, %%xmm0\n", reg64[r]);
+                        printf("  cvtsi2sd xmm0, %s\n", reg64[r]);
 #endif
                     }
                 } else if (node->lhs->ty && is_flonum(node->lhs->ty)) {
@@ -3578,16 +3576,16 @@ static int gen(Node *node) {
                     printf("  mov x0, %s\n", reg(r, sz));
 #else
                     printf("  cvttsd2si %s, xmm0\n", reg(r, sz));
-                    printf("  movq %s, %%rax\n", reg(r, sz));
+                    printf("  mov rax, %s\n", reg(r, sz));
 #endif
                 } else {
 #ifdef ARCH_ARM64
                     printf("  mov x0, %s\n", reg64[r]);
 #else
-                    printf("  movq %s, %%rax\n", reg64[r]);
+                    printf("  mov rax, %s\n", reg64[r]);
                     // Truncate return value to match function return type width
                     if (ret_ty && ret_ty->size < 4 && ret_ty->is_unsigned)
-                        printf("  andl $%d, %%eax\n", (1 << (ret_ty->size * 8)) - 1);
+                        printf("  and eax, %d\n", (1 << (ret_ty->size * 8)) - 1);
 #endif
                 }
                 free_reg(r);
@@ -3647,38 +3645,38 @@ static int gen(Node *node) {
         arm64_store_to_fp_minus("x16", node->var->offset - 8);
 #else
         if (node->kind == ND_ALLOCA_ZINIT && node->lhs && node->lhs->kind == ND_NUM && node->lhs->val == 0) {
-            printf("  movq -%d(%%rbp), %%rsp\n", node->var->offset);
+            printf("  mov rsp, [rbp-%d]\n", node->var->offset);
             return -1;
         }
         int r = gen(node->lhs);
-        printf("  movq %%rsp, -%d(%%rbp)\n", node->var->offset);
-        printf("  movq %s, %%rax\n", reg64[r]);
+        printf("  mov [rbp-%d], rsp\n", node->var->offset);
+        printf("  mov rax, %s\n", reg64[r]);
         free_reg(r);
-        printf("  movq %%rsp, %%rcx\n");
-        printf("  subq %%rax, %%rsp\n");
+        printf("  mov rcx, rsp\n");
+        printf("  sub rsp, rax\n");
         int align = 16;
-        printf("  andq $-%d, %%rsp\n", align);
-        printf("  subq %%rsp, %%rcx\n");
+        printf("  and rsp, -%d\n", align);
+        printf("  sub rcx, rsp\n");
         if (node->kind == ND_ALLOCA_ZINIT) {
-            printf("  pxor %%xmm0, %%xmm0\n");
+            printf("  pxor xmm0, xmm0\n");
             printf(".L.alloca.zero.%d:\n", rcc_label_count);
-            printf("  subq $16, %%rcx\n");
+            printf("  sub rcx, 16\n");
             printf("  js .L.alloca.done.%d\n", rcc_label_count);
-            printf("  movaps %%xmm0, (%%rsp,%%rcx)\n");
+            printf("  movaps [rsp + rcx], xmm0\n");
             printf("  jmp .L.alloca.zero.%d\n", rcc_label_count);
         } else {
             printf(".L.alloca.probe.%d:\n", rcc_label_count);
-            printf("  subq $4096, %%rcx\n");
+            printf("  sub rcx, 4096\n");
             printf("  js .L.alloca.done.%d\n", rcc_label_count);
-            printf("  orb $0, (%%rsp,%%rcx)\n");
+            printf("  or byte ptr [rsp + rcx], 0\n");
             printf("  jmp .L.alloca.probe.%d\n", rcc_label_count);
         }
         printf(".L.alloca.done.%d:\n", rcc_label_count);
         rcc_label_count++;
         if (node->var)
-            printf("  movq %%rsp, -%d(%%rbp)\n", node->var->offset - 8);
+            printf("  mov [rbp-%d], rsp\n", node->var->offset - 8);
         else
-            printf("  movq %%rsp, %%rax\n");
+            printf("  mov rax, rsp\n");
 #endif
         return -1;
     }
@@ -3701,11 +3699,7 @@ static int gen(Node *node) {
         }
         if (result == -1) {
             result = alloc_reg();
-#ifdef ARCH_ARM64
-            printf("  mov %s, #0\n", reg(result, op_size(node->ty)));
-#else
-            printf("  mov $0, %s\n", reg(result, op_size(node->ty)));
-#endif
+            printf("  mov %s, 0\n", reg(result, op_size(node->ty)));
         }
         return result;
     }
@@ -3731,21 +3725,21 @@ static int gen(Node *node) {
         printf("  cset %s, ne\n", reg(r, 4));
 #else
         int lhs = gen(node->lhs);
-        printf("  cmp $0, %s\n", reg(lhs, node->lhs->ty->size));
-        printf("  movb $0, -%d(%%rbp)\n", spill_logand);
+        printf("  cmp %s, 0\n", reg(lhs, node->lhs->ty->size));
+        printf("  mov byte ptr [rbp-%d], 0\n", spill_logand);
         printf("  je .L.end.%d\n", c);
         free_reg(lhs);
         int rhs = gen(node->rhs);
-        printf("  cmp $0, %s\n", reg(rhs, node->rhs->ty->size));
-        printf("  setne %%al\n");
-        printf("  movb %%al, -%d(%%rbp)\n", spill_logand);
+        printf("  cmp %s, 0\n", reg(rhs, node->rhs->ty->size));
+        printf("  setne al\n");
+        printf("  mov byte ptr [rbp-%d], al\n", spill_logand);
 #endif
         free_reg(rhs);
         printf(".L.end.%d:\n", c);
 #ifdef ARCH_ARM64
 #else
         int r = alloc_reg();
-        printf("  movzbl -%d(%%rbp), %s\n", spill_logand, reg(r, 4));
+        printf("  movzx %s, byte ptr [rbp-%d]\n", reg(r, 4), spill_logand);
 #endif
         return r;
     }
@@ -3763,21 +3757,21 @@ static int gen(Node *node) {
         printf("  cset %s, ne\n", reg(r, 4));
 #else
         int lhs = gen(node->lhs);
-        printf("  cmp $0, %s\n", reg(lhs, node->lhs->ty->size));
-        printf("  movb $1, -%d(%%rbp)\n", spill_logand);
+        printf("  cmp %s, 0\n", reg(lhs, node->lhs->ty->size));
+        printf("  mov byte ptr [rbp-%d], 1\n", spill_logand);
         printf("  jne .L.end.%d\n", c);
         free_reg(lhs);
         int rhs = gen(node->rhs);
-        printf("  cmp $0, %s\n", reg(rhs, node->rhs->ty->size));
-        printf("  setne %%al\n");
-        printf("  movb %%al, -%d(%%rbp)\n", spill_logand);
+        printf("  cmp %s, 0\n", reg(rhs, node->rhs->ty->size));
+        printf("  setne al\n");
+        printf("  mov byte ptr [rbp-%d], al\n", spill_logand);
 #endif
         free_reg(rhs);
         printf(".L.end.%d:\n", c);
 #ifdef ARCH_ARM64
 #else
         int r = alloc_reg();
-        printf("  movzbl -%d(%%rbp), %s\n", spill_logand, reg(r, 4));
+        printf("  movzx %s, byte ptr [rbp-%d]\n", reg(r, 4), spill_logand);
 #endif
         return r;
     }
@@ -3798,16 +3792,16 @@ static int gen(Node *node) {
         printf("  mov %s, %s\n", reg64[r], reg64[else_r]);
         free_reg(else_r);
 #else
-        printf("  cmp $0, %s\n", reg(cond, node->cond->ty->size));
+        printf("  cmp %s, 0\n", reg(cond, node->cond->ty->size));
         printf("  je .L.else.%d\n", c);
         free_reg(cond);
         int then_r = gen(node->then);
-        printf("  mov %s, %s\n", reg64[then_r], reg64[r]);
+        printf("  mov %s, %s\n", reg64[r], reg64[then_r]);
         free_reg(then_r);
         printf("  jmp .L.end.%d\n", c);
         printf(".L.else.%d:\n", c);
         int else_r = gen(node->els);
-        printf("  mov %s, %s\n", reg64[else_r], reg64[r]);
+        printf("  mov %s, %s\n", reg64[r], reg64[else_r]);
         free_reg(else_r);
 #endif
         printf(".L.end.%d:\n", c);
@@ -3933,7 +3927,7 @@ static int gen(Node *node) {
         free_reg(r);
         printf("  b.ne .L.begin.%d\n", c);
 #else
-        printf("  cmp $0, %s\n", reg(r, node->cond->ty->size));
+        printf("  cmp %s, 0\n", reg(r, node->cond->ty->size));
         free_reg(r);
         printf("  jne .L.begin.%d\n", c);
 #endif
@@ -3974,20 +3968,20 @@ static int gen(Node *node) {
                 printf("  %s .L.case.%d\n", is_uns ? "b.ls" : "b.le", cs->label_id);
 #else
                 if (cs->case_val == (int32_t)cs->case_val)
-                    printf("  cmp $%lld, %s\n", (long long)cs->case_val, reg(cond, sz));
+                    printf("  cmp %s, %lld\n", reg(cond, sz), (long long)cs->case_val);
                 else {
                     int tmp = alloc_reg();
-                    printf("  movabs $%lld, %s\n", (long long)cs->case_val, reg64[tmp]);
-                    printf("  cmp %s, %s\n", reg(tmp, sz), reg(cond, sz));
+                    printf("  movabs %s, %lld\n", reg64[tmp], (long long)cs->case_val);
+                    printf("  cmp %s, %s\n", reg(cond, sz), reg(tmp, sz));
                     free_reg(tmp);
                 }
                 printf("  %s .L.skip.%d\n", is_uns ? "jb" : "jl", skip_lbl);
                 if (cs->case_end == (int32_t)cs->case_end)
-                    printf("  cmp $%lld, %s\n", (long long)cs->case_end, reg(cond, sz));
+                    printf("  cmp %s, %lld\n", reg(cond, sz), (long long)cs->case_end);
                 else {
                     int tmp = alloc_reg();
-                    printf("  movabs $%lld, %s\n", (long long)cs->case_end, reg64[tmp]);
-                    printf("  cmp %s, %s\n", reg(tmp, sz), reg(cond, sz));
+                    printf("  movabs %s, %lld\n", reg64[tmp], (long long)cs->case_end);
+                    printf("  cmp %s, %s\n", reg(cond, sz), reg(tmp, sz));
                     free_reg(tmp);
                 }
                 printf("  %s .L.case.%d\n", is_uns ? "jbe" : "jle", cs->label_id);
@@ -4007,11 +4001,11 @@ static int gen(Node *node) {
                 printf("  b.eq .L.case.%d\n", cs->label_id);
 #else
                 if (cs->case_val == (int32_t)cs->case_val) {
-                    printf("  cmp $%lld, %s\n", (long long)cs->case_val, reg(cond, sz));
+                    printf("  cmp %s, %lld\n", reg(cond, sz), (long long)cs->case_val);
                 } else {
                     int tmp = alloc_reg();
-                    printf("  movabs $%lld, %s\n", (long long)cs->case_val, reg64[tmp]);
-                    printf("  cmp %s, %s\n", reg(tmp, sz), reg(cond, sz));
+                    printf("  movabs %s, %lld\n", reg64[tmp], (long long)cs->case_val);
+                    printf("  cmp %s, %s\n", reg(cond, sz), reg(tmp, sz));
                     free_reg(tmp);
                 }
                 printf("  je .L.case.%d\n", cs->label_id);
@@ -4083,7 +4077,7 @@ static int gen(Node *node) {
 #ifdef ARCH_ARM64
         printf("  br %s\n", reg64[r]);
 #else
-        printf("  jmp *%s\n", reg64[r]);
+        printf("  jmp %s\n", reg64[r]);
 #endif
         free_reg(r);
         return -1;
@@ -4097,7 +4091,7 @@ static int gen(Node *node) {
 #ifdef ARCH_ARM64
         emit_adrp_add(reg64[r], format(".L.label.%s.%s", current_fn, node->label_name));
 #else
-        printf("  lea .L.label.%s.%s(%%rip), %s\n", current_fn, node->label_name, reg64[r]);
+        printf("  lea %s, [rip + .L.label.%s.%s]\n", reg64[r], current_fn, node->label_name);
 #endif
         return r;
     }
@@ -4223,30 +4217,17 @@ static int gen(Node *node) {
             int ref = *c - '0';
             if (ref >= 0 && ref < node->asm_noperands) {
                 int r = op_regs[ref];
-                // For output operands that compute an address (gen_addr), the
-                // matching input needs a SEPARATE value register, not the address reg.
-                bool ref_is_addr = node->asm_ops[ref].is_output && !node->asm_ops[ref].is_rw;
-                if (ref_is_addr) {
-                    // Allocate a fresh register for the input value,
-                    // then move it into the output register so the asm
-                    // finds it in the shared register.
+                op_regs[i] = r;
+                op->reg = r;
+                strncpy(op->asm_str, node->asm_ops[ref].asm_str, sizeof(op->asm_str) - 1);
+                op->asm_str[sizeof(op->asm_str) - 1] = '\0';
+                // Load the input value into the shared register (it acts as the initial
+                // value for a read-write operand linked to the output).
+                if (r >= 0) {
                     int r_in = gen(op->expr);
-                    printf("  mov %s, %s\n", reg64[r], reg64[r_in]);
+                    if (r_in != r)
+                        printf("  mov %s, %s\n", reg64[r], reg64[r_in]);
                     free_reg(r_in);
-                    op_regs[i] = r;
-                    op->reg = r;
-                    snprintf(op->asm_str, sizeof(op->asm_str), "%s", reg64[r]);
-                } else {
-                    op_regs[i] = r;
-                    op->reg = r;
-                    strncpy(op->asm_str, node->asm_ops[ref].asm_str, sizeof(op->asm_str) - 1);
-                    op->asm_str[sizeof(op->asm_str) - 1] = '\0';
-                    if (r >= 0) {
-                        int r_in = gen(op->expr);
-                        if (r_in != r)
-                            printf("  mov %s, %s\n", reg64[r], reg64[r_in]);
-                        free_reg(r_in);
-                    }
                 }
             }
         }
@@ -4407,19 +4388,19 @@ static int gen(Node *node) {
                 int r = gen_addr(op->expr);
                 op_regs[i] = r;
                 op->reg = r;
-                snprintf(op->asm_str, sizeof(op->asm_str), "(%s)", reg64[r]);
+                snprintf(op->asm_str, sizeof(op->asm_str), "(%%%s)", reg64[r]);
             } else {
                 // register input: load value
                 int r = gen(op->expr);
                 op_regs[i] = r;
                 op->reg = r;
                 int sz = op->expr->ty ? op->expr->ty->size : 4;
-                snprintf(op->asm_str, sizeof(op->asm_str), "%s", reg(r, sz));
+                snprintf(op->asm_str, sizeof(op->asm_str), "%%%s", reg(r, sz));
             }
         }
 
         // Emit template with operand substitution, wrapped in AT&T syntax
-        /* inline asm already in AT&T */
+        printf(".att_syntax prefix\n");
 
         // Translate TCC-specific {$}N to GAS-immediate $N in AT&T syntax
         char adj[4096];
@@ -4486,7 +4467,7 @@ static int gen(Node *node) {
         out[olen] = '\0';
         printf("%s\n", out);
 
-        /* AT&T syntax is now the default */
+        printf(".intel_syntax noprefix\n");
 
         for (int i = 0; i < node->asm_noperands; i++)
             if (op_regs[i] >= 0) free_reg(op_regs[i]);
@@ -4505,12 +4486,12 @@ static int gen(Node *node) {
         printf("  mov x16, %s\n", STACK_REG);
         printf("  str x16, [%s, #16]\n", reg64[r]);
 #else
-        printf("  movl $%d, (%s)\n", va_gp_start, reg64[r]);
-        printf("  movl $%d, 4(%s)\n", va_fp_start, reg64[r]);
-        printf("  leaq %d(%%rbp), %%rdx\n", va_st_start);
-        printf("  movq %%rdx, 8(%s)\n", reg64[r]);
-        printf("  leaq -%d(%%rbp), %%rdx\n", va_reg_save_ofs);
-        printf("  movq %%rdx, 16(%s)\n", reg64[r]);
+        printf("  mov dword ptr [%s], %d\n", reg64[r], va_gp_start);
+        printf("  mov dword ptr [%s + 4], %d\n", reg64[r], va_fp_start);
+        printf("  lea rdx, [rbp+%d]\n", va_st_start);
+        printf("  mov [%s + 8], rdx\n", reg64[r]);
+        printf("  lea rdx, [rbp-%d]\n", va_reg_save_ofs);
+        printf("  mov [%s + 16], rdx\n", reg64[r]);
 #endif
         free_reg(r);
         return -1;
@@ -4533,12 +4514,12 @@ static int gen(Node *node) {
         int rs = gen(node->rhs);
         int rpop = alloc_reg();
         printf("  pop %s\n", reg64[rpop]);
-        printf("  movq %s, %%rcx\n", reg64[rs]);
-        printf("  movq %%rcx, (%s)\n", reg64[rpop]);
-        printf("  movq 8(%s), %%rcx\n", reg64[rs]);
-        printf("  movq %%rcx, 8(%s)\n", reg64[rpop]);
-        printf("  movq 16(%s), %%rcx\n", reg64[rs]);
-        printf("  movq %%rcx, 16(%s)\n", reg64[rpop]);
+        printf("  mov rcx, %s\n", reg64[rs]);
+        printf("  mov [%s], rcx\n", reg64[rpop]);
+        printf("  mov rcx, [%s + 8]\n", reg64[rs]);
+        printf("  mov [%s + 8], rcx\n", reg64[rpop]);
+        printf("  mov rcx, [%s + 16]\n", reg64[rs]);
+        printf("  mov [%s + 16], rcx\n", reg64[rpop]);
         free_reg(rs);
         free_reg(rpop);
 #endif
@@ -4612,36 +4593,36 @@ static int gen(Node *node) {
 #else
         bool is_ptr_struct = (ty->kind == TY_STRUCT || ty->kind == TY_UNION) && ty->size > 8;
         if (is_fp) {
-            printf("  cmpl $160, 4(%s)\n", reg64[r]);
+            printf("  cmp dword ptr [%s + 4], 160\n", reg64[r]);
             printf("  ja .L.va_overflow.%d\n", rcc_label_count);
-            printf("  movl 4(%s), %%ecx\n", reg64[r]);
-            printf("  addq 16(%s), %%rcx\n", reg64[r]);
-            printf("  addl $16, 4(%s)\n", reg64[r]);
+            printf("  mov ecx, dword ptr [%s + 4]\n", reg64[r]);
+            printf("  add rcx, [%s + 16]\n", reg64[r]);
+            printf("  add dword ptr [%s + 4], 16\n", reg64[r]);
             printf("  jmp .L.va_done.%d\n", rcc_label_count);
         } else if (is_ptr_struct) {
-            printf("  cmpl $40, (%s)\n", reg64[r]);
+            printf("  cmp dword ptr [%s], 40\n", reg64[r]);
             printf("  ja .L.va_overflow.%d\n", rcc_label_count);
-            printf("  movl (%s), %%ecx\n", reg64[r]);
-            printf("  addq 16(%s), %%rcx\n", reg64[r]);
-            printf("  movq (%%rcx), %%rcx\n");
-            printf("  addl $8, (%s)\n", reg64[r]);
+            printf("  mov ecx, dword ptr [%s]\n", reg64[r]);
+            printf("  add rcx, [%s + 16]\n", reg64[r]);
+            printf("  mov rcx, [rcx]\n");
+            printf("  add dword ptr [%s], 8\n", reg64[r]);
             printf("  jmp .L.va_done.%d\n", rcc_label_count);
         } else {
-            printf("  cmpl $40, (%s)\n", reg64[r]);
+            printf("  cmp dword ptr [%s], 40\n", reg64[r]);
             printf("  ja .L.va_overflow.%d\n", rcc_label_count);
-            printf("  movl (%s), %%ecx\n", reg64[r]);
-            printf("  addq 16(%s), %%rcx\n", reg64[r]);
-            printf("  addl $8, (%s)\n", reg64[r]);
+            printf("  mov ecx, dword ptr [%s]\n", reg64[r]);
+            printf("  add rcx, [%s + 16]\n", reg64[r]);
+            printf("  add dword ptr [%s], 8\n", reg64[r]);
             printf("  jmp .L.va_done.%d\n", rcc_label_count);
         }
         printf(".L.va_overflow.%d:\n", rcc_label_count);
-        printf("  movq 8(%s), %%rcx\n", reg64[r]);
-        printf("  leaq 8(%%rcx), %%rdx\n");
-        printf("  movq %%rdx, 8(%s)\n", reg64[r]);
+        printf("  mov rcx, [%s + 8]\n", reg64[r]);
+        printf("  lea rdx, [rcx + 8]\n");
+        printf("  mov [%s + 8], rdx\n", reg64[r]);
         if (is_ptr_struct)
-            printf("  movq (%%rcx), %%rcx\n");
+            printf("  mov rcx, [rcx]\n");
         printf(".L.va_done.%d:\n", rcc_label_count);
-        printf("  movq %%rcx, %s\n", reg64[r]);
+        printf("  mov %s, rcx\n", reg64[r]);
 #endif
         rcc_label_count++;
         return r;
@@ -4662,18 +4643,13 @@ static int gen(Node *node) {
             emit_load(node->ty, r, format("[%s]", reg64[r_addr]));
 #else
         if (sz < 4) {
-            if (sz == 1)
-                printf("  %s (%s), %s\n",
-                       use_unsigned(node->ty) ? "movzbl" : "movsbl",
-                       reg64[r_addr], reg(r, 4));
-            else
-                printf("  %s (%s), %s\n",
-                       use_unsigned(node->ty) ? "movzwl" : "movswl",
-                       reg64[r_addr], reg(r, 4));
-        } else if (sz == 4) {
-            printf("  movl (%s), %s\n", reg64[r_addr], reg(r, 4));
+            printf("  %s %s, %s ptr [%s]\n",
+                   use_unsigned(node->ty) ? "movzx" : "movsx",
+                   reg(r, 4),
+                   sz == 1 ? "byte" : "word",
+                   reg64[r_addr]);
         } else {
-            printf("  movq (%s), %s\n", reg64[r_addr], reg(r, 8));
+            printf("  mov %s, %s ptr [%s]\n", reg(r, sz), sz == 4 ? "dword" : "qword", reg64[r_addr]);
         }
         if (ord == MEMORDER_SEQ_CST)
             printf("  mfence\n");
@@ -4702,7 +4678,10 @@ static int gen(Node *node) {
         if (ord == MEMORDER_SEQ_CST)
             printf("  dmb ish\n");
 #else
-        printf("  mov%c %s, (%s)\n", size_suffix(sz), reg(r_val, sz), reg64[r_addr]);
+        printf("  mov %s ptr [%s], %s\n", (sz == 1 ? "byte" : sz == 2 ? "word"
+                                               : sz == 4              ? "dword"
+                                                                      : "qword"),
+               reg64[r_addr], reg(r_val, sz));
         if (ord == MEMORDER_SEQ_CST)
             printf("  mfence\n");
 #endif
@@ -4733,15 +4712,18 @@ static int gen(Node *node) {
         }
         printf("  cbnz w9, .L.atom_xchg.%d\n", lbl);
 #else
-        printf("  xchg%c %s, (%s)\n", size_suffix(sz), reg(r_val, sz), reg64[r_addr]);
+        printf("  xchg %s ptr [%s], %s\n", (sz == 1 ? "byte" : sz == 2 ? "word"
+                                                : sz == 4              ? "dword"
+                                                                       : "qword"),
+               reg64[r_addr], reg(r_val, sz));
         if (sz < 4) {
-            printf("  mov %s, %s\n", reg(r_val, sz), reg(r_result, sz));
+            printf("  mov %s, %s\n", reg(r_result, sz), reg(r_val, sz));
             if (use_unsigned(node->ty))
                 zero_extend_to(r_result, sz, 4);
             else
                 sign_extend_to(r_result, sz, 4);
         } else {
-            printf("  mov %s, %s\n", reg(r_val, sz), reg(r_result, sz));
+            printf("  mov %s, %s\n", reg(r_result, sz), reg(r_val, sz));
         }
 #endif
         free_reg(r_val);
@@ -4797,22 +4779,29 @@ static int gen(Node *node) {
         free_reg(r_expected);
 #else
         int r_expected = alloc_reg();
-        if (sz == 1)
-            printf("  movsbl (%s), %s\n", reg64[r_expectedaddr], sz == 8 ? "%rax" : "%eax");
-        else if (sz == 2)
-            printf("  movswl (%s), %s\n", reg64[r_expectedaddr], sz == 8 ? "%rax" : "%eax");
-        else if (sz == 4)
-            printf("  movl (%s), %s\n", reg64[r_expectedaddr], sz == 8 ? "%rax" : "%eax");
-        else
-            printf("  movq (%s), %s\n", reg64[r_expectedaddr], sz == 8 ? "%rax" : "%eax");
-        printf("  lock cmpxchg%c %s, (%s)\n", size_suffix(sz), reg(r_desired, sz), reg64[r_addr]);
+        Type *elem_ty_x86 = node->lhs->ty && node->lhs->ty->base ? node->lhs->ty->base : ty_int;
+        if (sz < 4) {
+            printf("  %s %s, %s ptr [%s]\n",
+                   use_unsigned(elem_ty_x86) ? "movzx" : "movsx",
+                   sz == 8 ? "rax" : "eax",
+                   sz == 1 ? "byte" : "word",
+                   reg64[r_expectedaddr]);
+        } else {
+            printf("  mov %s, %s ptr [%s]\n", sz == 8 ? "rax" : "eax",
+                   sz == 4 ? "dword" : "qword", reg64[r_expectedaddr]);
+        }
+        printf("  lock cmpxchg %s ptr [%s], %s\n", (sz == 1 ? "byte" : sz == 2 ? "word"
+                                                        : sz == 4              ? "dword"
+                                                                               : "qword"),
+               reg64[r_addr], reg(r_desired, sz));
         printf("  sete %s\n", reg8[r_result]);
-        printf("  movzbl %s, %s\n", reg8[r_result], reg32[r_result]);
-        printf("  mov%c %s, (%s)\n", size_suffix(sz),
-               sz == 1 ? "%al" : sz == 2 ? "%ax"
-                   : sz == 4             ? "%eax"
-                                         : "%rax",
-               reg64[r_expectedaddr]);
+        printf("  movzx %s, %s\n", reg64[r_result], reg8[r_result]);
+        printf("  mov %s ptr [%s], %s\n", (sz == 1 ? "byte" : sz == 2 ? "word"
+                                               : sz == 4              ? "dword"
+                                                                      : "qword"),
+               reg64[r_expectedaddr], sz == 1 ? "al" : sz == 2 ? "ax"
+                   : sz == 4                                   ? "eax"
+                                                               : "rax");
         free_reg(r_expected);
 #endif
         free_reg(r_desired);
@@ -4900,19 +4889,29 @@ static int gen(Node *node) {
             if (op == 1)
                 printf("  neg %s\n", reg(r_val, sz));
             // Save val to stack before xadd clobbers it
-            printf("  mov%c %s, -%d(%%rbp)\n", size_suffix(sz), reg(r_val, sz), spill_logand);
-            printf("  mov %s, %s\n", reg(r_val, sz), reg(r_old, sz));
+            printf("  mov %s ptr [rbp-%d], %s\n", (sz == 1 ? "byte" : sz == 2 ? "word"
+                                                       : sz == 4              ? "dword"
+                                                                              : "qword"),
+                   spill_logand, reg(r_val, sz));
+            printf("  mov %s, %s\n", reg(r_old, sz), reg(r_val, sz));
             free_reg(r_val);
             if (r_old == r_addr && (spilled_regs & (1 << r_addr))) {
-                printf("  mov -%d(%%rbp), %s\n", spill_offset(r_addr), reg64[r_addr]);
+                printf("  mov %s, [rbp-%d]\n", reg64[r_addr], spill_offset(r_addr));
             }
-            printf("  lock xadd%c %s, (%s)\n", size_suffix(sz), reg(r_old, sz), reg64[r_addr]);
+            printf("  lock xadd %s ptr [%s], %s\n", (sz == 1 ? "byte" : sz == 2 ? "word"
+                                                         : sz == 4              ? "dword"
+                                                                                : "qword"),
+                   reg64[r_addr], reg(r_old, sz));
             free_reg(r_addr);
             if (node->atomic_ord == MEMORDER_SEQ_CST)
                 printf("  mfence\n");
             if (is_store) {
                 // add_fetch/sub_fetch: return new value = old + val
-                printf("  add%c -%d(%%rbp), %s\n", size_suffix(sz), spill_logand, reg(r_old, sz));
+                printf("  add %s, %s ptr [rbp-%d]\n", reg(r_old, sz),
+                       (sz == 1 ? "byte" : sz == 2 ? "word"
+                            : sz == 4              ? "dword"
+                                                   : "qword"),
+                       spill_logand);
             }
             if (sz < 4) {
                 if (!use_unsigned(node->ty))
@@ -4923,31 +4922,64 @@ static int gen(Node *node) {
             return r_old;
         } else {
             // Save r_val to stack before it might be spilled
-            printf("  mov%c %s, -%d(%%rbp)\n", size_suffix(sz), reg(r_val, sz), spill_logand);
+            printf("  mov %s ptr [rbp-%d], %s\n", (sz == 1 ? "byte" : sz == 2 ? "word"
+                                                       : sz == 4              ? "dword"
+                                                                              : "qword"),
+                   spill_logand, reg(r_val, sz));
             free_reg(r_val);
             int r_new = alloc_reg();
             int lbl2 = rcc_label_count++;
             printf(".L.atom_fop.%d:\n", lbl2);
             if (r_new == r_addr && (spilled_regs & (1 << r_addr))) {
-                printf("  mov -%d(%%rbp), %s\n", spill_offset(r_addr), reg64[r_addr]);
+                printf("  mov %s, [rbp-%d]\n", reg64[r_addr], spill_offset(r_addr));
             } else if (r_old == r_addr && (spilled_regs & (1 << r_addr))) {
-                printf("  mov -%d(%%rbp), %s\n", spill_offset(r_addr), reg64[r_addr]);
+                printf("  mov %s, [rbp-%d]\n", reg64[r_addr], spill_offset(r_addr));
             }
-            printf("  mov%c (%s), %s\n", size_suffix(sz), reg64[r_addr], reg(r_old, sz));
+            printf("  mov %s, %s ptr [%s]\n", reg(r_old, sz), (sz == 1 ? "byte" : sz == 2 ? "word"
+                                                                   : sz == 4              ? "dword"
+                                                                                          : "qword"),
+                   reg64[r_addr]);
             // Save old value before computing new (r_old may == r_new)
-            printf("  mov%c %s, -%d(%%rbp)\n", size_suffix(sz), reg(r_old, sz), spill_atomic_old);
-            printf("  mov %s, %s\n", reg(r_old, sz), reg(r_new, sz));
-            char sc = size_suffix(sz);
+            printf("  mov %s ptr [rbp-%d], %s\n", (sz == 1 ? "byte" : sz == 2 ? "word"
+                                                       : sz == 4              ? "dword"
+                                                                              : "qword"),
+                   spill_atomic_old, reg(r_old, sz));
+            printf("  mov %s, %s\n", reg(r_new, sz), reg(r_old, sz));
             switch (op) {
-            case 2: printf("  or%c -%d(%%rbp), %s\n", sc, spill_logand, reg(r_new, sz)); break;
-            case 3: printf("  xor%c -%d(%%rbp), %s\n", sc, spill_logand, reg(r_new, sz)); break;
-            case 4: printf("  and%c -%d(%%rbp), %s\n", sc, spill_logand, reg(r_new, sz)); break;
+            case 2:
+                printf("  or %s, %s ptr [rbp-%d]\n", reg(r_new, sz),
+                       (sz == 1 ? "byte" : sz == 2 ? "word"
+                            : sz == 4              ? "dword"
+                                                   : "qword"),
+                       spill_logand);
+                break;
+            case 3:
+                printf("  xor %s, %s ptr [rbp-%d]\n", reg(r_new, sz),
+                       (sz == 1 ? "byte" : sz == 2 ? "word"
+                            : sz == 4              ? "dword"
+                                                   : "qword"),
+                       spill_logand);
+                break;
+            case 4:
+                printf("  and %s, %s ptr [rbp-%d]\n", reg(r_new, sz),
+                       (sz == 1 ? "byte" : sz == 2 ? "word"
+                            : sz == 4              ? "dword"
+                                                   : "qword"),
+                       spill_logand);
+                break;
             case 5:
-                printf("  and%c -%d(%%rbp), %s\n", sc, spill_logand, reg(r_new, sz));
+                printf("  and %s, %s ptr [rbp-%d]\n", reg(r_new, sz),
+                       (sz == 1 ? "byte" : sz == 2 ? "word"
+                            : sz == 4              ? "dword"
+                                                   : "qword"),
+                       spill_logand);
                 printf("  not %s\n", reg(r_new, sz));
                 break;
             }
-            printf("  lock cmpxchg%c %s, (%s)\n", size_suffix(sz), reg(r_new, sz), reg64[r_addr]);
+            printf("  lock cmpxchg %s ptr [%s], %s\n", (sz == 1 ? "byte" : sz == 2 ? "word"
+                                                            : sz == 4              ? "dword"
+                                                                                   : "qword"),
+                   reg64[r_addr], reg(r_new, sz));
             printf("  jne .L.atom_fop.%d\n", lbl2);
             if (node->atomic_ord == MEMORDER_SEQ_CST)
                 printf("  mfence\n");
@@ -4962,7 +4994,11 @@ static int gen(Node *node) {
             } else {
                 free_reg(r_new);
                 if (r_old == r_new)
-                    printf("  mov%c %s, -%d(%%rbp)\n", size_suffix(sz), reg(r_old, sz), spill_atomic_old);
+                    printf("  mov %s, %s ptr [rbp-%d]\n", reg(r_old, sz),
+                           (sz == 1 ? "byte" : sz == 2 ? "word"
+                                : sz == 4              ? "dword"
+                                                       : "qword"),
+                           spill_atomic_old);
                 if (sz < 4 && !use_unsigned(node->ty))
                     sign_extend_to(r_old, sz, 4);
                 else if (sz < 4)
@@ -5000,8 +5036,8 @@ static int gen(Node *node) {
         }
         printf("  fmov %s, d0\n", reg64[r_lhs]);
 #else
-        printf("  movq %s, %%xmm0\n", reg64[r_lhs]);
-        printf("  movq %s, %%xmm1\n", reg64[r_rhs]);
+        printf("  movq xmm0, %s\n", reg64[r_lhs]);
+        printf("  movq xmm1, %s\n", reg64[r_rhs]);
         free_reg(r_rhs);
         char *inst = "";
         if (node->kind == ND_ADD) inst = "addsd";
@@ -5011,12 +5047,12 @@ static int gen(Node *node) {
             inst = "mulsd";
         else if (node->kind == ND_DIV)
             inst = "divsd";
-        printf("  %s %%xmm1, %%xmm0\n", inst);
+        printf("  %s xmm0, xmm1\n", inst);
         if (node->ty->kind == TY_FLOAT) {
-            printf("  cvtsd2ss %%xmm0, %%xmm0\n");
-            printf("  cvtss2sd %%xmm0, %%xmm0\n");
+            printf("  cvtsd2ss xmm0, xmm0\n");
+            printf("  cvtss2sd xmm0, xmm0\n");
         }
-        printf("  movq %%xmm0, %s\n", reg64[r_lhs]);
+        printf("  movq %s, xmm0\n", reg64[r_lhs]);
 #endif
         free_reg(r_rhs);
         return r_lhs;
@@ -5040,23 +5076,23 @@ static int gen(Node *node) {
             cset_cond = "ls";
         printf("  cset %s, %s\n", reg(r_lhs, 4), cset_cond);
 #else
-        printf("  movq %s, %%xmm0\n", reg64[r_lhs]);
-        printf("  movq %s, %%xmm1\n", reg64[r_rhs]);
-        printf("  ucomisd %%xmm1, %%xmm0\n");
+        printf("  movq xmm0, %s\n", reg64[r_lhs]);
+        printf("  movq xmm1, %s\n", reg64[r_rhs]);
+        printf("  ucomisd xmm0, xmm1\n");
         if (node->kind == ND_EQ) {
-            printf("  sete %%al\n");
-            printf("  setnp %%cl\n");
-            printf("  andb %%cl, %%al\n");
+            printf("  sete al\n");
+            printf("  setnp cl\n");
+            printf("  and al, cl\n");
         } else if (node->kind == ND_NE) {
-            printf("  setne %%al\n");
-            printf("  setp %%cl\n");
-            printf("  orb %%cl, %%al\n");
+            printf("  setne al\n");
+            printf("  setp cl\n");
+            printf("  or al, cl\n");
         } else if (node->kind == ND_LT) {
-            printf("  setb %%al\n");
+            printf("  setb al\n");
         } else if (node->kind == ND_LE) {
-            printf("  setbe %%al\n");
+            printf("  setbe al\n");
         }
-        printf("  movzbl %%al, %s\n", reg(r_lhs, 4));
+        printf("  movzx %s, al\n", reg(r_lhs, 4));
 #endif
         free_reg(r_rhs);
         return r_lhs;
@@ -5078,19 +5114,19 @@ static int gen(Node *node) {
             free_reg(tmp);
         }
 #else
-        printf("  mov %s, %s\n", reg(r_lhs, sz), sz == 8 ? "%rax" : "%eax");
+        printf("  mov %s, %s\n", sz == 8 ? "rax" : "eax", reg(r_lhs, sz));
         if (is_unsigned) {
             if (sz == 8)
-                printf("  xorl %%edx, %%edx\n");
+                printf("  xor edx, edx\n");
             else
-                printf("  xorl %%edx, %%edx\n");
+                printf("  xor edx, edx\n");
         } else {
             if (sz == 8) printf("  cqo\n");
             else
                 printf("  cdq\n");
         }
         printf("  %s %s\n", is_unsigned ? "div" : "idiv", reg(r_rhs, sz));
-        printf("  mov %s, %s\n", node->kind == ND_DIV ? (sz == 8 ? "%rax" : "%eax") : (sz == 8 ? "%rdx" : "%edx"), reg(r_lhs, sz));
+        printf("  mov %s, %s\n", reg(r_lhs, sz), node->kind == ND_DIV ? (sz == 8 ? "rax" : "eax") : (sz == 8 ? "rdx" : "edx"));
 #endif
         free_reg(r_rhs);
         return r_lhs;
@@ -5115,11 +5151,11 @@ static int gen(Node *node) {
         }
 #else
         if (node->rhs->kind == ND_NUM) {
-            printf("  %s $%d, %s\n", node->kind == ND_SHL ? "shl" : (use_unsigned(node->ty) ? "shr" : "sar"), (int)node->rhs->val, reg(r_lhs, sz));
+            printf("  %s %s, %d\n", node->kind == ND_SHL ? "shl" : (use_unsigned(node->ty) ? "shr" : "sar"), reg(r_lhs, sz), (int)node->rhs->val);
         } else {
             int r_rhs = gen(node->rhs);
-            printf("  movl %s, %%ecx\n", reg(r_rhs, 4));
-            printf("  %s %%cl, %s\n", node->kind == ND_SHL ? "shl" : (use_unsigned(node->ty) ? "shr" : "sar"), reg(r_lhs, sz));
+            printf("  mov ecx, %s\n", reg(r_rhs, 4));
+            printf("  %s %s, cl\n", node->kind == ND_SHL ? "shl" : (use_unsigned(node->ty) ? "shr" : "sar"), reg(r_lhs, sz));
             free_reg(r_rhs);
         }
 #endif
@@ -5215,9 +5251,9 @@ static int gen(Node *node) {
                     shift++;
                     tmp >>= 1;
                 }
-                printf("  shl $%d, %s\n", shift, reg(r_lhs, sz));
+                printf("  shl %s, %d\n", reg(r_lhs, sz), shift);
             } else {
-                printf("  %s $%d, %s\n", inst, imm, reg(r_lhs, sz));
+                printf("  %s %s, %d\n", inst, reg(r_lhs, sz), imm);
 #endif
             }
         } else {
@@ -5238,8 +5274,8 @@ static int gen(Node *node) {
             // 32-bit writes zero-extend in x86-64, so without this a negative
             // int would be treated as a large positive offset.
             if (sz == 8 && op_size(node->rhs->ty) == 4 && !use_unsigned(node->rhs->ty))
-                printf("  movslq %s, %s\n", reg(r_rhs, 4), reg64[r_rhs]);
-            printf("  %s %s, %s\n", inst, reg(r_rhs, sz), reg(r_lhs, sz));
+                printf("  movsxd %s, %s\n", reg64[r_rhs], reg(r_rhs, 4));
+            printf("  %s %s, %s\n", inst, reg(r_lhs, sz), reg(r_rhs, sz));
             // Pointer subtraction: divide byte difference by element size
             if (node->kind == ND_SUB && node->lhs->ty->base && node->rhs->ty->base) {
                 int elem_sz = node->lhs->ty->base->size;
@@ -5252,17 +5288,17 @@ static int gen(Node *node) {
                             shift++;
                             tmp >>= 1;
                         }
-                        printf("  sar $%d, %s\n", shift, reg(r_lhs, sz));
+                        printf("  sar %s, %d\n", reg(r_lhs, sz), shift);
                     } else {
                         // Non-power of 2: use idiv
-                        printf("  mov %s, %s\n", reg(r_lhs, sz), sz == 8 ? "%rax" : "%eax");
+                        printf("  mov %s, %s\n", sz == 8 ? "rax" : "eax", reg(r_lhs, sz));
                         if (sz == 8)
                             printf("  cqo\n");
                         else
                             printf("  cdq\n");
-                        printf("  mov $%d, %s\n", elem_sz, sz == 8 ? "%r11" : "%r11d");
-                        printf("  idiv %s\n", sz == 8 ? "%r11" : "%r11d");
-                        printf("  mov %s, %s\n", sz == 8 ? "%rax" : "%eax", reg(r_lhs, sz));
+                        printf("  mov %s, %d\n", sz == 8 ? "r11" : "r11d", elem_sz);
+                        printf("  idiv %s\n", sz == 8 ? "r11" : "r11d");
+                        printf("  mov %s, %s\n", reg(r_lhs, sz), sz == 8 ? "rax" : "eax");
                     }
                 }
             }
@@ -5290,8 +5326,8 @@ static int gen(Node *node) {
                 set = use_unsigned_cmp(node) ? "setb" : "setl";
             else if (node->kind == ND_LE)
                 set = use_unsigned_cmp(node) ? "setbe" : "setle";
-            printf("  %s %%al\n", set);
-            printf("  movzbl %%al, %s\n", reg(r_lhs, op_size(node->ty)));
+            printf("  %s al\n", set);
+            printf("  movzx %s, al\n", reg(r_lhs, op_size(node->ty)));
 #endif
         }
         return r_lhs;
@@ -5304,20 +5340,19 @@ static int gen(Node *node) {
 #ifndef ARCH_ARM64
 // Helper: map 64-bit register name to 32-bit
 static const char *to32(const char *r64) {
-    if (r64[0] == '%') r64++;
-    if (!strcmp(r64, "rax")) return "%eax";
-    if (!strcmp(r64, "rcx")) return "%ecx";
-    if (!strcmp(r64, "rdx")) return "%edx";
-    if (!strcmp(r64, "r8")) return "%r8d";
-    if (!strcmp(r64, "r9")) return "%r9d";
-    if (!strcmp(r64, "r10")) return "%r10d";
-    if (!strcmp(r64, "r11")) return "%r11d";
-    if (!strcmp(r64, "rbx")) return "%ebx";
-    if (!strcmp(r64, "r12")) return "%r12d";
-    if (!strcmp(r64, "r13")) return "%r13d";
-    if (!strcmp(r64, "r14")) return "%r14d";
-    if (!strcmp(r64, "r15")) return "%r15d";
-    if (!strcmp(r64, "rsi")) return "%esi";
+    if (!strcmp(r64, "rax")) return "eax";
+    if (!strcmp(r64, "rcx")) return "ecx";
+    if (!strcmp(r64, "rdx")) return "edx";
+    if (!strcmp(r64, "r8")) return "r8d";
+    if (!strcmp(r64, "r9")) return "r9d";
+    if (!strcmp(r64, "r10")) return "r10d";
+    if (!strcmp(r64, "r11")) return "r11d";
+    if (!strcmp(r64, "rbx")) return "ebx";
+    if (!strcmp(r64, "r12")) return "r12d";
+    if (!strcmp(r64, "r13")) return "r13d";
+    if (!strcmp(r64, "r14")) return "r14d";
+    if (!strcmp(r64, "r15")) return "r15d";
+    if (!strcmp(r64, "rsi")) return "esi";
     return NULL;
 }
 #endif
@@ -5351,50 +5386,64 @@ static int peep_label(char *line, char *lbl, int lbl_sz) {
 
 #ifndef ARCH_ARM64
 static int peep_mov_rbp_reg(char *line, int *off, char *reg, int reg_sz) {
-    // AT&T: mov[lq] %reg, -N(%rbp)  (store reg to [rbp-N])
-    if (strncmp(line, "  mov", 5) != 0) return 0;
-    char *p = line + 5;
-    if (*p == 'l' || *p == 'q') p++;
-    if (*p != ' ') return 0;
-    p++;
-    char *comma = strchr(p, ',');
-    if (!comma) return 0;
-    int rlen = comma - p;
-    if (rlen >= reg_sz) return 0;
-    memcpy(reg, p, rlen);
-    reg[rlen] = '\0';
-    p = comma + 1;
+    if (strncmp(line, "  mov [rbp-", 11) != 0) return 0;
+    char *p = line + 11;
+    char *end = strchr(p, ']');
+    if (!end) return 0;
+    *end = '\0';
+    *off = atoi(p);
+    *end = ']';
+    p = end + 1;
     while (*p == ' ' || *p == '\t') p++;
-    int n;
-    if (sscanf(p, "-%d(%%rbp)", &n) == 1) {
-        *off = n;
-        return 1;
-    }
-    return 0;
+    if (*p != ',') return 0;
+    p++;
+    while (*p == ' ' || *p == '\t') p++;
+    int len = strlen(p);
+    if (len >= reg_sz) return 0;
+    memcpy(reg, p, len + 1);
+    return 1;
 }
 static int peep_mov_reg_rbp(char *line, char *dst, int dst_sz, char *szword, int *off) {
-    (void)dst_sz;
-    // AT&T: mov[lq] -N(%%rbp), %%reg  (load from [rbp-N] into reg)
-    if (strncmp(line, "  mov", 5) != 0) return 0;
-    char *p = line + 5;
-    if (p[0] == 'l') {
+    if (strncmp(line, "  mov ", 6) != 0) return 0;
+    char *p = line + 6;
+    char *comma = strchr(p, ',');
+    if (!comma) return 0;
+    int dlen = comma - p;
+    if (dlen >= dst_sz) return 0;
+    memcpy(dst, p, dlen);
+    dst[dlen] = '\0';
+    p = comma + 1;
+    while (*p == ' ' || *p == '\t') p++;
+    if (strncmp(p, "dword ptr [rbp-", 15) == 0) {
         if (szword) strcpy(szword, "dword");
-        p++;
-    } else if (p[0] == 'q') {
+        p += 15;
+    } else if (strncmp(p, "qword ptr [rbp-", 15) == 0) {
         if (szword) strcpy(szword, "qword");
-        p++;
+        p += 15;
     } else
         return 0;
-    if (*p != ' ') return 0;
-    p++;
-    if (sscanf(p, "-%d(%%rbp), %s", off, dst) == 2)
-        return 1;
-    return 0;
+    char *end = strchr(p, ']');
+    if (!end) return 0;
+    *end = '\0';
+    *off = atoi(p);
+    *end = ']';
+    return 1;
 }
 static int peep_mov_rbp_imm(char *line, int *off, int *val) {
-    // AT&T: movl $imm, -N(%%rbp)
-    if (sscanf(line, "  movl $%d, -%d(%%rbp)", val, off) == 2) return 1;
-    return 0;
+    if (strncmp(line, "  mov dword ptr [rbp-", 21) != 0) return 0;
+    char *p = line + 21;
+    char *end = strchr(p, ']');
+    if (!end) return 0;
+    *end = '\0';
+    *off = atoi(p);
+    *end = ']';
+    p = end + 1;
+    while (*p == ' ' || *p == '\t') p++;
+    if (*p != ',') return 0;
+    p++;
+    while (*p == ' ' || *p == '\t') p++;
+    *val = atoi(p);
+    return 1;
 }
 static int peep_jmp(char *line, char *lbl, int lbl_sz) {
     if (strncmp(line, "  jmp ", 6) != 0) return 0;
@@ -5405,24 +5454,20 @@ static int peep_jmp(char *line, char *lbl, int lbl_sz) {
     return 1;
 }
 static int peep_mov_reg_imm(char *line, char *reg, int reg_sz, int *imm) {
-    // AT&T: mov[lq]? $imm, %reg
-    if (strncmp(line, "  mov", 5) != 0) return 0;
-    char *p = line + 5;
-    if (*p == 'l' || *p == 'q') p++;
-    if (*p != ' ') return 0;
-    p++;
-    if (*p != '$') return 0;
-    p++;
+    if (strncmp(line, "  mov ", 6) != 0) return 0;
+    char *p = line + 6;
+    char *comma = strchr(p, ',');
+    if (!comma) return 0;
+    int rlen = comma - p;
+    if (rlen >= reg_sz) return 0;
+    memcpy(reg, p, rlen);
+    reg[rlen] = '\0';
+    p = comma + 1;
+    while (*p == ' ' || *p == '\t') p++;
     char *endp;
     long v = strtol(p, &endp, 0);
     if (endp == p) return 0;
     *imm = (int)v;
-    if (*endp != ',') return 0;
-    p = endp + 1;
-    while (*p == ' ' || *p == '\t') p++;
-    int rlen = strlen(p);
-    if (rlen >= reg_sz) return 0;
-    memcpy(reg, p, rlen + 1);
     return 1;
 }
 #endif
@@ -5452,30 +5497,25 @@ static int peep_op_reg_reg(char *line, char *op, int op_sz, char *dst, int dst_s
 }
 #ifndef ARCH_ARM64
 static int peep_mov_reg_mem(char *line, char *reg, int reg_sz, char *mem, int mem_sz) {
-    // AT&T: mov[lq]? mem, %reg  (load from mem into reg)
-    if (strncmp(line, "  mov", 5) != 0) return 0;
-    char *p = line + 5;
-    if (*p == 'l' || *p == 'q') p++;
-    if (*p != ' ') return 0;
-    p++;
+    if (strncmp(line, "  mov ", 6) != 0) return 0;
+    char *p = line + 6;
     char *comma = strchr(p, ',');
     if (!comma) return 0;
-    int mlen = comma - p;
-    if (mlen >= mem_sz) return 0;
-    memcpy(mem, p, mlen);
-    mem[mlen] = '\0';
+    int rlen = comma - p;
+    if (rlen >= reg_sz) return 0;
+    memcpy(reg, p, rlen);
+    reg[rlen] = '\0';
     p = comma + 1;
     while (*p == ' ' || *p == '\t') p++;
-    int rlen = strlen(p);
-    if (rlen >= reg_sz) return 0;
-    memcpy(reg, p, rlen + 1);
+    int mlen = strlen(p);
+    if (mlen >= mem_sz) return 0;
+    memcpy(mem, p, mlen + 1);
     return 1;
 }
 #endif
 
 // Helper: check if string is a register name
 static int is_reg(const char *s) {
-    if (s[0] == '%') s++;
 #ifndef ARCH_ARM64
     // x86 registers
     if (s[0] == 'r' || s[0] == 'e' || !strncmp(s, "si", 2) || !strncmp(s, "bl", 2) || !strncmp(s, "bx", 2))
@@ -5503,20 +5543,20 @@ static int reg_live_after(char **lines, int nlines, int after, int pid) {
     }
 #ifndef ARCH_ARM64
     if (pid == 0) {
-        variants[nv++] = "%rax";
-        variants[nv++] = "%eax";
-        variants[nv++] = "%al";
+        variants[nv++] = "rax";
+        variants[nv++] = "eax";
+        variants[nv++] = "al";
     } else if (pid == 1) {
-        variants[nv++] = "%rcx";
-        variants[nv++] = "%ecx";
-        variants[nv++] = "%cl";
+        variants[nv++] = "rcx";
+        variants[nv++] = "ecx";
+        variants[nv++] = "cl";
     } else if (pid == 2) {
-        variants[nv++] = "%rdx";
-        variants[nv++] = "%edx";
+        variants[nv++] = "rdx";
+        variants[nv++] = "edx";
     } else if (pid == 3) {
-        variants[nv++] = "%rbx";
-        variants[nv++] = "%ebx";
-        variants[nv++] = "%bl";
+        variants[nv++] = "rbx";
+        variants[nv++] = "ebx";
+        variants[nv++] = "bl";
     }
 #endif
     for (int k = after + 1; k < nlines && k < after + 30; k++) {
@@ -5594,23 +5634,23 @@ static int peep_pattern2(char **lines, int li, int lj) {
             off1 == off2 && !strcmp(sz, "dword")) {
             const char *r32 = to32(sr);
             if (r32) {
-                lines[lj] = format("  mov %s, %s", r32, dr);
+                lines[lj] = format("  mov %s, %s", dr, r32);
                 return 1;
             }
         }
         if (peep_mov_reg_rbp(lines[lj], dr, sizeof(dr), sz, &off2) &&
             off1 == off2 && !strcmp(sz, "qword")) {
-            lines[lj] = format("  mov %s, %s", sr, dr);
+            lines[lj] = format("  mov %s, %s", dr, sr);
             return 1;
         }
     }
-    { // 2b: movl $VAL, -N(%rbp); movl -N(%rbp), %REG
+    { // 2b: mov dword [rbp-N], VAL; mov REG, dword [rbp-N]
         int off1, off2, val;
         char dr[32], sz[16];
         if (peep_mov_rbp_imm(lines[li], &off1, &val) &&
             peep_mov_reg_rbp(lines[lj], dr, sizeof(dr), sz, &off2) &&
             off1 == off2 && !strcmp(sz, "dword")) {
-            lines[lj] = format("  movl $%d, %s", val, dr);
+            lines[lj] = format("  mov %s, %d", dr, val);
             return 1;
         }
     }
@@ -5650,29 +5690,24 @@ static int peep_pattern4(char **lines, int nlines, int li, int lj) {
 #else
     if (!peep_mov_reg_imm(lines[li], rd, sizeof(rd), &imm_val) || !is_reg(rd))
         return 0;
-    long v_check = strtol(strchr(lines[li], '$') + 1, NULL, 0);
-    if (v_check != (int)v_check) return 0;
+    char *comma = strchr(lines[li], ',');
+    if (comma) {
+        char *val = comma + 1;
+        while (*val == ' ' || *val == '\t') val++;
+        if (val[0] == '0' && (val[1] == 'x' || val[1] == 'X')) return 0;
+    }
     int rd_pid = phys_reg_id(rd);
     char op[16], od[64], os[32];
     if (!peep_op_reg_reg(lines[lj], op, sizeof(op), od, sizeof(od), os, sizeof(os)) ||
-        !same_phys(od, rd)) return 0;
-    char *opname = op;
-    int olen = strlen(op);
-    if (olen > 1 && (op[olen - 1] == 'l' || op[olen - 1] == 'q' || op[olen - 1] == 'w' || op[olen - 1] == 'b')) {
-        // tmp buffer to strip size suffix for comparison
-        static char opbase[16];
-        memcpy(opbase, op, olen - 1);
-        opbase[olen - 1] = '\0';
-        opname = opbase;
-    }
-    if (!strcmp(opname, "cmp") || !strcmp(opname, "add") || !strcmp(opname, "sub") ||
-        !strcmp(opname, "and") || !strcmp(opname, "or") || !strcmp(opname, "xor") ||
-        !strcmp(opname, "imul")) {
-        if (((!strcmp(opname, "add") || !strcmp(opname, "sub") || !strcmp(opname, "or") || !strcmp(opname, "xor")) && imm_val == 0) ||
-            (!strcmp(opname, "imul") && imm_val == 1)) {
+        !same_phys(os, rd)) return 0;
+    if (!strcmp(op, "cmp") || !strcmp(op, "add") || !strcmp(op, "sub") ||
+        !strcmp(op, "and") || !strcmp(op, "or") || !strcmp(op, "xor") ||
+        !strcmp(op, "imul")) {
+        if (((!strcmp(op, "add") || !strcmp(op, "sub") || !strcmp(op, "or") || !strcmp(op, "xor")) && imm_val == 0) ||
+            (!strcmp(op, "imul") && imm_val == 1)) {
             lines[lj][0] = '\0';
         } else {
-            lines[lj] = format("  %s $%d, %s", op, imm_val, os);
+            lines[lj] = format("  %s %s, %d", op, od, imm_val);
         }
         if (rd_pid >= 0 && !reg_live_after(lines, nlines, lj, rd_pid))
             lines[li][0] = '\0';
@@ -5692,13 +5727,13 @@ static int peep_pattern5(char **lines, int nlines, int li, int lj) {
     if (peep_mov_reg_mem(lines[li], r1, sizeof(r1), mem1, sizeof(mem1)) &&
         peep_op_reg_reg(lines[lj], op2, sizeof(op2), r2, sizeof(r2), imm2, sizeof(imm2)) &&
         peep_mov_reg_reg(lines[lk], d3, sizeof(d3), r3, sizeof(r3)) &&
-        !strcmp(r1, imm2) && !strcmp(imm2, r3) &&
+        !strcmp(r1, r2) && !strcmp(r2, r3) &&
         is_reg(d3) && !is_reg(mem1)) {
         int r1_pid = phys_reg_id(r1);
         if (r1_pid >= 0 && reg_live_after(lines, nlines, lk, r1_pid))
             return 0;
-        lines[li] = format("  mov %s, %s", mem1, d3);
-        lines[lj] = format("  %s %s, %s", op2, r2, d3);
+        lines[li] = format("  mov %s, %s", d3, mem1);
+        lines[lj] = format("  %s %s, %s", op2, d3, imm2);
         lines[lk][0] = '\0';
         return 1;
     }
@@ -5763,12 +5798,12 @@ static void emit_peephole_body(char *body_text) {
 
                     char d1[80], s1[80], d2[80], s2[80];
 
-                    // Pattern 1: mov SRC, REG; mov REG, DST -> mov SRC, DST
+                    // Pattern 1: mov REG, SRC; mov DEST, REG -> mov DEST, SRC
                     if (peep_mov_reg_reg(plines[li], d1, sizeof(d1), s1, sizeof(s1)) &&
                         peep_mov_reg_reg(plines[lj], d2, sizeof(d2), s2, sizeof(s2)) &&
-                        !strcmp(d2, s1) && is_reg(d1) && is_reg(s1) && is_reg(s2)) {
-                        plines[lj] = format("  mov %s, %s", d1, s2);
-                        int pid = phys_reg_id(s1);
+                        !strcmp(s2, d1) && is_reg(d1) && is_reg(s1)) {
+                        plines[lj] = format("  mov %s, %s", d2, s1);
+                        int pid = phys_reg_id(d1);
                         if (pid >= 0 && !reg_live_after(plines, nlines, lj, pid))
                             plines[li] = "";
                         continue;
@@ -5799,7 +5834,7 @@ void codegen(Program *prog) {
     alloca_needed = false;
     // Assembly header
 #ifndef ARCH_ARM64
-    /* AT&T syntax is now the default */
+    printf(".intel_syntax noprefix\n");
 #endif
 #ifndef _WIN32
 #if !defined(__APPLE__)
@@ -5998,18 +6033,18 @@ void codegen(Program *prog) {
         int stack_param_index = 0;
         int param_index = fn->ty->return_ty && (fn->ty->return_ty->kind == TY_STRUCT || fn->ty->return_ty->kind == TY_UNION) ? 1 : 0;
 #ifdef _WIN32
-        char *param_regs64[] = {"%rcx", "%rdx", "%r8", "%r9"};
-        char *param_regs32[] = {"%ecx", "%edx", "%r8d", "%r9d"};
-        char *param_regs16[] = {"%cx", "%dx", "%r8w", "%r9w"};
-        char *param_regs8[] = {"%cl", "%dl", "%r8b", "%r9b"};
-        char *param_xmm[] = {"%xmm0", "%xmm1", "%xmm2", "%xmm3"};
+        char *param_regs64[] = {"rcx", "rdx", "r8", "r9"};
+        char *param_regs32[] = {"ecx", "edx", "r8d", "r9d"};
+        char *param_regs16[] = {"cx", "dx", "r8w", "r9w"};
+        char *param_regs8[] = {"cl", "dl", "r8b", "r9b"};
+        char *param_xmm[] = {"xmm0", "xmm1", "xmm2", "xmm3"};
         int max_param_regs = 4;
 #else
-        char *param_regs64[] = {"%rdi", "%rsi", "%rdx", "%rcx", "%r8", "%r9"};
-        char *param_regs32[] = {"%edi", "%esi", "%edx", "%ecx", "%r8d", "%r9d"};
-        char *param_regs16[] = {"%di", "%si", "%dx", "%cx", "%r8w", "%r9w"};
-        char *param_regs8[] = {"%dil", "%sil", "%dl", "%cl", "%r8b", "%r9b"};
-        char *param_xmm[] = {"%xmm0", "%xmm1", "%xmm2", "%xmm3", "%xmm4", "%xmm5", "%xmm6", "%xmm7"};
+        char *param_regs64[] = {"rdi", "rsi", "rdx", "rcx", "r8", "r9"};
+        char *param_regs32[] = {"edi", "esi", "edx", "ecx", "r8d", "r9d"};
+        char *param_regs16[] = {"di", "si", "dx", "cx", "r8w", "r9w"};
+        char *param_regs8[] = {"dil", "sil", "dl", "cl", "r8b", "r9b"};
+        char *param_xmm[] = {"xmm0", "xmm1", "xmm2", "xmm3", "xmm4", "xmm5", "xmm6", "xmm7"};
         int max_param_regs = 6;
         int max_param_xmm = 8;
 #endif
@@ -6018,10 +6053,10 @@ void codegen(Program *prog) {
             if (is_flonum(var->ty)) {
                 if (param_index < max_param_regs) {
                     if (var->ty->size == 4) {
-                        printf("  cvtsd2ss %s, %%xmm0\n", param_xmm[param_index]);
-                        printf("  movss %%xmm0, -%d(%%rbp)\n", var->offset);
+                        printf("  cvtsd2ss xmm0, %s\n", param_xmm[param_index]);
+                        printf("  movss dword ptr [rbp-%d], xmm0\n", var->offset);
                     } else {
-                        printf("  movsd %s, -%d(%%rbp)\n", param_xmm[param_index], var->offset);
+                        printf("  movsd qword ptr [rbp-%d], %s\n", var->offset, param_xmm[param_index]);
                     }
                     param_index++;
                     param_xmm_index++;
@@ -6034,18 +6069,18 @@ void codegen(Program *prog) {
                 // Structs > 8 bytes are passed by pointer; copy to local stack
                 if ((var->ty->kind == TY_STRUCT || var->ty->kind == TY_UNION) && var->ty->size > 8) {
                     int c = ++rcc_label_count;
-                    printf("  movq %s, %%r11\n", preg);
-                    printf("  movq $%d, %%r10\n", var->ty->size);
+                    printf("  mov r11, %s\n", preg);
+                    printf("  mov r10, %d\n", var->ty->size);
                     printf(".L.pcopy.%d:\n", c);
-                    printf("  cmpq $0, %%r10\n");
+                    printf("  cmp r10, 0\n");
                     printf("  je .L.pcopy_end.%d\n", c);
-                    printf("  movb -1(%%r11,%%r10), %%al\n");
-                    printf("  movb %%al, -%d-1(%%rbp,%%r10)\n", var->offset);
-                    printf("  subq $1, %%r10\n");
+                    printf("  mov al, byte ptr [r11 + r10 - 1]\n");
+                    printf("  mov byte ptr [rbp-%d + r10 - 1], al\n", var->offset);
+                    printf("  sub r10, 1\n");
                     printf("  jmp .L.pcopy.%d\n", c);
                     printf(".L.pcopy_end.%d:\n", c);
                 } else {
-                    printf("  mov %s, -%d(%%rbp)\n", preg, var->offset);
+                    printf("  mov [rbp-%d], %s\n", var->offset, preg);
                 }
                 param_index++;
             } else {
@@ -6053,19 +6088,19 @@ void codegen(Program *prog) {
                 int stack_off = 48 + stack_param_index * 8;
                 if (is_flonum(var->ty)) {
                     if (var->ty->size == 4) {
-                        printf("  movss %d(%%rbp), %%xmm0\n", stack_off);
-                        printf("  movss %%xmm0, -%d(%%rbp)\n", var->offset);
+                        printf("  movss xmm0, dword ptr [rbp+%d]\n", stack_off);
+                        printf("  movss dword ptr [rbp-%d], xmm0\n", var->offset);
                     } else {
-                        printf("  movsd %d(%%rbp), %%xmm0\n", stack_off);
-                        printf("  movsd %%xmm0, -%d(%%rbp)\n", var->offset);
+                        printf("  movsd xmm0, qword ptr [rbp+%d]\n", stack_off);
+                        printf("  movsd qword ptr [rbp-%d], xmm0\n", var->offset);
                     }
                 } else {
-                    char *tmpreg = var->ty->size == 1 ? "%al"
-                        : var->ty->size == 2          ? "%ax"
-                        : var->ty->size <= 4          ? "%eax"
-                                                      : "%rax";
-                    printf("  mov %d(%%rbp), %s\n", stack_off, tmpreg);
-                    printf("  mov %s, -%d(%%rbp)\n", tmpreg, var->offset);
+                    char *tmpreg = var->ty->size == 1 ? "al"
+                        : var->ty->size == 2          ? "ax"
+                        : var->ty->size <= 4          ? "eax"
+                                                      : "rax";
+                    printf("  mov %s, [rbp+%d]\n", tmpreg, stack_off);
+                    printf("  mov [rbp-%d], %s\n", var->offset, tmpreg);
                 }
                 stack_param_index++;
             }
@@ -6073,19 +6108,19 @@ void codegen(Program *prog) {
             if (is_flonum(var->ty)) {
                 if (param_xmm_index < max_param_xmm) {
                     if (var->ty->size == 4) {
-                        printf("  cvtsd2ss %s, %%xmm0\n", param_xmm[param_xmm_index]);
-                        printf("  movss %%xmm0, -%d(%%rbp)\n", var->offset);
+                        printf("  cvtsd2ss xmm0, %s\n", param_xmm[param_xmm_index]);
+                        printf("  movss dword ptr [rbp-%d], xmm0\n", var->offset);
                     } else {
-                        printf("  movsd %s, -%d(%%rbp)\n", param_xmm[param_xmm_index], var->offset);
+                        printf("  movsd qword ptr [rbp-%d], %s\n", var->offset, param_xmm[param_xmm_index]);
                     }
                     param_xmm_index++;
                 } else {
                     if (var->ty->size == 4) {
-                        printf("  movss %d(%%rbp), %%xmm0\n", 16 + stack_param_index * 8);
-                        printf("  movss %%xmm0, -%d(%%rbp)\n", var->offset);
+                        printf("  movss xmm0, dword ptr [rbp+%d]\n", 16 + stack_param_index * 8);
+                        printf("  movss dword ptr [rbp-%d], xmm0\n", var->offset);
                     } else {
-                        printf("  movsd %d(%%rbp), %%xmm0\n", 16 + stack_param_index * 8);
-                        printf("  movsd %%xmm0, -%d(%%rbp)\n", var->offset);
+                        printf("  movsd xmm0, qword ptr [rbp+%d]\n", 16 + stack_param_index * 8);
+                        printf("  movsd qword ptr [rbp-%d], xmm0\n", var->offset);
                     }
                     stack_param_index++;
                 }
@@ -6096,39 +6131,39 @@ void codegen(Program *prog) {
                                                 : param_regs64[param_index];
                 if ((var->ty->kind == TY_STRUCT || var->ty->kind == TY_UNION) && var->ty->size > 8) {
                     int c = ++rcc_label_count;
-                    printf("  movq %s, %%r11\n", preg);
-                    printf("  movq $%d, %%r10\n", var->ty->size);
+                    printf("  mov r11, %s\n", preg);
+                    printf("  mov r10, %d\n", var->ty->size);
                     printf(".L.pcopy.%d:\n", c);
-                    printf("  cmpq $0, %%r10\n");
+                    printf("  cmp r10, 0\n");
                     printf("  je .L.pcopy_end.%d\n", c);
-                    printf("  movb -1(%%r11,%%r10), %%al\n");
-                    printf("  movb %%al, -%d-1(%%rbp,%%r10)\n", var->offset);
-                    printf("  subq $1, %%r10\n");
+                    printf("  mov al, byte ptr [r11 + r10 - 1]\n");
+                    printf("  mov byte ptr [rbp-%d + r10 - 1], al\n", var->offset);
+                    printf("  sub r10, 1\n");
                     printf("  jmp .L.pcopy.%d\n", c);
                     printf(".L.pcopy_end.%d:\n", c);
                 } else {
-                    printf("  mov %s, -%d(%%rbp)\n", preg, var->offset);
+                    printf("  mov [rbp-%d], %s\n", var->offset, preg);
                 }
                 param_index++;
             } else {
                 if ((var->ty->kind == TY_STRUCT || var->ty->kind == TY_UNION) && var->ty->size > 8) {
                     int c = ++rcc_label_count;
-                    printf("  movq $%d, %%r10\n", var->ty->size);
+                    printf("  mov r10, %d\n", var->ty->size);
                     printf(".L.pcopy.%d:\n", c);
-                    printf("  cmpq $0, %%r10\n");
+                    printf("  cmp r10, 0\n");
                     printf("  je .L.pcopy_end.%d\n", c);
-                    printf("  movb %d-1(%%rbp,%%r10), %%al\n", 16 + stack_param_index * 8);
-                    printf("  movb %%al, -%d-1(%%rbp,%%r10)\n", var->offset);
-                    printf("  subq $1, %%r10\n");
+                    printf("  mov al, byte ptr [rbp+%d + r10 - 1]\n", 16 + stack_param_index * 8);
+                    printf("  mov byte ptr [rbp-%d + r10 - 1], al\n", var->offset);
+                    printf("  sub r10, 1\n");
                     printf("  jmp .L.pcopy.%d\n", c);
                     printf(".L.pcopy_end.%d:\n", c);
                 } else {
-                    char *tmpreg = var->ty->size == 1 ? "%al"
-                        : var->ty->size == 2          ? "%ax"
-                        : var->ty->size <= 4          ? "%eax"
-                                                      : "%rax";
-                    printf("  mov %d(%%rbp), %s\n", 16 + stack_param_index * 8, tmpreg);
-                    printf("  mov %s, -%d(%%rbp)\n", tmpreg, var->offset);
+                    char *tmpreg = var->ty->size == 1 ? "al"
+                        : var->ty->size == 2          ? "ax"
+                        : var->ty->size <= 4          ? "eax"
+                                                      : "rax";
+                    printf("  mov %s, [rbp+%d]\n", tmpreg, 16 + stack_param_index * 8);
+                    printf("  mov [rbp-%d], %s\n", var->offset, tmpreg);
                 }
                 stack_param_index++;
             }
@@ -6147,25 +6182,25 @@ void codegen(Program *prog) {
             va_st_start = 16 + stack_param_index * 8;
 
             switch (gp_count) {
-            case 0: printf("  movq %%rdi, -%d(%%rbp)\n", va_reg_save_ofs); /* fallthrough */
-            case 1: printf("  movq %%rsi, -%d(%%rbp)\n", va_reg_save_ofs - 8); /* fallthrough */
-            case 2: printf("  movq %%rdx, -%d(%%rbp)\n", va_reg_save_ofs - 16); /* fallthrough */
-            case 3: printf("  movq %%rcx, -%d(%%rbp)\n", va_reg_save_ofs - 24); /* fallthrough */
-            case 4: printf("  movq %%r8, -%d(%%rbp)\n", va_reg_save_ofs - 32); /* fallthrough */
-            case 5: printf("  movq %%r9, -%d(%%rbp)\n", va_reg_save_ofs - 40);
+            case 0: printf("  mov [rbp-%d], rdi\n", va_reg_save_ofs); /* fallthrough */
+            case 1: printf("  mov [rbp-%d], rsi\n", va_reg_save_ofs - 8); /* fallthrough */
+            case 2: printf("  mov [rbp-%d], rdx\n", va_reg_save_ofs - 16); /* fallthrough */
+            case 3: printf("  mov [rbp-%d], rcx\n", va_reg_save_ofs - 24); /* fallthrough */
+            case 4: printf("  mov [rbp-%d], r8\n", va_reg_save_ofs - 32); /* fallthrough */
+            case 5: printf("  mov [rbp-%d], r9\n", va_reg_save_ofs - 40);
             }
             if (va_fp < 8) {
-                printf("  testb %%al, %%al\n");
+                printf("  test al, al\n");
                 printf("  je .L.va_no_xmm.%d\n", rcc_label_count);
                 switch (va_fp) {
-                case 0: printf("  movaps %%xmm0, -%d(%%rbp)\n", va_reg_save_ofs - 48); /* fallthrough */
-                case 1: printf("  movaps %%xmm1, -%d(%%rbp)\n", va_reg_save_ofs - 64); /* fallthrough */
-                case 2: printf("  movaps %%xmm2, -%d(%%rbp)\n", va_reg_save_ofs - 80); /* fallthrough */
-                case 3: printf("  movaps %%xmm3, -%d(%%rbp)\n", va_reg_save_ofs - 96); /* fallthrough */
-                case 4: printf("  movaps %%xmm4, -%d(%%rbp)\n", va_reg_save_ofs - 112); /* fallthrough */
-                case 5: printf("  movaps %%xmm5, -%d(%%rbp)\n", va_reg_save_ofs - 128); /* fallthrough */
-                case 6: printf("  movaps %%xmm6, -%d(%%rbp)\n", va_reg_save_ofs - 144); /* fallthrough */
-                case 7: printf("  movaps %%xmm7, -%d(%%rbp)\n", va_reg_save_ofs - 160);
+                case 0: printf("  movaps [rbp-%d], xmm0\n", va_reg_save_ofs - 48); /* fallthrough */
+                case 1: printf("  movaps [rbp-%d], xmm1\n", va_reg_save_ofs - 64); /* fallthrough */
+                case 2: printf("  movaps [rbp-%d], xmm2\n", va_reg_save_ofs - 80); /* fallthrough */
+                case 3: printf("  movaps [rbp-%d], xmm3\n", va_reg_save_ofs - 96); /* fallthrough */
+                case 4: printf("  movaps [rbp-%d], xmm4\n", va_reg_save_ofs - 112); /* fallthrough */
+                case 5: printf("  movaps [rbp-%d], xmm5\n", va_reg_save_ofs - 128); /* fallthrough */
+                case 6: printf("  movaps [rbp-%d], xmm6\n", va_reg_save_ofs - 144); /* fallthrough */
+                case 7: printf("  movaps [rbp-%d], xmm7\n", va_reg_save_ofs - 160);
                 }
                 printf(".L.va_no_xmm.%d:\n", rcc_label_count);
                 rcc_label_count++;
@@ -6556,15 +6591,15 @@ void codegen(Program *prog) {
         printf("  .p2align 2\n");
 #endif
         printf("%s:\n", asm_sym_name(sym_name(fn_label)));
-        printf("  pushq %%rbp\n");
-        printf("  movq %%rsp, %%rbp\n");
+        printf("  push rbp\n");
+        printf("  mov rbp, rsp\n");
 
         // Only push callee-saved registers that were actually used
         for (int j = 0; j < callee_count; j++) {
             if (callee_mask & (1 << j))
                 printf("  push %s\n", reg64[j + 2]);
         }
-        printf("  subq $%d, %%rsp\n", sub_amount);
+        printf("  sub rsp, %d\n", sub_amount);
 
         if (fn->ty->return_ty && (fn->ty->return_ty->kind == TY_STRUCT || fn->ty->return_ty->kind == TY_UNION)) {
             int retbuf_offset = 0;
@@ -6576,12 +6611,12 @@ void codegen(Program *prog) {
             }
             char *retreg =
 #ifdef _WIN32
-                "%rcx"
+                "rcx"
 #else
-                "%rdi"
+                "rdi"
 #endif
                 ;
-            printf("  mov %s, -%d(%%rbp)\n", retreg, retbuf_offset);
+            printf("  mov [rbp-%d], %s\n", retbuf_offset, retreg);
         }
 
         // Read body into lines, optimize, emit
@@ -6611,24 +6646,24 @@ void codegen(Program *prog) {
                 break;
             }
         if (has_cleanup)
-            printf("  movq %%rax, -%d(%%rbp)\n", spill_offset(0));
+            printf("  mov [rbp-%d], rax\n", spill_offset(0));
         for (LVar *var = fn->locals; var; var = var->next) {
             if (var_has_cleanup(var))
                 emit_cleanup_var(var);
         }
         if (has_cleanup)
-            printf("  movq -%d(%%rbp), %%rax\n", spill_offset(0));
+            printf("  mov rax, [rbp-%d]\n", spill_offset(0));
         if (fn->dealloc_vla)
-            printf("  leaq -%d(%%rbp), %%rsp\n", n_pushes * 8);
+            printf("  lea rsp, [rbp-%d]\n", n_pushes * 8);
         else if (fn_uses_alloca)
-            printf("  leaq -%d(%%rbp), %%rsp\n", n_pushes * 8);
+            printf("  lea rsp, [rbp-%d]\n", n_pushes * 8);
         else
-            printf("  addq $%d, %%rsp\n", sub_amount);
+            printf("  add rsp, %d\n", sub_amount);
         for (int j = callee_count - 1; j >= 0; j--) {
             if (callee_mask & (1 << j))
                 printf("  pop %s\n", reg64[j + 2]);
         }
-        printf("  popq %%rbp\n");
+        printf("  pop rbp\n");
         printf("  ret\n");
 #endif
     }
