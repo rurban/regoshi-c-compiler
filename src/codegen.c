@@ -3805,16 +3805,49 @@ static int gen(Node *node) {
         return r;
     }
     case ND_IF: {
-        // Fold constant integer conditions to avoid dead code emission
+        // Fold constant integer conditions to avoid dead code emission,
+        // but keep blocks that contain labels (may be targets of goto).
         if (node->cond->kind == ND_NUM) {
-            if (node->cond->val) {
-                int r = gen(node->then);
-                if (r != -1) free_reg(r);
-            } else if (node->els) {
-                int r = gen(node->els);
-                if (r != -1) free_reg(r);
+            // Recursively check if a node tree contains any label or goto
+            bool has_label = false;
+            {
+                Node *stack[512];
+                int sp = 0;
+                for (Node *n = node->then; n && sp < 512; n = n->next)
+                    stack[sp++] = n;
+                if (node->els)
+                    for (Node *n = node->els; n && sp < 512; n = n->next)
+                        stack[sp++] = n;
+                while (sp > 0 && !has_label) {
+                    Node *n = stack[--sp];
+                    if (n->kind == ND_LABEL || n->kind == ND_GOTO || n->kind == ND_GOTO_IND ||
+                        n->kind == ND_CASE || n->kind == ND_LABEL_VAL) {
+                        has_label = true;
+                    } else if (n->kind == ND_FOR || n->kind == ND_DO || n->kind == ND_IF) {
+                        if (n->then && sp < 512) stack[sp++] = n->then;
+                        if (n->cond && sp < 512) stack[sp++] = n->cond;
+                        if (n->kind == ND_FOR) {
+                            if (n->body && sp < 512) stack[sp++] = n->body;
+                            if (n->init && sp < 512) stack[sp++] = n->init;
+                            if (n->inc && sp < 512) stack[sp++] = n->inc;
+                        }
+                        if (n->els && sp < 512) stack[sp++] = n->els;
+                    } else if (n->kind == ND_BLOCK) {
+                        for (Node *c = n->body; c && sp < 512; c = c->next)
+                            stack[sp++] = c;
+                    }
+                }
             }
-            return -1;
+            if (!has_label) {
+                if (node->cond->val) {
+                    int r = gen(node->then);
+                    if (r != -1) free_reg(r);
+                } else if (node->els) {
+                    int r = gen(node->els);
+                    if (r != -1) free_reg(r);
+                }
+                return -1;
+            }
         }
         int c = ++rcc_label_count;
         char end_label[32], else_label[32];

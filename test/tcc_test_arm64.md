@@ -5,9 +5,9 @@ Generated: May 2026
 ## Summary
 
 - **Total**: 155
-- **Passed**: 148
-- **Failed**: 7
-- **Pass Rate**: 95%
+- **Passed**: 145
+- **Failed**: 10
+- **Pass Rate**: 93%
 
 ## Detailed Results
 
@@ -138,12 +138,12 @@ Generated: May 2026
 | 133_old_func                | PASS         | Output matches                |
 | 134_double_to_signed        | PASS         | Output matches                |
 | 135_func_arg_struct_compare | PASS         | Output matches                |
-| 136_atomic_gcc_style        | PASS         | Output matches                |
+| 136_atomic_gcc_style        | COMPILE_FAIL | executable missing            |
 | 137_funcall_struct_args     | PASS         | Output matches                |
 | 138_arm64_encoding          | PASS         | Output matches                |
 | 138_narrow_return_promotion | PASS         | Output matches                |
 | 139_arm64_errors            | PASS         | Output matches                |
-| 139_narrow_type_conversion  | PASS         | Output matches                |
+| 139_narrow_type_conversion  | COMPILE_FAIL | executable missing            |
 | 140_arm64_extasm            | EXEC_FAIL    | non-zero exit                 |
 | 140_int_sign_extension      | PASS         | Output matches                |
 | 141_riscv_asm_pseudo        | SKIP         | Skipped                       |
@@ -177,7 +177,7 @@ Generated: May 2026
 | test_ptr                    | PASS         | exit=0                        |
 | test_real                   | PASS         | exit=0                        |
 | test_self_include2          | PASS         | exit=1                        |
-| test_signextend             | PASS         | exit=0                        |
+| test_signextend             | COMPILE_FAIL | executable missing            |
 | test_simple                 | PASS         | exit=1                        |
 | test_simple2                | PASS         | exit=1                        |
 | test_str                    | PASS         | exit=0                        |
