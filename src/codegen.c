@@ -488,6 +488,10 @@ static int gen_funcall(Node *node, int hidden_ret_reg) {
         bool is_prefetch = strcmp(call_target, "__builtin_prefetch") == 0;
         bool is_frame_addr = strcmp(call_target, "__builtin_frame_address") == 0;
         bool is_ret_addr = strcmp(call_target, "__builtin_return_address") == 0;
+        bool is_add_overflow = strcmp(call_target, "__builtin_add_overflow") == 0;
+        bool is_sub_overflow = strcmp(call_target, "__builtin_sub_overflow") == 0;
+        bool is_mul_overflow = strcmp(call_target, "__builtin_mul_overflow") == 0;
+        bool is_mul_overflow_p = strcmp(call_target, "__builtin_mul_overflow_p") == 0;
 
         if (is_bswap16 || is_bswap32 || is_bswap64) {
             Node *arg = node->args;
@@ -711,6 +715,60 @@ static int gen_funcall(Node *node, int hidden_ret_reg) {
             printf("  mov %s, [%s + 8]\n", reg64[r], reg64[r]);
 #endif
             return r;
+        }
+        if (is_add_overflow || is_sub_overflow || is_mul_overflow || is_mul_overflow_p) {
+            Node *arga = node->args;
+            Node *argb = arga ? arga->next : NULL;
+#ifndef ARCH_ARM64
+            Node *argres = argb ? argb->next : NULL;
+            // x86-64: use add/sub/mul tracking unsigned overflow (carry flag)
+            int ra = gen(arga);
+            int rb = gen(argb);
+            int sz = arga && arga->ty && arga->ty->size > 4 ? 8 : 4;
+            if (is_add_overflow) {
+                printf("  %s %s, %s\n", sz == 8 ? "add" : "add", reg(ra, sz), reg(rb, sz));
+                printf("  setc al\n");
+                if (argres) {
+                    int rr = gen_addr(argres);
+                    printf("  mov [%s], %s\n", reg64[rr], reg(ra, sz));
+                    free_reg(rr);
+                }
+            } else if (is_sub_overflow) {
+                printf("  sub %s, %s\n", reg(ra, sz), reg(rb, sz));
+                printf("  setc al\n");
+                if (argres) {
+                    int rr = gen_addr(argres);
+                    printf("  mov [%s], %s\n", reg64[rr], reg(ra, sz));
+                    free_reg(rr);
+                }
+            } else if (is_mul_overflow || is_mul_overflow_p) {
+                int r2 = alloc_reg();
+                if (sz == 8) {
+                    printf("  mov rax, %s\n", reg(ra, sz));
+                    printf("  mul %s\n", reg(rb, sz));
+                    printf("  mov %s, rax\n", reg64[ra]);
+                    printf("  mov %s, rdx\n", reg64[r2]);
+                } else {
+                    printf("  mov eax, %s\n", reg(ra, 4));
+                    printf("  mul %s\n", reg(rb, 4));
+                    printf("  mov %s, eax\n", reg(ra, 4));
+                    printf("  mov %s, edx\n", reg(r2, 4));
+                }
+                printf("  cmp %s, 0\n", reg(r2, sz));
+                printf("  setne al\n");
+                free_reg(r2);
+                if (argres && !is_mul_overflow_p) {
+                    int rr = gen_addr(argres);
+                    printf("  mov [%s], %s\n", reg64[rr], reg(ra, sz));
+                    free_reg(rr);
+                }
+            }
+            int r_result = alloc_reg();
+            printf("  movzx %s, al\n", reg(r_result, 4));
+            free_reg(ra);
+            free_reg(rb);
+            return r_result;
+#endif
         }
     }
 
