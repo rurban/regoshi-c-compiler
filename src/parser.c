@@ -2737,9 +2737,14 @@ static Node *declaration(Token **rest, Token *tok) {
 
     while (!equalc(tok, ";")) {
         char *name = NULL;
+        int decl_align = 0;
         pending_cleanup_func = NULL;
         Type *ty = declarator(&tok, tok, copy_type(base), &name);
-        tok = skip_attributes(tok);
+        tok = read_type_attrs(tok, &decl_align, NULL);
+        if (decl_align > 0 && ty->kind == TY_FUNC) {
+            ty = copy_type(ty);
+            ty->align = decl_align;
+        }
         char *cleanup = pending_cleanup_func ? pending_cleanup_func : type_level_cleanup;
         pending_cleanup_func = NULL;
         if (!name)
@@ -2754,6 +2759,9 @@ static Node *declaration(Token **rest, Token *tok) {
                 fn_sym->is_function = true;
                 fn_sym->is_weak = attr.is_weak;
             } else {
+                // Preserve alignment from prior declaration
+                if (fn_sym->ty && fn_sym->ty->base && fn_sym->ty->base->align > fty->align)
+                    fty->align = fn_sym->ty->base->align;
                 if (attr.is_weak)
                     fn_sym->is_weak = true;
             }
@@ -4425,7 +4433,11 @@ static Node *unary(Token **rest, Token *tok) {
         Node *node = unary(&tok, tok->next);
         add_type(node);
         *rest = tok;
-        return new_num(node->ty->align, start);
+        int al = node->ty->align;
+        // For function pointers, use the function type's alignment
+        if (node->ty->kind == TY_PTR && node->ty->base && node->ty->base->kind == TY_FUNC)
+            al = node->ty->base->align;
+        return new_num(al, start);
     }
     if (is_cast(tok)) {
         Token *start = tok;
@@ -5223,9 +5235,10 @@ Program *parse(Token *tok) {
         }
 
         for (;;) {
+            int top_decl_align = 0;
             char *name = NULL;
             Type *ty = declarator(&tok, tok, copy_type(base), &name);
-            tok = skip_attributes(tok);
+            tok = read_type_attrs(tok, &top_decl_align, NULL);
 
             if (!name) {
                 tok = skip(tok, ";");
@@ -5235,6 +5248,11 @@ Program *parse(Token *tok) {
             bool is_func = ty->kind == TY_FUNC || equalc(tok, "(");
 
             if (is_func) {
+                // Apply trailing attribute alignment to function type
+                if (top_decl_align > 0 && ty->kind == TY_FUNC) {
+                    ty = copy_type(ty);
+                    ty->align = top_decl_align;
+                }
                 Type *fty;
                 bool is_variadic = false;
                 LVar *params = NULL;
@@ -5348,6 +5366,13 @@ Program *parse(Token *tok) {
                 current_fn_scope_locals = params;
                 current_block_depth = 0;
                 suppress_fn_scope_update = false;
+
+                // Preserve alignment from prior declaration
+                if (!top_decl_align) {
+                    LVar *prev = find_global_name(name);
+                    if (prev && prev->ty && prev->ty->base && prev->ty->base->align > fty->align)
+                        fty->align = prev->ty->base->align;
+                }
 
                 if (fty->return_ty && (fty->return_ty->kind == TY_STRUCT || fty->return_ty->kind == TY_UNION)) {
                     LVar *retbuf = new_var("", pointer_to(fty->return_ty), true);

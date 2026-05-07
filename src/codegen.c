@@ -487,6 +487,7 @@ static int gen_funcall(Node *node, int hidden_ret_reg) {
         bool is_clrsbll = strcmp(call_target, "__builtin_clrsbll") == 0;
         bool is_prefetch = strcmp(call_target, "__builtin_prefetch") == 0;
         bool is_frame_addr = strcmp(call_target, "__builtin_frame_address") == 0;
+        bool is_ret_addr = strcmp(call_target, "__builtin_return_address") == 0;
 
         if (is_bswap16 || is_bswap32 || is_bswap64) {
             Node *arg = node->args;
@@ -592,7 +593,11 @@ static int gen_funcall(Node *node, int hidden_ret_reg) {
                 }
 #endif
                 if (is_parity || is_parityl || is_parityll)
+#ifdef ARCH_ARM64
+                    printf("  and %s, %s, #1\n", reg32[r2], reg32[r2]);
+#else
                     printf("  and %s, 1\n", reg32[r2]);
+#endif
                 free_reg(r);
                 return r2;
             }
@@ -686,6 +691,25 @@ static int gen_funcall(Node *node, int hidden_ret_reg) {
                 for (int i = 0; i < depth; i++)
                     printf("  mov %s, [%s]\n", reg64[r], reg64[r]);
             }
+            return r;
+        }
+        if (is_ret_addr) {
+            Node *arg = node->args;
+            int r = alloc_reg();
+            int depth = (arg && arg->kind == ND_NUM) ? (int)arg->val : 0;
+            // Follow frame pointer chain to find the return address.
+            // frame pointer → [fp] = saved fp, [fp+8] = return address
+#ifdef ARCH_ARM64
+            printf("  mov %s, " FRAME_PTR "\n", reg64[r]);
+            for (int i = 0; i < depth; i++)
+                printf("  ldr %s, [%s]\n", reg64[r], reg64[r]);
+            printf("  ldr %s, [%s, #8]\n", reg64[r], reg64[r]);
+#else
+            printf("  mov %s, " FRAME_PTR "\n", reg64[r]);
+            for (int i = 0; i < depth; i++)
+                printf("  mov %s, [%s]\n", reg64[r], reg64[r]);
+            printf("  mov %s, [%s + 8]\n", reg64[r], reg64[r]);
+#endif
             return r;
         }
     }
@@ -2813,6 +2837,15 @@ static int gen(Node *node) {
 #else
             printf("  mov [rbp-%d], %s\n", node->lhs->var->offset, reg(r2, node->lhs->ty->size));
 #endif
+            // Truncate result to match the variable's type width for unsigned narrow types
+            if (node->lhs->ty->is_unsigned && node->lhs->ty->size < 4) {
+                int mask = (1 << (node->lhs->ty->size * 8)) - 1;
+#ifdef ARCH_ARM64
+                printf("  and %s, %s, #%d\n", reg(r2, 4), reg(r2, 4), mask);
+#else
+                printf("  and %s, %d\n", reg(r2, 4), mask);
+#endif
+            }
             return r2;
         }
         // Bitfield assignment: read-modify-write
@@ -3714,6 +3747,17 @@ static int gen(Node *node) {
         return r;
     }
     case ND_IF: {
+        // Fold constant integer conditions to avoid dead code emission
+        if (node->cond->kind == ND_NUM) {
+            if (node->cond->val) {
+                int r = gen(node->then);
+                if (r != -1) free_reg(r);
+            } else if (node->els) {
+                int r = gen(node->els);
+                if (r != -1) free_reg(r);
+            }
+            return -1;
+        }
         int c = ++rcc_label_count;
         char end_label[32], else_label[32];
         sprintf(end_label, ".L.end.%d", c);
