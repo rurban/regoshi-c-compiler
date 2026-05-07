@@ -14,6 +14,7 @@
 
 void add_define(char *def);
 void add_undef(char *name);
+void dump_ast(Program *prog);
 
 typedef struct OutPath OutPath;
 struct OutPath {
@@ -72,6 +73,7 @@ void help(void) {
            "-lname              add lib\n"
            "-E                  preprocessor-only\n"
            "-dM                 dump all macro definitions (use with -E)\n"
+           "-fdump-ast           dump AST for debugging\n"
            "-S                  assemble-only\n"
            "-c                  compile-only\n"
            "-o file             set output filename\n"
@@ -93,6 +95,7 @@ bool opt_O1 = false;
 bool opt_W = false;
 bool opt_dryrun = false;
 bool opt_dM = false;
+bool opt_fdump_ast = false;
 bool opt_ms_bitfields =
 #ifdef _WIN32
     true;
@@ -166,6 +169,8 @@ int main(int argc, char **argv) {
             opt_dryrun = true;
         } else if (!strcmp(argv[i], "-dM")) {
             opt_dM = true;
+        } else if (!strcmp(argv[i], "-fdump-ast")) {
+            opt_fdump_ast = true;
         } else if (!strcmp(argv[i], "-mms-bitfields")) {
             opt_ms_bitfields = true;
         } else if (!strcmp(argv[i], "-mno-ms-bitfields")) {
@@ -234,6 +239,9 @@ int main(int argc, char **argv) {
             Token *tok = tokenize(in_path, preprocessed);
             Program *prog = parse(tok);
             prog->in_path = in_path;
+
+            if (opt_fdump_ast)
+                dump_ast(prog);
 
             // Type system / Semantic checks
             for (TLItem *item = prog->items; item; item = item->next) {

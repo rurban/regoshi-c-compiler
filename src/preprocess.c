@@ -21,6 +21,7 @@ struct Macro {
     char *name;
     bool is_function;
     bool is_variadic;
+    bool is_gnu_variadic; // GNU args... extension: last param is the variadic
     bool disabled; // blue-paint: currently being expanded
     char **params;
     int param_len;
@@ -74,6 +75,7 @@ struct MacroStack {
     char *name;
     bool is_function;
     bool is_variadic;
+    bool is_gnu_variadic;
     char **params;
     int param_len;
     char *body;
@@ -460,6 +462,7 @@ static void push_macro(char *name) {
     if (m) {
         ms->is_function = m->is_function;
         ms->is_variadic = m->is_variadic;
+        ms->is_gnu_variadic = m->is_gnu_variadic;
         ms->param_len = m->param_len;
         ms->params = m->params;
         ms->body = m->body;
@@ -505,6 +508,7 @@ static void pop_macro(char *name) {
         }
         m->is_function = ms->is_function;
         m->is_variadic = ms->is_variadic;
+        m->is_gnu_variadic = ms->is_gnu_variadic;
         m->param_len = ms->param_len;
         m->params = ms->params;
         m->body = ms->body;
@@ -523,6 +527,7 @@ static void define_macro(char *name, bool is_function, char **params, int param_
     m->name = name;
     m->is_function = is_function;
     m->is_variadic = false;
+    m->is_gnu_variadic = false;
     m->params = params;
     m->param_len = param_len;
     m->body = body;
@@ -694,18 +699,21 @@ static char *substitute_macro(Macro *m, char **args, int argc, char *filename,
     StrBuf sb;
     sb_init(&sb, strlen(m->body) * 8 + 256);
 
-    // For variadic macros, merge excess args into the last variadic slot
+    // For variadic macros, merge all variadic args into one slot:
+    //   GNU named (args...): merge into param_len-1 (the named variadic slot)
+    //   Standard (...):      merge into param_len   (unnamed vararg slot)
     if (m->is_variadic && argc > m->param_len) {
-        // Merge args[m->param_len] through args[argc-1] with commas
+        int va_start = m->is_gnu_variadic ? m->param_len - 1 : m->param_len;
+        int va_slot = va_start;
+        if (va_start < 0) va_start = 0;
         StrBuf va_buf;
         sb_init(&va_buf, 256);
-        for (int i = m->param_len; i < argc; i++) {
-            if (i > m->param_len) sb_putc(&va_buf, ',');
+        for (int i = va_start; i < argc; i++) {
+            if (i > va_start) sb_putc(&va_buf, ',');
             sb_puts(&va_buf, args[i]);
         }
-        // Replace the slot with merged args
-        args[m->param_len] = va_buf.buf;
-        argc = m->param_len + 1;
+        args[va_slot] = va_buf.buf;
+        argc = va_slot + 1;
     }
 
     for (char *p = m->body; *p;) {
@@ -729,14 +737,15 @@ static char *substitute_macro(Macro *m, char **args, int argc, char *filename,
                 p++;
             // GNU extension: ,##__VA_ARGS__ — delete comma if __VA_ARGS__ is empty
             if (m->is_variadic && pp_startswith(p, "__VA_ARGS__") && !pp_is_ident2(p[11])) {
-                if (m->param_len >= argc) {
+                int va_idx = m->is_gnu_variadic && m->param_len > 0 ? m->param_len - 1 : m->param_len;
+                if (va_idx >= argc) {
                     // Strip trailing comma and whitespace from output
                     while (sb.len > 0 && isspace((unsigned char)sb.buf[sb.len - 1]))
                         sb.buf[--sb.len] = '\0';
                     if (sb.len > 0 && sb.buf[sb.len - 1] == ',')
                         sb.buf[--sb.len] = '\0';
                 } else {
-                    sb_puts(&sb, args[m->param_len]);
+                    sb_puts(&sb, args[va_idx]);
                 }
                 p += 11;
                 continue;
@@ -775,8 +784,9 @@ static char *substitute_macro(Macro *m, char **args, int argc, char *filename,
             char *name = pp_strndup(start, p - start);
             // Handle __VA_ARGS__ in variadic macros
             if (m->is_variadic && strcmp(name, "__VA_ARGS__") == 0) {
-                if (m->param_len < argc) {
-                    sb_puts(&sb, args[m->param_len]);
+                int va_idx = m->is_gnu_variadic && m->param_len > 0 ? m->param_len - 1 : m->param_len;
+                if (va_idx < argc) {
+                    sb_puts(&sb, args[va_idx]);
                 }
                 continue;
             }
@@ -1338,6 +1348,7 @@ static char *preprocess_file(char *filename, char *input, int *line_counts) {
                 char *name = pp_strndup(name_start, s - name_start);
                 bool is_function = false;
                 bool is_variadic = false;
+                bool is_gnu_variadic = false;
                 char **params = NULL;
                 int param_len = 0;
                 if (s < end && *s == '(') {
@@ -1349,6 +1360,14 @@ static char *preprocess_file(char *filename, char *input, int *line_counts) {
                             s++;
                         // Check for ... (variadic macro)
                         if (s[0] == '.' && s[1] == '.' && s[2] == '.') {
+                            // GNU extension args... : last token before ...
+                            // must be an identifier (not preceded by comma).
+                            {
+                                const char *back = s;
+                                while (back > line && isspace((unsigned char)back[-1]))
+                                    back--;
+                                is_gnu_variadic = (param_len > 0 && back > line && back[-1] != ',' && pp_is_ident2(back[-1]));
+                            }
                             s += 3;
                             while (s < end && isspace((unsigned char)*s))
                                 s++;
@@ -1376,7 +1395,10 @@ static char *preprocess_file(char *filename, char *input, int *line_counts) {
                     define_macro(name, is_function, params, param_len, trim_copy(s, end - s));
                     if (is_variadic) {
                         Macro *m = find_macro(name);
-                        if (m) m->is_variadic = true;
+                        if (m) {
+                            m->is_variadic = true;
+                            m->is_gnu_variadic = is_gnu_variadic;
+                        }
                     }
                     {
                         int n = line_counts ? line_counts[line_idx] : 1;

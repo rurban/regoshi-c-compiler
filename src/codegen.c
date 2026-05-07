@@ -5792,6 +5792,109 @@ static void emit_peephole_body(char *body_text) {
     }
 }
 
+static const char *node_kind_name(NodeKind k) {
+    switch (k) {
+    case ND_ADD: return "ADD";
+    case ND_SUB: return "SUB";
+    case ND_MUL: return "MUL";
+    case ND_DIV: return "DIV";
+    case ND_MOD: return "MOD";
+    case ND_SHL: return "SHL";
+    case ND_SHR: return "SHR";
+    case ND_BITAND: return "BITAND";
+    case ND_BITXOR: return "BITXOR";
+    case ND_BITOR: return "BITOR";
+    case ND_EQ: return "EQ";
+    case ND_NE: return "NE";
+    case ND_LT: return "LT";
+    case ND_LE: return "LE";
+    case ND_ASSIGN: return "ASSIGN";
+    case ND_POST_INC: return "POST_INC";
+    case ND_POST_DEC: return "POST_DEC";
+    case ND_ADDR: return "ADDR";
+    case ND_DEREF: return "DEREF";
+    case ND_CAST: return "CAST";
+    case ND_BITNOT: return "BITNOT";
+    case ND_FUNCALL: return "FUNCALL";
+    case ND_LVAR: return "LVAR";
+    case ND_NUM: return "NUM";
+    case ND_RETURN: return "RETURN";
+    case ND_IF: return "IF";
+    case ND_FOR: return "FOR";
+    case ND_DO: return "DO";
+    case ND_SWITCH: return "SWITCH";
+    case ND_CASE: return "CASE";
+    case ND_BREAK: return "BREAK";
+    case ND_CONTINUE: return "CONTINUE";
+    case ND_GOTO: return "GOTO";
+    case ND_GOTO_IND: return "GOTO_IND";
+    case ND_LABEL: return "LABEL";
+    case ND_LABEL_VAL: return "LABEL_VAL";
+    case ND_STMT_EXPR: return "STMT_EXPR";
+    case ND_BLOCK: return "BLOCK";
+    case ND_EXPR_STMT: return "EXPR_STMT";
+    case ND_NULL: return "NULL";
+    case ND_STR: return "STR";
+    case ND_MEMBER: return "MEMBER";
+    case ND_LOGAND: return "LOGAND";
+    case ND_LOGOR: return "LOGOR";
+    case ND_COND: return "COND";
+    case ND_COMMA: return "COMMA";
+    case ND_SIZEOF: return "SIZEOF";
+    case ND_FNUM: return "FNUM";
+    case ND_NEG: return "NEG";
+    case ND_NOT: return "NOT";
+    case ND_ZERO_INIT: return "ZERO_INIT";
+    case ND_ASM: return "ASM";
+    case ND_VA_START: return "VA_START";
+    case ND_VA_COPY: return "VA_COPY";
+    case ND_VA_ARG: return "VA_ARG";
+    case ND_ALLOCA: return "ALLOCA";
+    case ND_ALLOCA_ZINIT: return "ALLOCA_ZINIT";
+    case ND_CHAIN: return "CHAIN";
+    case ND_ATOMIC_LOAD: return "ATOMIC_LOAD";
+    case ND_ATOMIC_STORE: return "ATOMIC_STORE";
+    case ND_ATOMIC_EXCHANGE: return "ATOMIC_EXCHANGE";
+    case ND_ATOMIC_CAS: return "ATOMIC_CAS";
+    case ND_ATOMIC_FENCE: return "ATOMIC_FENCE";
+    case ND_ATOMIC_FETCH_OP: return "ATOMIC_FETCH_OP";
+    default: return "UNKNOWN";
+    }
+}
+
+static void dump_node(FILE *f, Node *node, int depth) {
+    if (!node) return;
+    for (int i = 0; i < depth; i++) fputc(' ', f);
+    fprintf(f, "%s", node_kind_name(node->kind));
+    if (node->kind == ND_NUM) fprintf(f, " %lld", (long long)node->val);
+    if (node->kind == ND_LVAR && node->var) fprintf(f, " '%s'", node->var->name ? node->var->name : "(anon)");
+    if (node->kind == ND_FUNCALL && node->lhs && node->lhs->kind == ND_LVAR && node->lhs->var)
+        fprintf(f, " %s", node->lhs->var->name);
+    fprintf(f, "\n");
+    if (node->kind == ND_BLOCK)
+        for (Node *n = node->body; n; n = n->next) dump_node(f, n, depth + 2);
+    if (node->lhs) dump_node(f, node->lhs, depth + 2);
+    if (node->rhs) dump_node(f, node->rhs, depth + 2);
+    if (node->then) dump_node(f, node->then, depth + 2);
+    if (node->els) dump_node(f, node->els, depth + 2);
+    if (node->cond) dump_node(f, node->cond, depth + 2);
+    if (node->body) dump_node(f, node->body, depth + 2);
+    if (node->init) dump_node(f, node->init, depth + 2);
+    if (node->inc) dump_node(f, node->inc, depth + 2);
+    if (node->kind == ND_CASE && node->lhs) dump_node(f, node->lhs, depth + 2);
+}
+
+void dump_ast(Program *prog) {
+    fprintf(stderr, "=== AST dump ===\n");
+    for (TLItem *item = prog->items; item; item = item->next) {
+        if (item->kind == TL_FUNC && item->fn->body) {
+            fprintf(stderr, "function %s:\n", item->fn->name);
+            dump_node(stderr, item->fn->body, 2);
+        }
+    }
+    fprintf(stderr, "=== end AST dump ===\n");
+}
+
 void codegen(Program *prog) {
     cg_stream = stdout;
     all_items = prog->items;
