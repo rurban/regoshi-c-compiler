@@ -1846,7 +1846,15 @@ static bool read_global_label_initializer(Token **rest, Token *tok, char **label
         tok = tok->next;
 
     if (tok->kind == TK_IDENT) {
-        *label = tok->name;
+        // Use asm_name for static local variables (mangled labels)
+        LVar *lv = find_global_name(tok->name);
+        if (!lv)
+            for (LVar *v = locals; v; v = v->next)
+                if (v->name == tok->name && !v->is_local) {
+                    lv = v;
+                    break;
+                }
+        *label = (lv && lv->asm_name) ? lv->asm_name : tok->name;
         if (addend) *addend = 0;
         *rest = tok->next;
 
@@ -1893,7 +1901,7 @@ static bool extract_reloc(Node *node, char **label, int *addend) {
     switch (node->kind) {
     case ND_LVAR:
         if (node->var && !node->var->is_local) {
-            *label = node->var->name;
+            *label = node->var->asm_name ? node->var->asm_name : node->var->name;
             *addend = 0;
             return true;
         }

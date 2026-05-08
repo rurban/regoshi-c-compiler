@@ -3632,6 +3632,18 @@ static int gen(Node *node) {
                 printf(".L.ucast.%d:\n", c);
                 printf("  cvttsd2si %%xmm0, %s\n", reg64[r]);
                 printf(".L.ucast_end.%d:\n", c);
+            } else if (to->size <= 4 && !to->is_unsigned) {
+                int c = ++rcc_label_count;
+                // cvttsd2si returns 0x80000000 (INT_MIN) on overflow.
+                // If input is >= 0, it was an overflow, saturate to INT_MAX.
+                printf("  cvttsd2si %%xmm0, %s\n", reg32[r]);
+                printf("  cmp $0x80000000, %s\n", reg32[r]);
+                printf("  jne .L.sat_end.%d\n", c);
+                printf("  xorpd %%xmm1, %%xmm1\n");
+                printf("  comisd %%xmm1, %%xmm0\n");
+                printf("  jb .L.sat_end.%d\n", c);
+                printf("  mov $0x7fffffff, %s\n", reg32[r]);
+                printf(".L.sat_end.%d:\n", c);
             } else {
                 printf("  cvttsd2si %%xmm0, %s\n", to->size == 8 ? reg64[r] : reg32[r]);
             }
