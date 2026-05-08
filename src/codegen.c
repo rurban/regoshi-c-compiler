@@ -2460,6 +2460,44 @@ static int gen_addr(Node *node) {
 
 static void gen_cond_branch_inv(Node *cond, char *label) {
     if (cond->kind == ND_EQ || cond->kind == ND_NE || cond->kind == ND_LT || cond->kind == ND_LE) {
+        if (is_flonum(cond->lhs->ty)) {
+            int r_lhs = gen(cond->lhs);
+            int r_rhs = gen(cond->rhs);
+#ifdef ARCH_ARM64
+            printf("  fmov d0, %s\n", reg64[r_lhs]);
+            printf("  fmov d1, %s\n", reg64[r_rhs]);
+            printf("  fcmp d0, d1\n");
+            if (cond->kind == ND_EQ)
+                printf("  b.ne %s\n  b.vs %s\n", label, label);
+            else if (cond->kind == ND_NE) {
+                int c = ++rcc_label_count;
+                printf("  b.vs .L.fc.skip.%d\n", c);
+                printf("  b.eq %s\n", label);
+                printf(".L.fc.skip.%d:\n", c);
+            } else if (cond->kind == ND_LT)
+                printf("  b.pl %s\n", label);
+            else if (cond->kind == ND_LE)
+                printf("  b.hi %s\n", label);
+#else
+            printf("  movq %s, %%xmm0\n", reg64[r_lhs]);
+            printf("  movq %s, %%xmm1\n", reg64[r_rhs]);
+            printf("  ucomisd %%xmm1, %%xmm0\n");
+            if (cond->kind == ND_EQ)
+                printf("  jne %s\n  jp %s\n", label, label);
+            else if (cond->kind == ND_NE) {
+                int c = ++rcc_label_count;
+                printf("  jp .L.fc.skip.%d\n", c);
+                printf("  je %s\n", label);
+                printf(".L.fc.skip.%d:\n", c);
+            } else if (cond->kind == ND_LT)
+                printf("  jae %s\n  jp %s\n", label, label);
+            else if (cond->kind == ND_LE)
+                printf("  ja %s\n  jp %s\n", label, label);
+#endif
+            free_reg(r_rhs);
+            free_reg(r_lhs);
+            return;
+        }
         int r_lhs = gen(cond->lhs);
         int sz = op_size(cond->lhs->ty);
         if (sz < op_size(cond->rhs->ty))
@@ -2971,9 +3009,32 @@ static int gen(Node *node) {
                 printf("  orr %s, %s, %s\n", reg64[rt], reg64[rt], reg64[rv]);
                 BF_STORE(eff_sz_rhs, ra, rt);
                 free_reg(rv);
-                free_reg(rt);
-                free_reg(ra);
-                return r2;
+                // Reload stored bitfield value for assignment expression result
+                {
+                    int new_eff_sz_rhs = eff_sz_rhs;
+                    if (new_eff_sz_rhs <= 2)
+                        printf("  ldrh %s, [%s]\n", reg32[rt], reg64[ra]);
+                    else if (new_eff_sz_rhs == 4)
+                        printf("  ldr %s, [%s]\n", reg32[rt], reg64[ra]);
+                    else
+                        printf("  ldr %s, [%s]\n", reg64[rt], reg64[ra]);
+                    if (bo > 0)
+                        printf("  lsr %s, %s, #%d\n", reg64[rt], reg64[rt], bo);
+                    if (bw < new_eff_sz_rhs * 8) {
+                        if (node->lhs->member->ty->is_unsigned || node->lhs->member->ty->is_enum) {
+                            emit_mov_imm64("x16", (1ULL << bw) - 1);
+                            printf("  and %s, %s, x16\n", reg64[rt], reg64[rt]);
+                        } else {
+                            int shift = 64 - bw;
+                            printf("  lsl %s, %s, #%d\n", reg64[rt], reg64[rt], shift);
+                            printf("  asr %s, %s, #%d\n", reg64[rt], reg64[rt], shift);
+                        }
+                    }
+                    free_reg(r2);
+                    int ret_reg = rt;
+                    free_reg(ra);
+                    return ret_reg;
+                }
             }
 
             // Simple assignment: read-modify-write
@@ -3022,9 +3083,35 @@ static int gen(Node *node) {
                 printf("  or %s, %s\n", reg64[rv], reg64[rt]);
                 BF_STORE(unit_sz, ra, rt);
                 free_reg(rv);
-                free_reg(rt);
-                free_reg(ra);
-                return r2;
+                // Reload stored bitfield value for assignment expression result
+                {
+                    int new_eff_sz = unit_sz > 8 ? 8 : unit_sz;
+                    if (new_eff_sz == 1)
+                        printf("  movzbl (%s), %s\n", reg64[ra], reg32[rt]);
+                    else if (new_eff_sz == 2)
+                        printf("  movzwl (%s), %s\n", reg64[ra], reg32[rt]);
+                    else if (new_eff_sz == 4)
+                        printf("  movl (%s), %s\n", reg64[ra], reg32[rt]);
+                    else
+                        printf("  movq (%s), %s\n", reg64[ra], reg64[rt]);
+                    if (bo > 0)
+                        printf("  shr $%d, %s\n", bo, reg64[rt]);
+                    if (bw < new_eff_sz * 8) {
+                        if (node->lhs->member->ty->is_unsigned || node->lhs->member->ty->is_enum) {
+                            unsigned long long m = (1ULL << bw) - 1;
+                            printf("  movabsq $%llu, %%rax\n", m);
+                            printf("  andq %%rax, %s\n", reg64[rt]);
+                        } else {
+                            int shift = 64 - bw;
+                            printf("  shl $%d, %s\n", shift, reg64[rt]);
+                            printf("  sar $%d, %s\n", shift, reg64[rt]);
+                        }
+                    }
+                    free_reg(r2);
+                    int ret_reg = rt;
+                    free_reg(ra);
+                    return ret_reg;
+                }
             }
 
             // Simple assignment: read-modify-write
@@ -3060,9 +3147,64 @@ static int gen(Node *node) {
 #undef BF_LOAD
 #undef BF_STORE
             free_reg(rv);
-            free_reg(rt);
-            free_reg(ra);
-            return r2;
+#ifdef ARCH_ARM64
+            // ARM64 reload for assignment expression result
+            {
+                int new_eff_sz = eff_sz;
+                if (new_eff_sz <= 2)
+                    printf("  ldrh %s, [%s]\n", reg32[rt], reg64[ra]);
+                else if (new_eff_sz == 4)
+                    printf("  ldr %s, [%s]\n", reg32[rt], reg64[ra]);
+                else
+                    printf("  ldr %s, [%s]\n", reg64[rt], reg64[ra]);
+                if (bo > 0)
+                    printf("  lsr %s, %s, #%d\n", reg64[rt], reg64[rt], bo);
+                if (bw < new_eff_sz * 8) {
+                    if (node->lhs->member && (node->lhs->member->ty->is_unsigned || node->lhs->member->ty->is_enum)) {
+                        emit_mov_imm64("x16", (1ULL << bw) - 1);
+                        printf("  and %s, %s, x16\n", reg64[rt], reg64[rt]);
+                    } else {
+                        int shift = 64 - bw;
+                        printf("  lsl %s, %s, #%d\n", reg64[rt], reg64[rt], shift);
+                        printf("  asr %s, %s, #%d\n", reg64[rt], reg64[rt], shift);
+                    }
+                }
+                free_reg(r2);
+                int ret_reg = rt;
+                free_reg(ra);
+                return ret_reg;
+            }
+#else
+            // x86_64 reload for assignment expression result
+            {
+                int new_eff_sz = eff_sz;
+                if (new_eff_sz == 1)
+                    printf("  movzbl (%s), %s\n", reg64[ra], reg32[rt]);
+                else if (new_eff_sz == 2)
+                    printf("  movzwl (%s), %s\n", reg64[ra], reg32[rt]);
+                else if (new_eff_sz == 4)
+                    printf("  movl (%s), %s\n", reg64[ra], reg32[rt]);
+                else
+                    printf("  movq (%s), %s\n", reg64[ra], reg64[rt]);
+                if (bo > 0)
+                    printf("  shr $%d, %s\n", bo, reg64[rt]);
+                if (bw < new_eff_sz * 8) {
+                    if (node->lhs->member && (node->lhs->member->ty->is_unsigned || node->lhs->member->ty->is_enum)) {
+                        unsigned long long m = (1ULL << bw) - 1;
+                        printf("  movabsq $%llu, %%rax\n", m);
+                        printf("  andq %%rax, %s\n", reg64[rt]);
+                    } else {
+                        int shift = 64 - bw;
+                        printf("  shl $%d, %s\n", shift, reg64[rt]);
+                        printf("  sar $%d, %s\n", shift, reg64[rt]);
+                    }
+                }
+                free_reg(r2);
+                int ret_reg = rt;
+                free_reg(ra);
+                return ret_reg;
+            }
+#endif
         }
         int r1 = gen_addr(node->lhs);
         int r2 = gen(node->rhs);
@@ -3101,14 +3243,32 @@ static int gen(Node *node) {
     }
     case ND_NOT: {
         int r = gen(node->lhs);
+        if (is_flonum(node->lhs->ty)) {
 #ifdef ARCH_ARM64
-        printf("  cmp %s, #0\n", reg(r, op_size(node->lhs->ty)));
-        printf("  cset %s, eq\n", reg(r, 4));
+            printf("  fmov d0, %s\n", reg64[r]);
+            printf("  fmov d1, xzr\n");
+            printf("  fcmp d0, d1\n");
+            printf("  cset %s, eq\n", reg32[r]);
+            printf("  csel %s, %s, wzr, vs\n", reg32[r], reg32[r]);
 #else
-        printf("  cmp $0, %s\n", reg(r, op_size(node->lhs->ty)));
-        printf("  sete %%al\n");
-        printf("  movzbl %%al, %s\n", reg(r, 4));
+            printf("  movq %s, %%xmm0\n", reg64[r]);
+            printf("  xorpd %%xmm1, %%xmm1\n");
+            printf("  ucomisd %%xmm1, %%xmm0\n");
+            printf("  setnp %%cl\n");
+            printf("  sete %%al\n");
+            printf("  andb %%cl, %%al\n");
+            printf("  movzbl %%al, %s\n", reg(r, 4));
 #endif
+        } else {
+#ifdef ARCH_ARM64
+            printf("  cmp %s, #0\n", reg(r, op_size(node->lhs->ty)));
+            printf("  cset %s, eq\n", reg(r, 4));
+#else
+            printf("  cmp $0, %s\n", reg(r, op_size(node->lhs->ty)));
+            printf("  sete %%al\n");
+            printf("  movzbl %%al, %s\n", reg(r, 4));
+#endif
+        }
         return r;
     }
     case ND_ZERO_INIT: {
@@ -3143,6 +3303,73 @@ static int gen(Node *node) {
         int r = gen_addr(node->lhs);
         int r2 = alloc_reg();
         int sz = node->lhs->ty->size;
+        // Handle bitfield post-increment/decrement with proper read-modify-write
+        if (node->lhs->kind == ND_MEMBER && node->lhs->member &&
+            node->lhs->member->bit_width > 0) {
+            Member *mem = node->lhs->member;
+            int bw = mem->bit_width;
+            int bo = mem->bit_offset;
+            int unit_sz = mem->bf_load_size ? mem->bf_load_size : mem->ty->size;
+            unsigned long long mask = ((1ULL << bw) - 1) << bo;
+            int eff_sz = unit_sz > 8 ? 8 : unit_sz;
+            // Load the full container word (unsigned)
+            if (eff_sz == 1)
+                printf("  movzbl (%s), %s\n", reg64[r], reg32[r2]);
+            else if (eff_sz == 2)
+                printf("  movzwl (%s), %s\n", reg64[r], reg32[r2]);
+            else if (eff_sz == 4)
+                printf("  movl (%s), %s\n", reg64[r], reg32[r2]);
+            else
+                printf("  movq (%s), %s\n", reg64[r], reg64[r2]);
+            // Extract original bitfield value into r3 (for return)
+            int r3 = alloc_reg();
+            printf("  mov %s, %s\n", reg64[r2], reg64[r3]);
+            if (bo > 0)
+                printf("  shr $%d, %s\n", bo, reg64[r3]);
+            int load_bits = eff_sz * 8;
+            if (bw < load_bits) {
+                if (mem->ty->is_unsigned || mem->ty->is_enum) {
+                    unsigned long long m = (1ULL << bw) - 1;
+                    printf("  movabsq $%llu, %%rax\n", m);
+                    printf("  andq %%rax, %s\n", reg64[r3]);
+                } else {
+                    int shift = 64 - bw;
+                    printf("  shl $%d, %s\n", shift, reg64[r3]);
+                    printf("  sar $%d, %s\n", shift, reg64[r3]);
+                }
+            }
+            // Clear the field bits in container word (r2)
+            printf("  movabsq $%llu, %%rax\n", ~mask);
+            printf("  andq %%rax, %s\n", reg64[r2]);
+            // Compute new field value in rn
+            int rn = alloc_reg();
+            printf("  mov %s, %s\n", reg64[r3], reg64[rn]);
+            printf("  movabsq $%llu, %%rax\n", (1ULL << bw) - 1);
+            printf("  andq %%rax, %s\n", reg64[rn]); // mask to unsigned bw bits
+            if (node->kind == ND_POST_INC)
+                printf("  add $1, %s\n", reg(rn, 4));
+            else
+                printf("  sub $1, %s\n", reg(rn, 4));
+            printf("  movabsq $%llu, %%rax\n", (1ULL << bw) - 1);
+            printf("  andq %%rax, %s\n", reg64[rn]); // wrap around in field
+            if (bo > 0)
+                printf("  shl $%d, %s\n", bo, reg64[rn]);
+            printf("  or %s, %s\n", reg64[rn], reg64[r2]);
+            // Store
+            if (eff_sz == 1)
+                printf("  movb %s, (%s)\n", reg8[r2], reg64[r]);
+            else if (eff_sz == 2)
+                printf("  movw %s, (%s)\n", reg(r2, 2), reg64[r]);
+            else if (eff_sz == 4)
+                printf("  movl %s, (%s)\n", reg(r2, 4), reg64[r]);
+            else
+                printf("  movq %s, (%s)\n", reg64[r2], reg64[r]);
+            free_reg(rn);
+            free_reg(r3);
+            free_reg(r2);
+            free_reg(r);
+            return r3; // Return original value (post-increment semantics)
+        }
 #ifdef ARCH_ARM64
         // Load current value (correct load width for type)
         emit_load(node->lhs->ty, r2, format("[%s]", reg64[r]));
@@ -3386,7 +3613,19 @@ static int gen(Node *node) {
             }
             printf("  fmov %s, d0\n", reg64[r]);
 #else
-            if (from->is_unsigned && from->size == 4) {
+            if (from->is_unsigned && from->size == 8) {
+                int c = ++rcc_label_count;
+                printf("  testq %s, %s\n", reg64[r], reg64[r]);
+                printf("  js .L.u2f.high.%d\n", c);
+                printf("  cvtsi2sd %s, %%xmm0\n", reg64[r]);
+                printf("  jmp .L.u2f.end.%d\n", c);
+                printf(".L.u2f.high.%d:\n", c);
+                printf("  movq %s, %%rcx\n", reg64[r]);
+                printf("  shrq %%rcx\n");
+                printf("  cvtsi2sd %%rcx, %%xmm0\n");
+                printf("  addsd %%xmm0, %%xmm0\n");
+                printf(".L.u2f.end.%d:\n", c);
+            } else if (from->is_unsigned && from->size == 4) {
                 printf("  cvtsi2sd %s, %%xmm0\n", reg64[r]);
             } else {
                 printf("  cvtsi2sd %s, %%xmm0\n", from->size < 4 ? reg32[r] : reg(r, from->size));

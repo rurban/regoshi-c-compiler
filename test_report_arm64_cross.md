@@ -2,7 +2,7 @@
 
 **Platform**: Linux ARM64 (aarch64 cross)
 
-Generated: May 07 2026 18:23
+Generated: May 08 2026 07:11
 
 ## Overall Summary
 
@@ -24,6 +24,6 @@ Generated: May 07 2026 18:23
 - **Passed**: 864
 - **Failed**: 60
 - **Skipped**: 71
-- **FAIL COMPILE**: 23
-- **FAIL RUNTIME**: 37
+- **FAIL COMPILE**: 27
+- **FAIL RUNTIME**: 33
 - **Pass Rate (excl. skip)**: 93%

@@ -97,7 +97,6 @@ write_section() {
     else
         printf -- '- **Pass Rate**: %d%%\n' "$(pct "$_pass" "$_total")"
     fi
-    printf '\n'
 }
 
 # Determine which test suites have data
