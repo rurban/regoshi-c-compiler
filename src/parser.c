@@ -2937,6 +2937,18 @@ static Node *declaration(Token **rest, Token *tok) {
                 vla_node->var = var;
                 cur = cur->next = new_unary(ND_EXPR_STMT, vla_node, tok);
                 fn_uses_vla = true;
+            } else if ((ty->kind == TY_STRUCT || ty->kind == TY_UNION) && ty->vla_len_expr) {
+                // VLA-containing struct: emit the pending size capture first (to set the cap
+                // lvar that ty->vla_len_expr references), then allocate the VLA data area.
+                if (pending_vla_struct_capture) {
+                    cur = cur->next = pending_vla_struct_capture;
+                    pending_vla_struct_capture = NULL;
+                }
+                Node *vla_node = new_node(ND_ALLOCA, tok);
+                vla_node->lhs = ty->vla_len_expr;
+                vla_node->var = var;
+                cur = cur->next = new_unary(ND_EXPR_STMT, vla_node, tok);
+                fn_uses_vla = true;
             }
 
             if (current_block_depth == 1)
@@ -5461,6 +5473,7 @@ Program *parse(Token *tok) {
                     params = head.param_next;
                 } else {
                     fty = func_type(ty);
+                    bool is_oldstyle = false;
                     locals = NULL;
                     stack_offset = 80;
                     label_scopes = NULL;
@@ -5472,6 +5485,7 @@ Program *parse(Token *tok) {
                     tok = tok->next;
                     if (!equalc(tok, ")") && !equalc(tok, "...") && !is_typename(tok)) {
                         // K&R function definition: param list has identifiers, not types
+                        is_oldstyle = true;
                         // First pass: collect parameter names and declarations
                         typedef struct KRParam KRParam;
                         struct KRParam {
@@ -5535,6 +5549,7 @@ Program *parse(Token *tok) {
 
                     // Build parameter type list
                     fty->is_variadic = is_variadic;
+                    fty->is_oldstyle = is_oldstyle;
                     Type param_head = {};
                     Type *pcur = &param_head;
                     for (LVar *p = params; p; p = p->param_next) {
@@ -5558,8 +5573,12 @@ Program *parse(Token *tok) {
                 // Preserve alignment from prior declaration
                 if (!top_decl_align) {
                     LVar *prev = find_global_name(name);
-                    if (prev && prev->ty && prev->ty->base && prev->ty->base->align > fty->align)
-                        fty->align = prev->ty->base->align;
+                    if (prev && prev->ty && prev->ty->base) {
+                        if (prev->ty->base->align > fty->align)
+                            fty->align = prev->ty->base->align;
+                        if (prev->ty->base->param_types)
+                            fty->is_oldstyle = false;
+                    }
                 }
 
                 if (fty->return_ty && (fty->return_ty->kind == TY_STRUCT || fty->return_ty->kind == TY_UNION)) {

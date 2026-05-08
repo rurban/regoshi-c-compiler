@@ -58,7 +58,10 @@ $SkipTests = @(
     "126_bound_global",
     "98_al_ax_extend",        # x86-32bit specific, skipped by TCC on x86_64
     "99_fastcall",            # x86-32bit specific, skipped by TCC on x86_64
-    "128_run_atexit"          # needs TCC-specific -dt multi-snippet runner
+    "128_run_atexit",         # needs TCC-specific -dt multi-snippet runner
+    "141_riscv_asm_pseudo",
+    "142_riscv_asm_longlong",
+    "143_riscv_asm_farith"
 )
 
 # Tests skipped on Intel hosts (arm64-specific tests)

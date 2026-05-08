@@ -293,6 +293,45 @@ static void emit_cleanup_range(LVar *begin, LVar *end) {
 }
 
 #ifdef ARCH_ARM64
+static int arm64_hfa_info(Type *ty, int *elem_size) {
+    if (!ty)
+        return -1;
+    if (is_flonum(ty) && (ty->size == 4 || ty->size == 8)) {
+        if (*elem_size == 0)
+            *elem_size = ty->size;
+        else if (*elem_size != ty->size)
+            return -1;
+        return 1;
+    }
+    if (ty->kind != TY_STRUCT)
+        return -1;
+    int count = 0;
+    for (Member *mem = ty->members; mem; mem = mem->next) {
+        int sub = arm64_hfa_info(mem->ty, elem_size);
+        if (sub <= 0)
+            return -1;
+        count += sub;
+        if (count > 4)
+            return -1;
+    }
+    return count > 0 ? count : -1;
+}
+
+static int arm64_hfa_count(Type *ty, int *elem_size) {
+    int es = 0;
+    int n = arm64_hfa_info(ty, &es);
+    if (n <= 0) {
+        if (elem_size)
+            *elem_size = 0;
+        return 0;
+    }
+    if (elem_size)
+        *elem_size = es;
+    return n;
+}
+#endif
+
+#ifdef ARCH_ARM64
 // ARM64: emit load from [fp, #-offset] into x16 (uses x17 for large offsets)
 static void arm64_load_from_fp_minus(int offset, const char *dst) {
     if (offset <= 255)
@@ -411,6 +450,10 @@ static int gen_funcall(Node *node, int hidden_ret_reg) {
     int arg_gp_idx_stk[64];
     int arg_fp_idx_stk[64];
     int arg_stack_idx_stk[64];
+#ifdef ARCH_ARM64
+    int arg_hfa_count_stk[64];
+    int arg_hfa_elem_size_stk[64];
+#endif
 #endif
 
     Node **argv;
@@ -421,6 +464,10 @@ static int gen_funcall(Node *node, int hidden_ret_reg) {
     int *arg_gp_idx;
     int *arg_fp_idx;
     int *arg_stack_idx;
+#ifdef ARCH_ARM64
+    int *arg_hfa_count;
+    int *arg_hfa_elem_size;
+#endif
 #endif
 
     if (nargs <= 64) {
@@ -432,6 +479,10 @@ static int gen_funcall(Node *node, int hidden_ret_reg) {
         arg_gp_idx = arg_gp_idx_stk;
         arg_fp_idx = arg_fp_idx_stk;
         arg_stack_idx = arg_stack_idx_stk;
+#ifdef ARCH_ARM64
+        arg_hfa_count = arg_hfa_count_stk;
+        arg_hfa_elem_size = arg_hfa_elem_size_stk;
+#endif
 #endif
     } else {
         argv = arena_alloc(sizeof(Node *) * nargs);
@@ -442,6 +493,10 @@ static int gen_funcall(Node *node, int hidden_ret_reg) {
         arg_gp_idx = arena_alloc(sizeof(int) * nargs);
         arg_fp_idx = arena_alloc(sizeof(int) * nargs);
         arg_stack_idx = arena_alloc(sizeof(int) * nargs);
+#ifdef ARCH_ARM64
+        arg_hfa_count = arena_alloc(sizeof(int) * nargs);
+        arg_hfa_elem_size = arena_alloc(sizeof(int) * nargs);
+#endif
 #endif
     }
 
@@ -505,6 +560,15 @@ static int gen_funcall(Node *node, int hidden_ret_reg) {
         bool is_prefetch = strcmp(call_target, "__builtin_prefetch") == 0;
         bool is_frame_addr = strcmp(call_target, "__builtin_frame_address") == 0;
         bool is_ret_addr = strcmp(call_target, "__builtin_return_address") == 0;
+        bool is_signbit = strcmp(call_target, "__builtin_signbit") == 0 ||
+            strcmp(call_target, "__builtin_signbitf") == 0 ||
+            strcmp(call_target, "__builtin_signbitl") == 0;
+        bool is_abs_builtin = strcmp(call_target, "__builtin_abs") == 0 ||
+            strcmp(call_target, "__builtin_labs") == 0 ||
+            strcmp(call_target, "__builtin_llabs") == 0 ||
+            strcmp(call_target, "abs") == 0 ||
+            strcmp(call_target, "labs") == 0 ||
+            strcmp(call_target, "llabs") == 0;
 #ifndef ARCH_ARM64
         bool is_add_overflow = strcmp(call_target, "__builtin_add_overflow") == 0;
         bool is_sub_overflow = strcmp(call_target, "__builtin_sub_overflow") == 0;
@@ -700,6 +764,49 @@ static int gen_funcall(Node *node, int hidden_ret_reg) {
                 }
             }
             return -1; // void
+        }
+
+        if (is_signbit) {
+            Node *arg = node->args;
+            if (arg && !arg->next) {
+                int r_arg = gen(arg);
+                int r = alloc_reg();
+#ifdef ARCH_ARM64
+                printf("  lsr %s, %s, #63\n", reg64[r], reg64[r_arg]);
+#else
+                printf("  movq %s, %%xmm0\n", reg64[r_arg]);
+                printf("  movq %%xmm0, %s\n", reg64[r]);
+                printf("  shrq $63, %s\n", reg64[r]);
+#endif
+                free_reg(r_arg);
+                return r;
+            }
+        }
+
+        if (is_abs_builtin) {
+            Node *arg = node->args;
+            if (arg && !arg->next) {
+                int r = gen(arg);
+#ifdef ARCH_ARM64
+                int arg_size = (arg->ty && !is_flonum(arg->ty)) ? arg->ty->size : 8;
+                if (arg_size <= 4 && !(arg->ty && arg->ty->is_unsigned))
+                    printf("  sxtw %s, %s\n", reg64[r], reg32[r]);
+                printf("  cmp %s, #0\n", reg64[r]);
+                printf("  cneg %s, %s, mi\n", reg64[r], reg64[r]);
+                return r;
+#else
+                int r2 = alloc_reg();
+                int arg_size = (arg->ty && !is_flonum(arg->ty)) ? arg->ty->size : 8;
+                if (arg_size <= 4 && !(arg->ty && arg->ty->is_unsigned))
+                    printf("  movslq %s, %s\n", reg32[r], reg64[r]);
+                printf("  movq %s, %s\n", reg64[r], reg64[r2]);
+                printf("  sarq $63, %s\n", reg64[r2]);
+                printf("  xorq %s, %s\n", reg64[r2], reg64[r]);
+                printf("  subq %s, %s\n", reg64[r2], reg64[r]);
+                free_reg(r2);
+                return r;
+#endif
+            }
         }
 
         if (is_frame_addr) {
@@ -1013,7 +1120,11 @@ static int gen_funcall(Node *node, int hidden_ret_reg) {
         arg_gp_idx[i] = -1;
         arg_fp_idx[i] = -1;
         arg_stack_idx[i] = -1;
+        arg_hfa_count[i] = 0;
+        arg_hfa_elem_size[i] = 0;
         bool is_named = (i < named_count);
+        if (!arg_is_float[i] && (argv[i]->ty->kind == TY_STRUCT || argv[i]->ty->kind == TY_UNION))
+            arg_hfa_count[i] = arm64_hfa_count(argv[i]->ty, &arg_hfa_elem_size[i]);
         if (arg_is_float[i]) {
             // Long double (> 8 bytes): pass in q-register (SIMD), not d-register or stack
             if (arg_sizes[i] > 8) {
@@ -1050,6 +1161,16 @@ static int gen_funcall(Node *node, int hidden_ret_reg) {
             }
             continue;
         }
+        if (arg_hfa_count[i] > 0 && !is_variadic) {
+            if (fp_reg_args + arg_hfa_count[i] <= max_fp_args) {
+                arg_fp_idx[i] = fp_reg_args;
+                fp_reg_args += arg_hfa_count[i];
+            } else {
+                arg_stack_idx[i] = stack_args;
+                stack_args += arg_hfa_count[i];
+            }
+            continue;
+        }
 #if defined(__APPLE__)
         if (is_variadic && !is_named) {
             arg_stack_idx[i] = stack_args++;
@@ -1075,6 +1196,14 @@ static int gen_funcall(Node *node, int hidden_ret_reg) {
     int gp_reg_args = has_hidden_retbuf ? 1 : 0;
     int fp_reg_args = 0;
     int stack_args = 0;
+    Type *fn_type = (node->lhs && node->lhs->ty && node->lhs->ty->kind == TY_PTR)
+        ? node->lhs->ty->base
+        : NULL;
+    bool is_variadic = fn_type && fn_type->kind == TY_FUNC && fn_type->is_variadic;
+    int named_count = 0;
+    if (fn_type && fn_type->kind == TY_FUNC)
+        for (Type *t = fn_type->param_types; t; t = t->param_next)
+            named_count++;
     for (int i = 0; i < nargs; i++) {
         arg_regs[i] = -1;
         arg_sizes[i] = (argv[i]->ty->kind == TY_ARRAY) ? 8 : argv[i]->ty->size;
@@ -1082,14 +1211,17 @@ static int gen_funcall(Node *node, int hidden_ret_reg) {
         arg_gp_idx[i] = -1;
         arg_fp_idx[i] = -1;
         arg_stack_idx[i] = -1;
+        bool is_named = (i < named_count);
 
         if (arg_is_float[i]) {
-            if (argv[i]->ty->kind == TY_LDOUBLE) {
-                // long double always on stack as 16 bytes (x87 80-bit + padding)
-                if (stack_args & 1) stack_args++; // 16-byte align
+            if (argv[i]->ty->kind == TY_LDOUBLE && is_variadic && !is_named) {
+                if (stack_args & 1)
+                    stack_args++;
                 arg_stack_idx[i] = stack_args;
                 stack_args += 2;
-            } else if (fp_reg_args < max_fp_args) {
+                continue;
+            }
+            if (fp_reg_args < max_fp_args) {
                 arg_fp_idx[i] = fp_reg_args++;
             } else {
                 arg_stack_idx[i] = stack_args++;
@@ -1112,7 +1244,7 @@ static int gen_funcall(Node *node, int hidden_ret_reg) {
     for (int i = 0; i < nargs; i++) {
         if (arg_stack_idx[i] >= 0)
             continue;
-        if ((argv[i]->ty->kind == TY_STRUCT || argv[i]->ty->kind == TY_UNION) && argv[i]->ty->size > 8)
+        if (arg_hfa_count[i] > 0 || ((argv[i]->ty->kind == TY_STRUCT || argv[i]->ty->kind == TY_UNION) && argv[i]->ty->size > 8))
             arg_regs[i] = gen_addr(argv[i]);
         else
             arg_regs[i] = gen(argv[i]);
@@ -1226,11 +1358,33 @@ static int gen_funcall(Node *node, int hidden_ret_reg) {
         if (arg_is_float[i] && arg_sizes[i] > 8 && arg_fp_idx[i] >= 0) {
             continue;
         }
+        if (arg_hfa_count[i] > 0 && arg_fp_idx[i] >= 0) {
+            for (int j = 0; j < arg_hfa_count[i]; j++) {
+                int off = j * arg_hfa_elem_size[i];
+                if (arg_hfa_elem_size[i] == 4)
+                    printf("  ldr s%d, [%s, #%d]\n", arg_fp_idx[i] + j, reg64[arg_regs[i]], off);
+                else
+                    printf("  ldr d%d, [%s, #%d]\n", arg_fp_idx[i] + j, reg64[arg_regs[i]], off);
+            }
+            free_reg(arg_regs[i]);
+            continue;
+        }
+        // Variadic small HFA struct (size<=8): gen_addr gave address, but GP register
+        // must hold the VALUE (va_arg reads it directly, not via pointer).
+        if (arg_hfa_count[i] > 0 && arg_gp_idx[i] >= 0 && arg_fp_idx[i] < 0 && arg_sizes[i] <= 8) {
+            if (arg_sizes[i] == 4)
+                printf("  ldr w16, [%s]\n  mov %s, x16\n", reg64[arg_regs[i]], argreg64[arg_gp_idx[i]]);
+            else
+                printf("  ldr %s, [%s]\n", argreg64[arg_gp_idx[i]], reg64[arg_regs[i]]);
+            free_reg(arg_regs[i]);
+            continue;
+        }
         if (arg_is_float[i] && arg_fp_idx[i] >= 0) {
             printf("  fmov %s, %s\n", argxmm[arg_fp_idx[i]], reg64[arg_regs[i]]);
             // Convert double->float only if callee param is known float,
             // not for variadic args (which stay promoted to double)
-            bool var_double = is_variadic && i >= named_count;
+            bool var_double = (is_variadic && i >= named_count) ||
+                (fn_type && (fn_type->is_oldstyle || !fn_type->param_types));
             if (!var_double) {
                 if (argv[i]->ty->size == 4)
                     printf("  fcvt s%d, %s\n", arg_fp_idx[i], argxmm[arg_fp_idx[i]]);
@@ -1239,10 +1393,6 @@ static int gen_funcall(Node *node, int hidden_ret_reg) {
                     for (int j = 0; j < i && pt; j++) pt = pt->param_next;
                     if (pt && pt->kind == TY_FLOAT)
                         printf("  fcvt s%d, %s\n", arg_fp_idx[i], argxmm[arg_fp_idx[i]]);
-                }
-                // K&R forward decl (no param info): assume float if flonum arg
-                else if (fn_type && !fn_type->param_types && named_count == 0) {
-                    printf("  fcvt s%d, %s\n", arg_fp_idx[i], argxmm[arg_fp_idx[i]]);
                 }
             }
             if (arg_gp_idx[i] >= 0)
@@ -1318,6 +1468,8 @@ static int gen_funcall(Node *node, int hidden_ret_reg) {
 
     int r = alloc_reg();
     if (node->ty && is_flonum(node->ty)) {
+        if (node->ty->kind == TY_FLOAT)
+            printf("  fcvt d0, s0\n");
         printf("  fmov %s, d0\n", reg64[r]);
     } else {
         printf("  mov %s, x0\n", reg64[r]);
@@ -1408,7 +1560,6 @@ static int gen_funcall(Node *node, int hidden_ret_reg) {
         if (arg_stack_idx[i] < 0)
             continue;
         used_regs |= reg_arg_mask; // keep pre-computed reg args live
-        // x87: long double args go on stack as 80-bit extended precision
         if (argv[i]->ty->kind == TY_LDOUBLE) {
             int r = gen(argv[i]);
             printf("  movq %s, %d(%%rsp)\n", reg64[r], shadow_space + arg_stack_idx[i] * 8);
@@ -1561,6 +1712,10 @@ static int gen_funcall(Node *node, int hidden_ret_reg) {
 
     int r = alloc_reg();
     if (node->ty && is_flonum(node->ty)) {
+#ifndef ARCH_ARM64
+        if (node->ty->kind == TY_FLOAT)
+            printf("  cvtss2sd %%xmm0, %%xmm0\n");
+#endif
         printf("  movq %%xmm0, %s\n", reg64[r]);
     } else {
         printf("  movq %%rax, %s\n", reg64[r]);
@@ -2777,7 +2932,10 @@ static int gen(Node *node) {
     case ND_ASSIGN: {
         if (node->lhs->ty->kind == TY_ARRAY || node->lhs->ty->kind == TY_STRUCT || node->lhs->ty->kind == TY_UNION) {
             int c = ++rcc_label_count;
-            int dst = gen_addr(node->lhs);
+            // For VLA-containing structs, the "address" is the VLA data pointer (gen()),
+            // not the VLA descriptor address (gen_addr()).
+            bool lhs_vla_struct = (node->lhs->ty->kind == TY_STRUCT || node->lhs->ty->kind == TY_UNION) && node->lhs->ty->vla_len_expr;
+            int dst = lhs_vla_struct ? gen(node->lhs) : gen_addr(node->lhs);
             int src;
             if (node->rhs->kind == ND_FUNCALL && node->rhs->ty &&
                 (node->rhs->ty->kind == TY_STRUCT || node->rhs->ty->kind == TY_UNION)) {
@@ -2887,8 +3045,16 @@ static int gen(Node *node) {
                 return dst;
             }
 
+            // For VLA-containing structs, use the runtime size instead of ty->size
+            bool copy_is_vla_struct = (node->lhs->ty->kind == TY_STRUCT || node->lhs->ty->kind == TY_UNION) && node->lhs->ty->vla_len_expr;
+            int r_vla_sz = -1;
+            if (copy_is_vla_struct)
+                r_vla_sz = gen(node->lhs->ty->vla_len_expr);
 #ifdef ARCH_ARM64
-            printf("  mov x12, #%d\n", node->lhs->ty->size);
+            if (copy_is_vla_struct && r_vla_sz >= 0)
+                printf("  mov x12, %s\n", reg64[r_vla_sz]);
+            else
+                printf("  mov x12, #%d\n", node->lhs->ty->size);
             printf(".L.copy.%d:\n", c);
             printf("  cmp x12, #0\n");
             printf("  b.eq .L.copy_end.%d\n", c);
@@ -2898,7 +3064,10 @@ static int gen(Node *node) {
             printf("  b .L.copy.%d\n", c);
             printf(".L.copy_end.%d:\n", c);
 #else
-            printf("  movq $%d, %%rcx\n", node->lhs->ty->size);
+            if (copy_is_vla_struct && r_vla_sz >= 0)
+                printf("  movq %s, %%rcx\n", reg64[r_vla_sz]);
+            else
+                printf("  movq $%d, %%rcx\n", node->lhs->ty->size);
             printf(".L.copy.%d:\n", c);
             printf("  cmpq $0, %%rcx\n");
             printf("  je .L.copy_end.%d\n", c);
@@ -2908,6 +3077,7 @@ static int gen(Node *node) {
             printf("  jmp .L.copy.%d\n", c);
             printf(".L.copy_end.%d:\n", c);
 #endif
+            if (r_vla_sz >= 0) free_reg(r_vla_sz);
             free_reg(src);
             return dst;
         }
@@ -3632,6 +3802,20 @@ static int gen(Node *node) {
                 printf(".L.ucast.%d:\n", c);
                 printf("  cvttsd2si %%xmm0, %s\n", reg64[r]);
                 printf(".L.ucast_end.%d:\n", c);
+            } else if (to->size <= 4 && to->is_unsigned) {
+                // float-to-unsigned-int: cvttsd2si is signed, so handle [2^31, 2^32) range.
+                int c = ++rcc_label_count;
+                printf("  movq $0x41e0000000000000, %%rax\n"); // 2^31 as double
+                printf("  movq %%rax, %%xmm1\n");
+                printf("  comisd %%xmm1, %%xmm0\n");
+                printf("  jb .L.ucast32.%d\n", c);
+                printf("  subsd %%xmm1, %%xmm0\n"); // d -= 2^31
+                printf("  cvttsd2si %%xmm0, %s\n", reg32[r]);
+                printf("  addl $0x80000000, %s\n", reg32[r]); // add back 2^31
+                printf("  jmp .L.ucast32_end.%d\n", c);
+                printf(".L.ucast32.%d:\n", c);
+                printf("  cvttsd2si %%xmm0, %s\n", reg32[r]);
+                printf(".L.ucast32_end.%d:\n", c);
             } else if (to->size <= 4 && !to->is_unsigned) {
                 int c = ++rcc_label_count;
                 // cvttsd2si returns 0x80000000 (INT_MIN) on overflow.
@@ -3753,7 +3937,7 @@ static int gen(Node *node) {
         return r;
     }
     case ND_DEREF: {
-        if (node->ty->kind == TY_FUNC || node->ty->kind == TY_ARRAY)
+        if (node->ty->kind == TY_FUNC || node->ty->kind == TY_ARRAY || node->ty->kind == TY_VLA)
             return gen(node->lhs);
         int r = gen(node->lhs);
         if (is_flonum(node->ty)) {
@@ -3841,20 +4025,79 @@ static int gen(Node *node) {
                     if (node->lhs->ty && is_flonum(node->lhs->ty)) {
 #ifdef ARCH_ARM64
                         printf("  fmov d0, %s\n", reg64[r]);
+                        if (ret_ty->kind == TY_FLOAT)
+                            printf("  fcvt s0, d0\n");
 #else
                         printf("  movq %s, %%xmm0\n", reg64[r]);
+                        if (ret_ty->kind == TY_FLOAT)
+                            printf("  cvtsd2ss %%xmm0, %%xmm0\n");
 #endif
                     } else if (ret_ty->size == 4) {
 #ifdef ARCH_ARM64
-                        printf("  scvtf s0, %s\n", reg64[r]);
+                        if (node->lhs->ty && node->lhs->ty->is_unsigned)
+                            printf("  ucvtf s0, %s\n", reg(r, node->lhs->ty->size));
+                        else
+                            printf("  scvtf s0, %s\n", reg(r, node->lhs->ty->size < 4 ? 4 : node->lhs->ty->size));
 #else
-                        printf("  cvtsi2ss %s, %%xmm0\n", reg64[r]);
+                        {
+                            int src_sz = node->lhs->ty ? node->lhs->ty->size : 4;
+                            bool src_u = node->lhs->ty && node->lhs->ty->is_unsigned;
+                            if (src_u && src_sz == 8) {
+                                // unsigned long long → float: handle high bit
+                                int c = ++rcc_label_count;
+                                printf("  testq %s, %s\n", reg64[r], reg64[r]);
+                                printf("  js .L.u2f.high.%d\n", c);
+                                printf("  cvtsi2ss %s, %%xmm0\n", reg64[r]);
+                                printf("  jmp .L.u2f.end.%d\n", c);
+                                printf(".L.u2f.high.%d:\n", c);
+                                printf("  movq %s, %%rcx\n", reg64[r]);
+                                printf("  shrq %%rcx\n");
+                                printf("  cvtsi2ss %%rcx, %%xmm0\n");
+                                printf("  addss %%xmm0, %%xmm0\n");
+                                printf(".L.u2f.end.%d:\n", c);
+                            } else if (src_u && src_sz <= 4) {
+                                // unsigned int/short/char → float: zero-extend to 64-bit,
+                                // then cvtsi2ss with 64-bit reg (value is non-negative 64-bit int)
+                                printf("  cvtsi2ss %s, %%xmm0\n", reg64[r]);
+                            } else {
+                                // signed: cvtsi2ss with correct-width reg (sign-extends)
+                                const char *sreg = (src_sz >= 8) ? reg64[r] : reg(r, src_sz < 4 ? 4 : src_sz);
+                                printf("  cvtsi2ss %s, %%xmm0\n", sreg);
+                            }
+                        }
 #endif
                     } else {
 #ifdef ARCH_ARM64
-                        printf("  scvtf d0, %s\n", reg64[r]);
+                        if (node->lhs->ty && node->lhs->ty->is_unsigned)
+                            printf("  ucvtf d0, %s\n", reg(r, node->lhs->ty->size));
+                        else
+                            printf("  scvtf d0, %s\n", reg(r, node->lhs->ty->size < 4 ? 4 : node->lhs->ty->size));
 #else
-                        printf("  cvtsi2sd %s, %%xmm0\n", reg64[r]);
+                        {
+                            int src_sz = node->lhs->ty ? node->lhs->ty->size : 8;
+                            bool src_u = node->lhs->ty && node->lhs->ty->is_unsigned;
+                            if (src_u && src_sz == 8) {
+                                // unsigned long long → double: handle high bit
+                                int c = ++rcc_label_count;
+                                printf("  testq %s, %s\n", reg64[r], reg64[r]);
+                                printf("  js .L.u2f.high.%d\n", c);
+                                printf("  cvtsi2sd %s, %%xmm0\n", reg64[r]);
+                                printf("  jmp .L.u2f.end.%d\n", c);
+                                printf(".L.u2f.high.%d:\n", c);
+                                printf("  movq %s, %%rcx\n", reg64[r]);
+                                printf("  shrq %%rcx\n");
+                                printf("  cvtsi2sd %%rcx, %%xmm0\n");
+                                printf("  addsd %%xmm0, %%xmm0\n");
+                                printf(".L.u2f.end.%d:\n", c);
+                            } else if (src_u && src_sz <= 4) {
+                                // unsigned int/short/char → double: zero-extend to 64-bit
+                                printf("  cvtsi2sd %s, %%xmm0\n", reg64[r]);
+                            } else {
+                                // signed: cvtsi2sd with correct-width reg (sign-extends)
+                                const char *sreg = (src_sz >= 8) ? reg64[r] : reg(r, src_sz < 4 ? 4 : src_sz);
+                                printf("  cvtsi2sd %s, %%xmm0\n", sreg);
+                            }
+                        }
 #endif
                     }
                 } else if (node->lhs->ty && is_flonum(node->lhs->ty)) {
@@ -4708,25 +4951,86 @@ static int gen(Node *node) {
             if (op_addr[i] >= 0) free_reg(op_addr[i]);
         return -1;
 #else
-        // Evaluate operands: outputs (memory addr) then inputs (register value)
+        // x86-64 inline asm operand evaluation.
+        // op_regs[i]: register holding value (or address for memory operands)
+        // op_addr[i]: address register for store-back after asm (-1 if none)
         int op_regs[MAX_ASM_OPERANDS];
-        for (int i = 0; i < node->asm_noperands; i++) op_regs[i] = -1;
+        int op_addr[MAX_ASM_OPERANDS];
+        for (int i = 0; i < node->asm_noperands; i++) {
+            op_regs[i] = -1;
+            op_addr[i] = -1;
+        }
 
+        // First pass: allocate registers for outputs and memory operands.
+        // Defer matching input constraints (digit) to second pass.
         for (int i = 0; i < node->asm_noperands; i++) {
             AsmOperand *op = &node->asm_ops[i];
-            if (op->is_memory || (op->is_output && !op->is_rw)) {
-                // memory operand or output: compute address
+            const char *c = op->constraint;
+            while (*c == '=' || *c == '+' || *c == '&') c++;
+
+            if (op->is_memory) {
+                // "m" constraint: compute address, use as memory ref in template
                 int r = gen_addr(op->expr);
                 op_regs[i] = r;
                 op->reg = r;
                 snprintf(op->asm_str, sizeof(op->asm_str), "(%s)", reg64[r]);
+            } else if (op->is_output && !op->is_rw) {
+                // Output-only: "=r" → allocate fresh register, store back after asm.
+                // "=m" is handled above (is_memory).
+                int r_addr = gen_addr(op->expr);
+                op_addr[i] = r_addr;
+                int r = alloc_reg();
+                op_regs[i] = r;
+                op->reg = r;
+                int sz = op->expr->ty ? op->expr->ty->size : 4;
+                snprintf(op->asm_str, sizeof(op->asm_str), "%s", reg(r, sz));
+            } else if (op->is_rw) {
+                // Read-write "+r": load current value, store back after asm.
+                int r_addr = gen_addr(op->expr);
+                op_addr[i] = r_addr;
+                int r = alloc_reg();
+                op_regs[i] = r;
+                op->reg = r;
+                int sz = op->expr->ty ? op->expr->ty->size : 4;
+                emit_load(op->expr->ty, r, format("(%s)", reg64[r_addr]));
+                snprintf(op->asm_str, sizeof(op->asm_str), "%s", reg(r, sz));
+            } else if (*c >= '0' && *c <= '9') {
+                // Matching constraint: defer to second pass
+                op_regs[i] = -2; // sentinel
             } else {
-                // register input: load value
+                // Regular input "r": load value into a register
                 int r = gen(op->expr);
                 op_regs[i] = r;
                 op->reg = r;
                 int sz = op->expr->ty ? op->expr->ty->size : 4;
                 snprintf(op->asm_str, sizeof(op->asm_str), "%s", reg(r, sz));
+            }
+        }
+
+        // Second pass: resolve matching constraints ("0".."9").
+        // Load the input value into the same register as the referenced output.
+        for (int i = 0; i < node->asm_noperands; i++) {
+            if (op_regs[i] != -2) continue;
+            AsmOperand *op = &node->asm_ops[i];
+            const char *c = op->constraint;
+            while (*c == '=' || *c == '+' || *c == '&') c++;
+            int ref = *c - '0';
+            if (ref >= 0 && ref < node->asm_noperands && op_regs[ref] >= 0) {
+                int r = op_regs[ref];
+                // Load the input value into the shared register
+                int r_in = gen(op->expr);
+                if (r_in != r) {
+                    int sz = op->expr->ty ? op->expr->ty->size : 4;
+                    if (sz <= 4)
+                        printf("  movl %s, %s\n", reg(r_in, 4), reg(r, 4));
+                    else
+                        printf("  movq %s, %s\n", reg64[r_in], reg64[r]);
+                }
+                free_reg(r_in);
+                op_regs[i] = r;
+                op->reg = r;
+                strncpy(op->asm_str, node->asm_ops[ref].asm_str, sizeof(op->asm_str) - 1);
+                op->asm_str[sizeof(op->asm_str) - 1] = '\0';
             }
         }
 
@@ -4798,10 +5102,26 @@ static int gen(Node *node) {
         out[olen] = '\0';
         printf("%s\n", out);
 
-        /* AT&T syntax is now the default */
+        // Store back register outputs ("=r", "+r") to their C variables
+        for (int i = 0; i < node->asm_noperands; i++) {
+            if (op_addr[i] < 0) continue;
+            AsmOperand *op = &node->asm_ops[i];
+            int sz = op->expr->ty ? op->expr->ty->size : 4;
+            if (sz == 1)
+                printf("  movb %s, (%s)\n", reg(op_regs[i], 1), reg64[op_addr[i]]);
+            else if (sz == 2)
+                printf("  movw %s, (%s)\n", reg(op_regs[i], 2), reg64[op_addr[i]]);
+            else if (sz <= 4)
+                printf("  movl %s, (%s)\n", reg(op_regs[i], 4), reg64[op_addr[i]]);
+            else
+                printf("  movq %s, (%s)\n", reg64[op_regs[i]], reg64[op_addr[i]]);
+        }
 
+        // Free registers
         for (int i = 0; i < node->asm_noperands; i++)
             if (op_regs[i] >= 0) free_reg(op_regs[i]);
+        for (int i = 0; i < node->asm_noperands; i++)
+            if (op_addr[i] >= 0) free_reg(op_addr[i]);
         return -1;
 #endif
     }
@@ -5606,6 +5926,34 @@ static int gen(Node *node) {
             printf("  movzbl %%al, %s\n", reg(r_lhs, op_size(node->ty)));
 #endif
         }
+        // Extended bitfield arithmetic masking (GCC extension for unsigned long long : N).
+        // When both operands involve extended (>= 8-byte underlying type) bitfield reads,
+        // mask the result to the max bitfield width, matching GCC's behavior.
+        if (node->kind == ND_MUL || node->kind == ND_ADD || node->kind == ND_SUB) {
+            int bw = 0;
+            Node *ops[2] = {node->lhs, node->rhs};
+            for (int oi = 0; oi < 2; oi++) {
+                Node *op = ops[oi];
+                if (op && op->kind == ND_MEMBER && op->member &&
+                    op->member->bit_width > 32 && op->member->bit_width < 64 &&
+                    op->member->ty && op->member->ty->size >= 8 &&
+                    op->member->ty->is_unsigned) {
+                    if (op->member->bit_width > bw)
+                        bw = op->member->bit_width;
+                }
+            }
+            if (bw > 0) {
+                unsigned long long mask = (1ULL << bw) - 1;
+#ifdef ARCH_ARM64
+                emit_mov_imm64("x16", mask);
+                printf("  and %s, %s, x16\n", reg64[r_lhs], reg64[r_lhs]);
+#else
+                printf("  movabsq $%llu, %%rax\n", mask);
+                printf("  andq %%rax, %s\n", reg64[r_lhs]);
+#endif
+            }
+        }
+
         return r_lhs;
     }
 
@@ -6755,11 +7103,43 @@ void codegen(Program *prog) {
             char *wpreg[] = {"w0", "w1", "w2", "w3", "w4", "w5", "w6", "w7"};
             char *fpreg[] = {"d0", "d1", "d2", "d3", "d4", "d5", "d6", "d7"};
             for (LVar *var = fn->params; var; var = var->param_next) {
-                if (is_flonum(var->ty)) {
-                    if (fp_param < 8) {
-                        if (var->ty->size == 4)
-                            printf("  str s%d, [%s, #-%d]\n", fp_param, FRAME_PTR, var->offset);
+                int hfa_elem_size = 0;
+                int hfa_count = (!is_flonum(var->ty) && (var->ty->kind == TY_STRUCT || var->ty->kind == TY_UNION))
+                    ? arm64_hfa_count(var->ty, &hfa_elem_size)
+                    : 0;
+                if (hfa_count > 0 && fp_param + hfa_count <= 8) {
+                    if (var->offset <= 4095)
+                        printf("  sub x16, %s, #%d\n", FRAME_PTR, var->offset);
+                    else {
+                        int v = var->offset;
+                        printf("  mov x16, #%d\n", v & 0xffff);
+                        v >>= 16;
+                        int s = 16;
+                        while (v) {
+                            printf("  movk x16, #%d, lsl #%d\n", v & 0xffff, s);
+                            v >>= 16;
+                            s += 16;
+                        }
+                        printf("  sub x16, %s, x16\n", FRAME_PTR);
+                    }
+                    for (int j = 0; j < hfa_count; j++) {
+                        int off = j * hfa_elem_size;
+                        if (hfa_elem_size == 4)
+                            printf("  str s%d, [x16, #%d]\n", fp_param + j, off);
                         else
+                            printf("  str d%d, [x16, #%d]\n", fp_param + j, off);
+                    }
+                    fp_param += hfa_count;
+                } else if (is_flonum(var->ty)) {
+                    if (fp_param < 8) {
+                        if (var->ty->size == 4) {
+                            if (fn->ty->is_oldstyle) {
+                                printf("  fcvt s0, d%d\n", fp_param);
+                                printf("  str s0, [%s, #-%d]\n", FRAME_PTR, var->offset);
+                            } else {
+                                printf("  str s%d, [%s, #-%d]\n", fp_param, FRAME_PTR, var->offset);
+                            }
+                        } else
                             printf("  str %s, [%s, #-%d]\n", fpreg[fp_param], FRAME_PTR, var->offset);
                         fp_param++;
                     }

@@ -76,7 +76,7 @@ if [ -z "$inputs" ]; then
     exit 1
 fi
 if [ -z "$output" ]; then
-    output="a.out"
+    output="a.arm64"
 fi
 
 s_files=""

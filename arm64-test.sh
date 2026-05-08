@@ -2,11 +2,9 @@
 # Cross-build ARM64 rcc and run the TCC test suite against it.
 # Usage: ./arm64-test.sh [test-name]
 set -e
-trap './gen-test-report.sh arm64_cross; make clean; make -s' EXIT   # restore host build after cross-test
-make clean
-make -s CC=aarch64-linux-gnu-gcc
 
 if [ -n "${1:-}" ]; then
+    make -s CC=aarch64-linux-gnu-gcc
     # Run a single test directly
     TEST_BASE="$1"
     TEST_SRC="tinycc/tests/tests2/${TEST_BASE}.c"
@@ -35,6 +33,9 @@ if [ -n "${1:-}" ]; then
     fi
     rm -f "$TMP_OUT" "$TMP_EXE"
 else
+    make clean
+    make -s CC=aarch64-linux-gnu-gcc
+    trap './gen-test-report.sh arm64_cross; make clean; make -s' EXIT   # restore host build after cross-test
     ./run_tcc_suite.sh ./rcc-arm64
     test/torture/capture.sh ../../arm64-cross.sh
     ./gen-test-report.sh arm64_cross

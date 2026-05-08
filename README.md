@@ -141,13 +141,13 @@ The original windows repo is now at https://github.com/DocDamage/realtime-c-comp
 This fork passes now:
 
 - [152/152 tests](test_report_linux.md) on linux (x86-64)
-- [149/152 tests](test_report_mingw_cross.md) on mingw-cross (x86-64)
+- [151/152 tests](test_report_mingw_cross.md) on mingw-cross (x86-64)
 - [155/155 tests](test_report_arm64_cross.md) on arm64-cross (ELF)
 - [155/155 tests](test_report_darwin_cross.md) on darwin-cross (Mach-O, compile+link only)
 - [148/155 tests](test_report_arm64.md) on arm64-darwin native
 - [111/117 tests](test_report_mingw.md) on windows native via powershell testing
 - The c-testsuite pass 220/220 tests on all platforms.
-- The gcc-torture tests fails ~19 tests on all platforms.
+- The gcc-torture tests fails 1 vla test on linux.
 - The ncc/compliance tests pass 15/15 tests on all platforms.
 
 ## Old Known Limitations

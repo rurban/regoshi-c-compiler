@@ -154,6 +154,7 @@ struct Type {
     Type *param_types; // linked list of parameter types (for function)
     Type *param_next; // next in parameter type list
     bool is_variadic; // for function
+    bool is_oldstyle; // old-style (K&R) function definition / non-prototype ABI
     int pack_align; // #pragma pack(n) alignment, 0 = default
     unsigned char bitfield_mode;
     char *cleanup_func; // __attribute__((__cleanup__(func))) on the type
