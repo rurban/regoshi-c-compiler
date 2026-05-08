@@ -99,7 +99,7 @@ make bench
     -lname             add lib
     -E                 preprocessor-only
     -dM                dump all macro definitions (use with -E)
-    -fdump-ast          dump AST to stderr for debugging
+    -fdump-ast         dump AST to stderr for debugging
     -S                 assemble-only
     -c                 compile-only
     -o file            set output filename

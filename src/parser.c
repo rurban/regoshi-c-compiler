@@ -4415,6 +4415,34 @@ static Node *unary(Token **rest, Token *tok) {
         }
         return new_num(compat, start);
     }
+    if (equalc(tok, "__builtin_classify_type")) {
+        Token *start = tok;
+        tok = skip(tok->next, "(");
+        Node *arg = assign(&tok, tok);
+        *rest = skip(tok, ")");
+        add_type(arg);
+        int cls = 1; // default: integer
+        if (arg->ty) {
+            switch (arg->ty->kind) {
+            case TY_VOID: cls = 9; break;
+            case TY_BOOL:
+            case TY_CHAR:
+            case TY_SHORT:
+            case TY_INT:
+            case TY_LONG:
+            case TY_LLONG: cls = 1; break;
+            case TY_FLOAT: cls = 2; break;
+            case TY_DOUBLE: cls = 3; break;
+            case TY_LDOUBLE: cls = 8; break;
+            case TY_PTR: cls = 0; break;
+            case TY_ARRAY: cls = 6; break;
+            case TY_STRUCT:
+            case TY_UNION: cls = 12; break;
+            default: cls = 0;
+            }
+        }
+        return new_num(cls, start);
+    }
     if (equalc(tok, "++")) {
         Token *start = tok;
         Node *lhs = unary(&tok, tok->next);
@@ -4585,6 +4613,24 @@ static Node *unary(Token **rest, Token *tok) {
                         }
                     }
                     if (mem->ty->kind == TY_ARRAY) {
+                        // String literal → char array: assign whole array at once
+                        if (tok->kind == TK_STR && mem->ty->base && mem->ty->base->kind == TY_CHAR) {
+                            Node *var_node = new_var_node(var, start);
+                            Node *member_access = new_node(ND_MEMBER, start);
+                            member_access->lhs = var_node;
+                            member_access->member = mem;
+                            member_access->ty = mem->ty;
+                            Node *rhs = assign(&tok, tok);
+                            add_type(rhs);
+                            Node *asgn = new_binary(ND_ASSIGN, member_access, rhs, start);
+                            add_type(asgn);
+                            result = new_binary(ND_COMMA, result, asgn, start);
+                            result->ty = ty;
+                            if (!equalc(tok, "}"))
+                                tok = skip(tok, ",");
+                            mem = mem->next;
+                            continue;
+                        }
                         // Array member: assign elements, handle optional braces
                         int len = array_len(mem->ty);
                         int idx = 0;
