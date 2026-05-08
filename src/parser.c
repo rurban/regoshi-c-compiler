@@ -845,10 +845,16 @@ static bool eval_const_expr(Node *node, long long *val) {
     case ND_CAST:
         return eval_const_expr(node->lhs, val);
     case ND_SIZEOF:
-        if (node->lhs && node->lhs->ty)
+        if (node->lhs && node->lhs->ty) {
+            if (node->lhs->ty->kind == TY_VLA)
+                return false;
             return (*val = node->lhs->ty->size), true;
-        if (node->ty)
+        }
+        if (node->ty) {
+            if (node->ty->kind == TY_VLA)
+                return false;
             return (*val = node->ty->size), true;
+        }
         return false;
     case ND_ADDR:
         // &*x = x
@@ -4471,11 +4477,27 @@ static Node *unary(Token **rest, Token *tok) {
         if (equalc(tok->next, "(") && is_typename(tok->next->next)) {
             Type *ty = parse_cast_type(&tok, tok->next);
             *rest = tok;
+            if (ty->kind == TY_VLA) {
+                // Runtime sizeof for VLA: len * base_size
+                Node *len = ty->vla_len_expr ? ty->vla_len_expr : new_num(ty->array_len, tok);
+                Node *base_sz = new_num(ty->base->size, tok);
+                Node *result = new_binary(ND_MUL, len, base_sz, tok);
+                add_type(result);
+                return result;
+            }
             return new_num(ty->size, tok);
         }
         Node *node = unary(&tok, tok->next);
         add_type(node);
         *rest = tok;
+        if (node->ty->kind == TY_VLA) {
+            // Runtime sizeof for VLA: len * base_size
+            Node *len = node->ty->vla_len_expr ? node->ty->vla_len_expr : new_num(node->ty->array_len, tok);
+            Node *base_sz = new_num(node->ty->base->size, tok);
+            Node *result = new_binary(ND_MUL, len, base_sz, tok);
+            add_type(result);
+            return result;
+        }
         return new_num(node->ty->size, tok);
     }
     if (equalc(tok, "__alignof__") || equalc(tok, "__alignof") || equalc(tok, "_Alignof")) {

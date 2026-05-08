@@ -146,7 +146,7 @@ This fork passes now:
 - [148/155 tests](test_report_arm64.md) on arm64-darwin native
 - [111/117 tests](test_report_mingw.md) on windows native via powershell testing
 - The c-testsuite pass 220/220 tests on all platforms.
-- The gcc-torture tests pass ~880/995 tests on all platforms.
+- The gcc-torture tests fails ~19 tests on all platforms.
 - The ncc/compliance tests pass 15/15 tests on all platforms.
 
 ## Old Known Limitations

@@ -206,13 +206,13 @@ cd ../../ || true
 if [ "$RCC" = "../../arm64-cross.sh" ]; then
     [ "$PASS" -ge 871 ]
 elif [ "$(uname -m)" = "aarch64" ] || [ "$(uname -m)" = "arm64" ]; then
-    [ "$PASS" -ge 868 ]
+    [ "$PASS" -ge 872 ]
 elif [ "$RCC" = "../../mingw-cross.sh" ]; then
-    [ "$PASS" -ge 871 ]
+    [ "$PASS" -ge 876 ]
 elif [ "$RCC" = "../../darwin-cross.sh" ]; then
     [ "$PASS" -ge 906 ]
 elif [ "$(uname -s | grep -qE 'MSYS|MINGW|CYGWIN')" ]; then
     [ "$PASS" -ge 700 ]
 else
-    [ "$PASS" -ge 900 ]
+    [ "$PASS" -ge 905 ]
 fi
