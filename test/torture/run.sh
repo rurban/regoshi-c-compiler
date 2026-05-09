@@ -204,9 +204,9 @@ cd ../../ || true
 
 # shellcheck disable=SC2143
 if [ "$RCC" = "../../arm64-cross.sh" ]; then
-    [ "$PASS" -ge 912 ]
+    [ "$PASS" -ge 924 ]
 elif [ "$(uname -m)" = "aarch64" ] || [ "$(uname -m)" = "arm64" ]; then
-    [ "$PASS" -ge 883 ]
+    [ "$PASS" -ge 915 ]
 elif [ "$RCC" = "../../mingw-cross.sh" ]; then
     [ "$PASS" -ge 895 ]
 elif [ "$RCC" = "../../darwin-cross.sh" ]; then

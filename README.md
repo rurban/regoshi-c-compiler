@@ -62,7 +62,8 @@ Linux:
 
 Structs, unions, enums, typedefs, arrays (multi-dimensional), pointers (including function pointers), `for`/`while`/`do-while`/`switch`/`goto`, `sizeof`, `_Bool`, `static`, `extern`, variadic `printf`, string literals, compound assignment operators, pre/post increment, ternary operator, comma operator, designated initializers, \_Generic, attribute `__cleanup__`, `__aligned__`, `__packed__`, `__constructor__`, `__destructor__`, Windows and SystemV long doubles (internally all using SSE), ARM64 long doubles (128-bit quad precision via register pairs in elf, 8 byte on APPLE), unicode identifiers and strings, minimal `"wchar.h"`, inline, weak, gcc, enum and ms bitfields, old K&R function definitions, VLA's, atomics (LL/SC on ARM64, xadd/lock on x86), GNU alias, args... macro syntax, basic -g DWARF debugging support (line numbers only), most GCC extensions and builtins.
 
-Not yet: complex, nested functions, C23, -fpie, -fpic
+Not yet: complex, nested functions, C23, -fpie, -fpic,
+scalar_storage_order, trampolines, finstrument, vector_size
 
 Top-level `__asm__("...")` statements in AT&T, Intel or ARM syntax are supported and emitted in source order. Unlike GCC (which hoists all file-scope `asm` blocks to the top of the output at `-O2`/`-O3` unless `-fno-toplevel-reorder` is used), rcc always preserves their original position relative to functions.
 
@@ -146,7 +147,7 @@ This fork passes now:
 - [147/155 tests](test_report_arm64.md) on arm64-darwin native
 - [111/117 tests](test_report_mingw.md) on windows native via powershell testing
 - The c-testsuite pass 220/220 tests on all platforms.
-- The gcc-torture tests pass all on linux.
+- The gcc-torture tests pass 924/924 on linux and arm64_cross.
 - The ncc/compliance tests pass 15/15 tests on all platforms.
 
 ## Old Known Limitations

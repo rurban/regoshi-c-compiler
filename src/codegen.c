@@ -106,6 +106,8 @@ static int used_regs = 0;
 static int ever_used_regs = 0;
 
 #ifdef ARCH_ARM64
+static void emit_mov_imm64(const char *reg, uint64_t val);
+
 // Arm64: spill to [x29, #-N]; offsets grown from frame base
 static int spill_slot[NUM_REGS];
 static int next_spill_slot;
@@ -159,7 +161,6 @@ static int gen_addr(Node *node);
 static bool is_asm_reserved(const char *name);
 static void sign_extend_to(int r, int from_size, int to_size);
 static void zero_extend_to(int r, int from_size, int to_size);
-static void emit_mov_imm64(const char *reg, uint64_t val);
 
 #if 0
 static char *func_asm_name(char *name) {
@@ -561,6 +562,10 @@ static int gen_funcall(Node *node, int hidden_ret_reg) {
         bool is_prefetch = strcmp(call_target, "__builtin_prefetch") == 0;
         bool is_frame_addr = strcmp(call_target, "__builtin_frame_address") == 0;
         bool is_ret_addr = strcmp(call_target, "__builtin_return_address") == 0;
+#ifdef ARCH_ARM64
+        bool is_setjmp = strcmp(call_target, "__builtin_setjmp") == 0;
+        bool is_longjmp = strcmp(call_target, "__builtin_longjmp") == 0;
+#endif
         bool is_signbit = strcmp(call_target, "__builtin_signbit") == 0 ||
             strcmp(call_target, "__builtin_signbitf") == 0 ||
             strcmp(call_target, "__builtin_signbitl") == 0;
@@ -843,6 +848,38 @@ static int gen_funcall(Node *node, int hidden_ret_reg) {
             return r;
         }
 #ifdef ARCH_ARM64
+        if (is_setjmp) {
+            // Inline __builtin_setjmp: save fp, resume_addr, sp to buf; return 0 or 1 (longjmp)
+            int rbuf = gen(node->args);
+            int c = ++rcc_label_count;
+            int r = alloc_reg();
+            printf("  str %s, [%s]\n", FRAME_PTR, reg64[rbuf]); // buf[0] = fp
+            printf("  adr x16, .L.sjr.%d\n", c); // x16 = resume addr
+            printf("  str x16, [%s, #8]\n", reg64[rbuf]); // buf[1] = resume addr
+            printf("  mov x16, sp\n");
+            printf("  str x16, [%s, #16]\n", reg64[rbuf]); // buf[2] = sp
+            printf("  mov x0, #0\n");
+            printf("  b .L.sja.%d\n", c);
+            printf(".L.sjr.%d:\n", c); // longjmp lands here
+            printf(".L.sja.%d:\n", c); // normal path joins here
+            printf("  mov %s, x0\n", reg64[r]); // result from x0
+            free_reg(rbuf);
+            return r;
+        }
+        if (is_longjmp) {
+            // Inline __builtin_longjmp: restore fp, sp from buf; jump to resume addr with val
+            int rbuf = gen(node->args);
+            int rval = gen(node->args->next);
+            printf("  ldr %s, [%s]\n", FRAME_PTR, reg64[rbuf]); // restore fp
+            printf("  ldr x16, [%s, #16]\n", reg64[rbuf]); // x16 = saved sp
+            printf("  mov sp, x16\n"); // restore sp
+            printf("  ldr x16, [%s, #8]\n", reg64[rbuf]); // x16 = resume addr
+            printf("  mov x0, %s\n", reg64[rval]); // x0 = val
+            printf("  br x16\n"); // jump to resume
+            free_reg(rbuf);
+            free_reg(rval);
+            return -1;
+        }
         if (is_add_overflow || is_sub_overflow || is_mul_overflow || is_mul_overflow_p) {
             Node *arga = node->args;
             Node *argb = arga ? arga->next : NULL;
@@ -1155,6 +1192,26 @@ static int gen_funcall(Node *node, int hidden_ret_reg) {
         }
     }
 
+#ifdef ARCH_ARM64
+    // Inline alloca: directly adjust sp without any register save/restore
+    // (save/restore around a bl __rcc_alloca would use the stack, which alloca moves)
+    if (call_target && strcmp(call_target, "alloca") == 0) {
+        alloca_needed = true;
+        fn_uses_alloca = true;
+        int ra = gen(node->args);
+        // Round up to 16 bytes and adjust sp
+        printf("  add %s, %s, #15\n", reg64[ra], reg64[ra]);
+        printf("  and %s, %s, #-16\n", reg64[ra], reg64[ra]);
+        printf("  sub sp, sp, %s\n", reg64[ra]);
+        printf("  mov %s, sp\n", reg64[ra]);
+        // Save current sp/ptr to the alloca var slot
+        if (node->args && node->args->ty) {
+            // caller uses return value from ra
+        }
+        return ra;
+    }
+#endif
+
 #ifdef _WIN32
     int fixed_reg_args = nargs + (has_hidden_retbuf ? 1 : 0);
     int stack_args = fixed_reg_args > max_gp_args ? fixed_reg_args - max_gp_args : 0;
@@ -1212,8 +1269,7 @@ static int gen_funcall(Node *node, int hidden_ret_reg) {
 #endif
             } else if (fp_reg_args < max_fp_args) {
                 arg_fp_idx[i] = fp_reg_args++;
-                if (is_variadic && gp_reg_args < max_gp_args)
-                    arg_gp_idx[i] = gp_reg_args++;
+                // Named FP args in variadic functions go in FP regs only (no GP copy)
             } else if (is_variadic && arg_sizes[i] > 8) {
                 arg_stack_idx[i] = stack_args++;
             } else if (gp_reg_args < max_gp_args) {
@@ -1403,14 +1459,45 @@ static int gen_funcall(Node *node, int hidden_ret_reg) {
         printf("  mov x8, %s\n", reg64[hidden_ret_reg]);
     }
 
-    // Pre-pass: long double args — rcc represents long double as double internally,
-    // so pass as regular double (fmov d_idx, reg) — callee also reads as double.
+    // Pre-pass: long double args.
+    // For named long double params in rcc-compiled callees: pass as double (fmov d_idx, reg).
+    // For unnamed variadic long double args (e.g. printf "%Lf"): use quad format for ABI compat.
     for (int i = 0; i < nargs; i++) {
         if (arg_stack_idx[i] >= 0)
             continue;
         if (arg_is_float[i] && arg_sizes[i] > 8 && arg_fp_idx[i] >= 0) {
-            // Treat long double as double: just move into the fp register
-            printf("  fmov %s, %s\n", argxmm[arg_fp_idx[i]], reg64[arg_regs[i]]);
+            bool is_named_arg = (i < named_count);
+            if (is_named_arg) {
+                // Named long double param: rcc callee reads as double from d_idx
+                printf("  fmov %s, %s\n", argxmm[arg_fp_idx[i]], reg64[arg_regs[i]]);
+            } else {
+                // Unnamed variadic long double: pass as IEEE 754 quad (128-bit) for ABI
+                int cl = ++rcc_label_count;
+                char *vr = reg64[arg_regs[i]];
+                printf("  cmp %s, #0\n", vr);
+                printf("  b.eq .L.quad_z.%d\n", cl);
+                printf("  ubfx x17, %s, #52, #11\n", vr);
+                printf("  mov x16, #15360\n");
+                printf("  add x17, x17, x16\n");
+                printf("  lsl x16, %s, #12\n", vr);
+                printf("  lsr x16, x16, #12\n");
+                printf("  and x1, x16, #0xF\n");
+                printf("  lsl x1, x1, #60\n");
+                printf("  lsr x2, x16, #4\n");
+                printf("  lsl x17, x17, #48\n");
+                printf("  orr x2, x2, x17\n");
+                printf("  asr x17, %s, #63\n", vr);
+                printf("  and x17, x17, #1\n");
+                printf("  lsl x17, x17, #63\n");
+                printf("  orr x2, x2, x17\n");
+                printf("  b .L.quad_d.%d\n", cl);
+                printf(".L.quad_z.%d:\n", cl);
+                printf("  mov x1, #0\n");
+                printf("  mov x2, #0\n");
+                printf(".L.quad_d.%d:\n", cl);
+                printf("  ins v%d.d[0], x1\n", arg_fp_idx[i]);
+                printf("  ins v%d.d[1], x2\n", arg_fp_idx[i]);
+            }
             free_reg(arg_regs[i]);
         }
     }
@@ -3721,16 +3808,30 @@ static int gen(Node *node) {
 #ifdef ARCH_ARM64
         // Load current value (correct load width for type)
         emit_load(node->lhs->ty, r2, format("[%s]", reg64[r]));
-        int delta = 1;
-        if (node->lhs->ty->kind == TY_PTR || node->lhs->ty->kind == TY_ARRAY)
-            delta = node->lhs->ty->base->size;
         // Update in-place: load into temp, add/sub, store back
         int r3 = alloc_reg();
         emit_load(node->lhs->ty, r3, format("[%s]", reg64[r]));
-        if (node->kind == ND_POST_INC)
-            printf("  add %s, %s, #%d\n", reg(r3, sz), reg(r3, sz), delta);
-        else
-            printf("  sub %s, %s, #%d\n", reg(r3, sz), reg(r3, sz), delta);
+        if (is_flonum(node->lhs->ty)) {
+            // Float post-inc/dec: use fp arithmetic via d0/d1
+            int id = add_float_literal(1.0, sz);
+            printf("  fmov d0, %s\n", reg64[r3]);
+            if (sz == 4) {
+                printf("  ldr s1, .LF%d\n", id);
+                printf("  %s s0, s0, s1\n", node->kind == ND_POST_INC ? "fadd" : "fsub");
+            } else {
+                printf("  ldr d1, .LF%d\n", id);
+                printf("  %s d0, d0, d1\n", node->kind == ND_POST_INC ? "fadd" : "fsub");
+            }
+            printf("  fmov %s, d0\n", reg64[r3]);
+        } else {
+            int delta = 1;
+            if (node->lhs->ty->kind == TY_PTR || node->lhs->ty->kind == TY_ARRAY)
+                delta = node->lhs->ty->base->size;
+            if (node->kind == ND_POST_INC)
+                printf("  add %s, %s, #%d\n", reg(r3, sz), reg(r3, sz), delta);
+            else
+                printf("  sub %s, %s, #%d\n", reg(r3, sz), reg(r3, sz), delta);
+        }
         emit_store(node->lhs->ty, r3, format("[%s]", reg64[r]));
         free_reg(r3);
 #else
@@ -5294,14 +5395,24 @@ static int gen(Node *node) {
     case ND_VA_START: {
         int r = gen(node->lhs);
 #ifdef ARCH_ARM64
-        printf("  mov w16, #%d\n", va_gp_start);
-        printf("  str w16, [%s]\n", reg64[r]);
-        printf("  mov w16, #%d\n", va_fp_start);
-        printf("  str w16, [%s, #4]\n", reg64[r]);
+        // AArch64 ABI va_list: [__stack(8), __gr_top(8), __vr_top(8), __gr_offs(4), __vr_offs(4)]
+        // __stack: pointer to first stack overflow argument
         printf("  add x16, %s, #%d\n", FRAME_PTR, va_st_start);
-        printf("  str x16, [%s, #8]\n", reg64[r]);
+        printf("  str x16, [%s]\n", reg64[r]);
+        // __gr_top: end of GP reg save area = saved_sp + 64
         printf("  ldur x16, [%s, #-8]\n", FRAME_PTR);
+        printf("  add x16, x16, #64\n");
+        printf("  str x16, [%s, #8]\n", reg64[r]);
+        // __vr_top: end of FP reg save area = saved_sp + 192
+        printf("  ldur x16, [%s, #-8]\n", FRAME_PTR);
+        printf("  add x16, x16, #192\n");
         printf("  str x16, [%s, #16]\n", reg64[r]);
+        // __gr_offs: -(8 - gp_param) * 8
+        printf("  mov w16, #%d\n", va_gp_start);
+        printf("  str w16, [%s, #24]\n", reg64[r]);
+        // __vr_offs: -(8 - fp_param) * 16
+        printf("  mov w16, #%d\n", va_fp_start);
+        printf("  str w16, [%s, #28]\n", reg64[r]);
 #else
         printf("  movl $%d, (%s)\n", va_gp_start, reg64[r]);
         printf("  movl $%d, 4(%s)\n", va_fp_start, reg64[r]);
@@ -5317,12 +5428,15 @@ static int gen(Node *node) {
         int rd = gen(node->lhs);
 #ifdef ARCH_ARM64
         int rs = gen(node->rhs);
+        // ABI va_list is 32 bytes: copy all 4 x 8-byte words
         printf("  ldr x16, [%s]\n", reg64[rs]);
         printf("  str x16, [%s]\n", reg64[rd]);
         printf("  ldr x16, [%s, #8]\n", reg64[rs]);
         printf("  str x16, [%s, #8]\n", reg64[rd]);
         printf("  ldr x16, [%s, #16]\n", reg64[rs]);
         printf("  str x16, [%s, #16]\n", reg64[rd]);
+        printf("  ldr x16, [%s, #24]\n", reg64[rs]);
+        printf("  str x16, [%s, #24]\n", reg64[rd]);
         free_reg(rd);
         free_reg(rs);
 #else
@@ -5352,46 +5466,46 @@ static int gen(Node *node) {
         // va_arg must read 8-byte pointer from reg save area, then dereference.
         bool is_ptr_val_struct = (ty->kind == TY_STRUCT || ty->kind == TY_UNION) && ty->size > 8;
 
+        // AArch64 ABI va_list: [__stack(8), __gr_top(8), __vr_top(8), __gr_offs(4), __vr_offs(4)]
+        // gr_offs < 0 means reg arg available; addr = __gr_top + __gr_offs
         // Only use FP path for bare float types; structs (incl. HFA) always go in GP regs.
         if (is_fp) {
             int fp_size = 16;
-            printf("  ldr w16, [%s, #4]\n", reg64[r]); // fp_offset
-            printf("  mov w17, w16\n");
-            printf("  add w17, w17, #%d\n", fp_size);
-            printf("  cmp w17, #%d\n", 192);
-            printf("  b.hi .L.va_overflow.%d\n", rcc_label_count);
-            printf("  ldr x12, [%s, #16]\n", reg64[r]); // reg_save_area
-            printf("  add x12, x12, x16\n");
+            printf("  ldr w16, [%s, #28]\n", reg64[r]); // __vr_offs (negative)
+            printf("  cmp w16, #0\n");
+            printf("  b.ge .L.va_overflow.%d\n", rcc_label_count);
+            printf("  ldr x12, [%s, #16]\n", reg64[r]); // __vr_top
+            printf("  sxtw x17, w16\n");
+            printf("  add x12, x12, x17\n");
             printf("  add w16, w16, #%d\n", fp_size);
-            printf("  str w16, [%s, #4]\n", reg64[r]);
+            printf("  str w16, [%s, #28]\n", reg64[r]);
             printf("  b .L.va_done.%d\n", rcc_label_count);
         } else {
             // Pointer-passed structs use gp_size=8 (the pointer fits in one register);
             // after reading from the reg save area we must dereference it.
-            // Normal types use 8 bytes (fits in one register) or 16 bytes (long double).
-            int gp_size = is_ptr_val_struct ? 8 : (ty->size <= 8 ? 8 : 16);
-            printf("  ldr w16, [%s]\n", reg64[r]); // gp_offset
-            printf("  mov w17, w16\n");
-            printf("  add w17, w17, #%d\n", gp_size);
-            printf("  cmp w17, #%d\n", 64);
-            printf("  b.hi .L.va_overflow.%d\n", rcc_label_count);
-            printf("  ldr x12, [%s, #16]\n", reg64[r]); // reg_save_area
-            printf("  add x12, x12, x16\n");
+            // Normal types use 8 bytes (fits in one register).
+            int gp_size = 8;
+            printf("  ldr w16, [%s, #24]\n", reg64[r]); // __gr_offs (negative)
+            printf("  cmp w16, #0\n");
+            printf("  b.ge .L.va_overflow.%d\n", rcc_label_count);
+            printf("  ldr x12, [%s, #8]\n", reg64[r]); // __gr_top
+            printf("  sxtw x17, w16\n");
+            printf("  add x12, x12, x17\n");
             if (is_ptr_val_struct) {
                 printf("  ldr x12, [x12]\n");
             }
             printf("  add w16, w16, #%d\n", gp_size);
-            printf("  str w16, [%s]\n", reg64[r]);
+            printf("  str w16, [%s, #24]\n", reg64[r]);
             printf("  b .L.va_done.%d\n", rcc_label_count);
         }
 
         printf(".L.va_overflow.%d:\n", rcc_label_count);
-        printf("  ldr x12, [%s, #8]\n", reg64[r]); // overflow_arg_area
+        printf("  ldr x12, [%s]\n", reg64[r]); // __stack (overflow_arg_area at [ap+0])
         if (is_ptr_struct || is_ptr_val_struct) {
             // Pointer-passed struct: load pointer from stack, advance by 8
             printf("  ldr x16, [x12]\n");
             printf("  add x12, x12, #8\n");
-            printf("  str x12, [%s, #8]\n", reg64[r]);
+            printf("  str x12, [%s]\n", reg64[r]);
             printf("  mov x12, x16\n");
         } else {
             int align = ty->align;
@@ -5402,7 +5516,7 @@ static int gen(Node *node) {
             }
             printf("  mov x16, x12\n");
             printf("  add x16, x16, #%d\n", ovf_size);
-            printf("  str x16, [%s, #8]\n", reg64[r]);
+            printf("  str x16, [%s]\n", reg64[r]);
         }
 
         printf(".L.va_done.%d:\n", rcc_label_count);
@@ -7149,8 +7263,9 @@ void codegen(Program *prog) {
             va_gp_start = 64;
             va_fp_start = 192;
 #else
-            va_gp_start = gp_param * 8;
-            va_fp_start = 64 + fp_param * 16;
+            // AArch64 ABI: gr_offs = -(8 - gp_param) * 8, vr_offs = -(8 - fp_param) * 16
+            va_gp_start = -(8 - gp_param) * 8;
+            va_fp_start = -(8 - fp_param) * 16;
 #endif
             va_st_start = 16 + stack_param * 8;
         }

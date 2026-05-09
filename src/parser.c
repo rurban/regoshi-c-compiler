@@ -5374,12 +5374,25 @@ Program *parse(Token *tok) {
     char *saved_input = current_input;
     char *saved_filename = current_filename;
     Token *head = tokenize("rcc_builtins",
+#ifdef ARCH_ARM64
+                           // AArch64 ABI va_list: 32 bytes
+                           "typedef struct {"
+                           "  void *__stack;"
+                           "  void *__gr_top;"
+                           "  void *__vr_top;"
+                           "  int __gr_offs;"
+                           "  int __vr_offs;"
+                           "} __builtin_va_list[1];"
+#else
+                           // x86-64 System V ABI va_list: 24 bytes
                            "typedef struct {"
                            "  unsigned int gp_offset;"
                            "  unsigned int fp_offset;"
                            "  void *overflow_arg_area;"
                            "  void *reg_save_area;"
-                           "} __builtin_va_list[1];");
+                           "} __builtin_va_list[1];"
+#endif
+    );
     current_input = saved_input;
     current_filename = saved_filename;
     Token *t = head;
