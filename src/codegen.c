@@ -382,7 +382,7 @@ static void arm64_store_to_fp_minus(const char *src, int offset) {
 static void emit_vla_dealloc(LVar *begin, LVar *end) {
     LVar *outermost_vla = NULL;
     for (LVar *v = begin; v && v != end; v = v->next)
-        if (v->ty->kind == TY_VLA)
+        if (v->ty->kind == TY_VLA || ((v->ty->kind == TY_STRUCT || v->ty->kind == TY_UNION) && v->ty->vla_len_expr))
             outermost_vla = v;
     if (outermost_vla) {
 #ifdef ARCH_ARM64
@@ -2490,11 +2490,11 @@ static int gen_addr(Node *node) {
         int r = alloc_reg();
         if (opt_W) reg_owner[r] = node->var->name;
         if (node->var->is_local) {
-            if (node->var->ty->kind == TY_VLA) {
+            if (node->var->ty->kind == TY_VLA || ((node->var->ty->kind == TY_STRUCT || node->var->ty->kind == TY_UNION) && node->var->ty->vla_len_expr)) {
 #ifdef ARCH_ARM64
-                printf("  sub %s, %s, #%d\n", reg64[r], FRAME_PTR, node->var->offset - 8);
+                arm64_load_from_fp_minus(node->var->offset - 8, reg64[r]);
 #else
-                printf("  lea -%d(%%rbp), %s\n", node->var->offset - 8, reg64[r]);
+                printf("  mov -%d(%%rbp), %s\n", node->var->offset - 8, reg64[r]);
 #endif
             } else {
 #ifdef ARCH_ARM64
@@ -2808,7 +2808,7 @@ static int gen(Node *node) {
 #ifndef ARCH_ARM64
         char *label = var_label(node->var);
 #endif
-        if (node->var->ty->kind == TY_VLA) {
+        if (node->var->ty->kind == TY_VLA || ((node->var->ty->kind == TY_STRUCT || node->var->ty->kind == TY_UNION) && node->var->ty->vla_len_expr)) {
             if (node->var->is_local) {
 #ifdef ARCH_ARM64
                 arm64_load_from_fp_minus(node->var->offset - 8, reg64[r]);
@@ -3623,8 +3623,8 @@ static int gen(Node *node) {
     }
     case ND_MEMBER: {
         int r = gen_addr(node);
-        if (node->ty->kind == TY_ARRAY) {
-            return r; // array decays to pointer
+        if (node->ty->kind == TY_ARRAY || node->ty->kind == TY_VLA) {
+            return r; // array/VLA decays to pointer
         }
         Type *load_ty = (node->member && node->member->bit_width > 0) ? node->member->ty : node->ty;
         if (is_flonum(load_ty)) {
@@ -5134,7 +5134,7 @@ static int gen(Node *node) {
         printf("  str w16, [%s, #4]\n", reg64[r]);
         printf("  add x16, %s, #%d\n", FRAME_PTR, va_st_start);
         printf("  str x16, [%s, #8]\n", reg64[r]);
-        printf("  mov x16, %s\n", STACK_REG);
+        printf("  ldur x16, [%s, #-8]\n", FRAME_PTR);
         printf("  str x16, [%s, #16]\n", reg64[r]);
 #else
         printf("  movl $%d, (%s)\n", va_gp_start, reg64[r]);
@@ -7057,6 +7057,9 @@ void codegen(Program *prog) {
             printf("  stp q2, q3, [%s, #96]\n", STACK_REG);
             printf("  stp q4, q5, [%s, #128]\n", STACK_REG);
             printf("  stp q6, q7, [%s, #160]\n", STACK_REG);
+            // Save original sp so va_start can find the reg_save_area even after alloca
+            printf("  mov x16, %s\n", STACK_REG);
+            printf("  stur x16, [%s, #-8]\n", FRAME_PTR);
         }
 
         // Save callee-saved regs

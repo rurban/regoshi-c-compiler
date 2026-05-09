@@ -162,8 +162,7 @@ PASS: 20020402-3
 PASS: 20020404-1
 PASS: 20020406-1
 SKIP(complex): 20020411-1
-./test/torture/run.sh: line 65: 12890 Aborted                 timeout $TIMEOUT "/tmp/torture_rcc_${name}" > /dev/null 2>&1
-FAIL(runtime): 20020412-1
+PASS: 20020412-1
 PASS: 20020413-1
 PASS: 20020418-1
 PASS: 20020423-1
@@ -995,7 +994,5 @@ PASS: pr114207
 PASS: pr114396
 PASS: pr114552
 
-=== TOTAL=995 PASS=923 FAIL_COMPILE=0 FAIL_RUNTIME=1 SKIP=71 ===
-Pass rate (excl. skip): 99%
-
-Runtime failures: 20020412-1
+=== TOTAL=995 PASS=924 FAIL_COMPILE=0 FAIL_RUNTIME=0 SKIP=71 ===
+Pass rate (excl. skip): 100%

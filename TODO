@@ -4,15 +4,24 @@
   - darwin: 106_versym 108_constructor 119_random_stuff 120_alias
             124_atomic_counter 128_run_atexit 140_arm64_extasm
 - torture fails:
-  linux: 20020412-1
-  mingw_cross: builtin-bitops-1 ffs-2; 20000519-1 20001017-1 20020412-1 20030613-1
+  mingw_cross: builtin-bitops-1 ffs-2; 20000519-1 20001017-1 20030613-1
     20041113-1 20041214-1 20071213-1 20080222-1 920501-8 920625-1 920726-1 920908-1
     931004-10 931004-12 931004-14 931004-2 931004-4 931004-6 931004-8 980608-1
-    991216-2 built-in-setjmp conversion fprintf-chk-1 multi-ix
-  darwin_cross: 20021120-1 20040307-1 20040313-1 20040331-1 20040629-1
-    20040705-1 20040705-2 20040709-1 20040709-2 20040709-3 20041011-1 20071030-1
+    991216-2 built-in-setjmp conversion fprintf-chk-1 multi-ix 20021120-1
+    20040307-1 20040313-1 20040331-1 20040629-1
+  arm64_cross:  20021120-1 20040307-1 20040313-1 20040331-1 20040629-1 20040705-1
+    20040705-2 20040709-1 20040709-2 20040709-3 20041011-1 20071030-1
     930106-1 960321-1 960416-1 980602-2 bitfld-3 bitfld-6 bitfld-7 bswap-1
-    frame-address gofast
+    frame-address gofast pr105984 pr108789; 20000731-1 20010116-1 20030606-1
+    20030914-1 20031003-1 20071202-1 20080502-1 920501-3 920501-8 960513-1
+    built-in-setjmp comp-goto-1 conversion fprintf-chk-1 pr106523 pr108498-2
+  darwin: 20000731-1 20010116-1 20021120-1 20030606-1 20031003-1
+    20040307-1 20040313-1 20040331-1 20040629-1 20040705-1 20040705-2
+    20040709-1 20040709-2 20040709-3 20041011-1 20071030-1 20071202-1
+    20080222-1 920501-3 920501-8 930106-1 930513-1 960321-1 960416-1
+    980602-2 bitfld-3 bitfld-6 bitfld-7 bswap-1 built-in-setjmp
+    comp-goto-1 fprintf-2 fprintf-chk-1 frame-address gofast loop-2f
+    loop-2g pr105984 pr106523 pr108498-2 pr108789
 - run the peephole checks directly in the codegen pass.
   it only needs to checks against the previously emitted line.
 - emit asm bytes/.o files directly, no need for GAS, we only need the linker then.

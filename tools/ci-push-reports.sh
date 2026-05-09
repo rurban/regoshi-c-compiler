@@ -41,9 +41,9 @@ gh run watch --exit-status "$run_id" || {
 
 echo "Downloading artifacts..."
 downloaded=
-m_files="bench/bench_report_darwin.md test/tcc_test_arm64.md test/torture_report_arm64.log test_report_arm64.md"
+m_files="bench/bench_report_darwin.md test/tcc_test_arm64.md test_report_arm64.md"
 w_files="bench/bench_report_mingw.md test_report_mingw.md test/tcc_test_mingw.md"
-l_files="bench/bench_report_linux.md test/tcc_test_linux.md test/torture_report_linux.log test_report_linux.md"
+l_files="test/tcc_test_linux.md test/torture_report_linux.log test_report_linux.md"
 dirs="linux-reports macos-reports windows-reports"
 rm -rf linux-reports macos-reports windows-reports
 if gh run download "$run_id" -D . 2>/dev/null; then

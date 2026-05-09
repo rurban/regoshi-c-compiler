@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: LGPL-2.1-or-later
 // Derived from chibicc by Rui Ueyama.
+// This is old unmaintained code, emitting to the nicer but limited
+// Intel asm syntax., running into GAS bugs. See "Old Known Limitations" at README.md
 #include "rcc.h"
 #include <stdarg.h>
 #include <ctype.h>

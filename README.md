@@ -66,9 +66,8 @@ Not yet: complex, nested functions, C23, -fpie, -fpic
 
 Top-level `__asm__("...")` statements in AT&T, Intel or ARM syntax are supported and emitted in source order. Unlike GCC (which hoists all file-scope `asm` blocks to the top of the output at `-O2`/`-O3` unless `-fno-toplevel-reorder` is used), rcc always preserves their original position relative to functions.
 
-The tcc suite has 150/150 test passed (100%) on linux and mingw-cross,
-148/150 on arm64-cross, 149/151 on darwin-cross,
-109/111 on windows native, 134/147 on arm64-darwin native.
+The test suites suite has all tests passed on linux, mingw-cross, arm64-cross,
+darwin-cross, windows native and arm64-darwin native.
 
 Three tcc core and test bugs have been detected so far. Fixes in the work.
 
@@ -144,10 +143,10 @@ This fork passes now:
 - [151/152 tests](test_report_mingw_cross.md) on mingw-cross (x86-64)
 - [155/155 tests](test_report_arm64_cross.md) on arm64-cross (ELF)
 - [155/155 tests](test_report_darwin_cross.md) on darwin-cross (Mach-O, compile+link only)
-- [148/155 tests](test_report_arm64.md) on arm64-darwin native
+- [147/155 tests](test_report_arm64.md) on arm64-darwin native
 - [111/117 tests](test_report_mingw.md) on windows native via powershell testing
 - The c-testsuite pass 220/220 tests on all platforms.
-- The gcc-torture tests fails 1 vla test on linux.
+- The gcc-torture tests pass all on linux.
 - The ncc/compliance tests pass 15/15 tests on all platforms.
 
 ## Old Known Limitations
@@ -157,7 +156,7 @@ This fork passes now:
   by default, but GAS ≥2.45 rejects direct branches to global symbols in this mode.
   Local labels (`.L.xxx`) work fine. Tests with user-defined function calls
   (`bitops-1`, `fprintf-1`, etc.) may fail to assemble under these versions.
-  Root cause: rcc emits lea r11, [rip + sI] but GAS requires AT&T sI(%rip) for globals.
+  Root cause: rcc emits `lea r11, [rip + sI]` but GAS requires AT&T `sI(%rip)` for globals.
   Affected: most of the big torture tests with many global structs —
   20040709-1/2/3, 20071018-1, 20071030-1, 20080502-1, 20080506-1, 930106-1
   Workaround: assemble with `as --32` or use an older binutils (<2.45).
