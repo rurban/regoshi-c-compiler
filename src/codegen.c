@@ -1403,38 +1403,14 @@ static int gen_funcall(Node *node, int hidden_ret_reg) {
         printf("  mov x8, %s\n", reg64[hidden_ret_reg]);
     }
 
-    // Pre-pass: long double args first (before any GP arg regs are set),
-    // since the conversion clobbers x1/x2 which may hold earlier GP arg values.
-    // Uses only scratch regs x16/x17 (not in alloc pool) and output x1:x2 for ins.
+    // Pre-pass: long double args — rcc represents long double as double internally,
+    // so pass as regular double (fmov d_idx, reg) — callee also reads as double.
     for (int i = 0; i < nargs; i++) {
         if (arg_stack_idx[i] >= 0)
             continue;
         if (arg_is_float[i] && arg_sizes[i] > 8 && arg_fp_idx[i] >= 0) {
-            int cl = ++rcc_label_count;
-            char *vr = reg64[arg_regs[i]];
-            printf("  cmp %s, #0\n", vr);
-            printf("  b.eq .L.quad_z.%d\n", cl);
-            printf("  ubfx x17, %s, #52, #11\n", vr);
-            printf("  mov x16, #15360\n");
-            printf("  add x17, x17, x16\n");
-            printf("  lsl x16, %s, #12\n", vr);
-            printf("  lsr x16, x16, #12\n");
-            printf("  and x1, x16, #0xF\n");
-            printf("  lsl x1, x1, #60\n");
-            printf("  lsr x2, x16, #4\n");
-            printf("  lsl x17, x17, #48\n");
-            printf("  orr x2, x2, x17\n");
-            printf("  asr x17, %s, #63\n", vr);
-            printf("  and x17, x17, #1\n");
-            printf("  lsl x17, x17, #63\n");
-            printf("  orr x2, x2, x17\n");
-            printf("  b .L.quad_d.%d\n", cl);
-            printf(".L.quad_z.%d:\n", cl);
-            printf("  mov x1, #0\n");
-            printf("  mov x2, #0\n");
-            printf(".L.quad_d.%d:\n", cl);
-            printf("  ins v%d.d[0], x1\n", arg_fp_idx[i]);
-            printf("  ins v%d.d[1], x2\n", arg_fp_idx[i]);
+            // Treat long double as double: just move into the fp register
+            printf("  fmov %s, %s\n", argxmm[arg_fp_idx[i]], reg64[arg_regs[i]]);
             free_reg(arg_regs[i]);
         }
     }
@@ -3075,32 +3051,32 @@ static int gen(Node *node) {
                 int copy_len = str_len < lhs_size ? str_len : lhs_size;
                 if (copy_len > 0) {
 #ifdef ARCH_ARM64
-                    printf("  mov x12, #%d\n", copy_len);
+                    printf("  mov x9, #%d\n", copy_len);
                     printf(".L.copy.%d:\n", c);
-                    printf("  cmp x12, #0\n");
+                    printf("  cmp x9, #0\n");
                     printf("  b.eq .L.copy_end.%d\n", c);
-                    printf("  sub x12, x12, #1\n");
-                    printf("  ldrb w13, [%s, x12]\n", reg64[src]);
-                    printf("  strb w13, [%s, x12]\n", reg64[dst]);
+                    printf("  sub x9, x9, #1\n");
+                    printf("  ldrb w16, [%s, x9]\n", reg64[src]);
+                    printf("  strb w16, [%s, x9]\n", reg64[dst]);
                     printf("  b .L.copy.%d\n", c);
                     printf(".L.copy_end.%d:\n", c);
                 }
                 if (copy_len < lhs_size) {
                     // Zero dst[copy_len .. lhs_size-1]; count x12 from lhs_size down to copy_len
                     int c2 = ++rcc_label_count;
-                    printf("  mov x12, #%d\n", lhs_size);
+                    printf("  mov x9, #%d\n", lhs_size);
                     printf(".L.copy.%d:\n", c2);
                     if (copy_len >= 0 && copy_len <= 4095)
-                        printf("  cmp x12, #%d\n", copy_len);
+                        printf("  cmp x9, #%d\n", copy_len);
                     else {
                         printf("  mov x16, #%d\n", copy_len & 0xffff);
                         if (copy_len >> 16)
                             printf("  movk x16, #%d, lsl #16\n", (copy_len >> 16) & 0xffff);
-                        printf("  cmp x12, x16\n");
+                        printf("  cmp x9, x16\n");
                     }
                     printf("  b.eq .L.copy_end.%d\n", c2);
-                    printf("  sub x12, x12, #1\n");
-                    printf("  strb wzr, [%s, x12]\n", reg64[dst]);
+                    printf("  sub x9, x9, #1\n");
+                    printf("  strb wzr, [%s, x9]\n", reg64[dst]);
                     printf("  b .L.copy.%d\n", c2);
                     printf(".L.copy_end.%d:\n", c2);
                 }
@@ -3155,15 +3131,15 @@ static int gen(Node *node) {
                 r_vla_sz = gen(node->lhs->ty->vla_len_expr);
 #ifdef ARCH_ARM64
             if (copy_is_vla_struct && r_vla_sz >= 0)
-                printf("  mov x12, %s\n", reg64[r_vla_sz]);
+                printf("  mov x9, %s\n", reg64[r_vla_sz]);
             else
-                printf("  mov x12, #%d\n", node->lhs->ty->size);
+                printf("  mov x9, #%d\n", node->lhs->ty->size);
             printf(".L.copy.%d:\n", c);
-            printf("  cmp x12, #0\n");
+            printf("  cmp x9, #0\n");
             printf("  b.eq .L.copy_end.%d\n", c);
-            printf("  sub x12, x12, #1\n");
-            printf("  ldrb w13, [%s, x12]\n", reg64[src]);
-            printf("  strb w13, [%s, x12]\n", reg64[dst]);
+            printf("  sub x9, x9, #1\n");
+            printf("  ldrb w16, [%s, x9]\n", reg64[src]);
+            printf("  strb w16, [%s, x9]\n", reg64[dst]);
             printf("  b .L.copy.%d\n", c);
             printf(".L.copy_end.%d:\n", c);
 #else
@@ -3593,15 +3569,15 @@ static int gen(Node *node) {
             printf("  sub x11, %s, x16\n", FRAME_PTR);
         }
         if (var->ty->size <= 4095) {
-            printf("  mov x12, #%d\n", var->ty->size);
+            printf("  mov x9, #%d\n", var->ty->size);
         } else {
             emit_mov_imm64("x12", (uint64_t)var->ty->size);
         }
         printf(".L.zero.%d:\n", c);
-        printf("  cmp x12, #0\n");
+        printf("  cmp x9, #0\n");
         printf("  b.eq .L.zero_end.%d\n", c);
-        printf("  sub x12, x12, #1\n");
-        printf("  strb wzr, [x11, x12]\n");
+        printf("  sub x9, x9, #1\n");
+        printf("  strb wzr, [x11, x9]\n");
         printf("  b .L.zero.%d\n", c);
         printf(".L.zero_end.%d:\n", c);
 #else
@@ -4162,13 +4138,13 @@ static int gen(Node *node) {
                     }
                     printf("  sub x11, %s, x16\n", FRAME_PTR);
                 }
-                printf("  mov x12, #%d\n", node->lhs->ty->size);
+                printf("  mov x9, #%d\n", node->lhs->ty->size);
                 printf(".L.retcopy.%d:\n", c);
-                printf("  cmp x12, #0\n");
+                printf("  cmp x9, #0\n");
                 printf("  b.eq .L.retcopy_end.%d\n", c);
-                printf("  sub x12, x12, #1\n");
-                printf("  ldrb w13, [%s, x12]\n", reg64[src]);
-                printf("  strb w13, [x11, x12]\n");
+                printf("  sub x9, x9, #1\n");
+                printf("  ldrb w16, [%s, x9]\n", reg64[src]);
+                printf("  strb w16, [x11, x9]\n");
                 printf("  b .L.retcopy.%d\n", c);
                 printf(".L.retcopy_end.%d:\n", c);
                 printf("  mov x0, x11\n");
@@ -4272,9 +4248,18 @@ static int gen(Node *node) {
                     // Float expression returned as integer: convert from xmm0/d0
                     int sz = ret_ty ? ret_ty->size : 8;
 #ifdef ARCH_ARM64
-                    printf("  fcvtzs %s, d0\n", reg(r, sz));
+                    {
+                        const char *dst = (sz >= 8) ? reg64[r] : reg32[r];
+                        bool ret_unsigned = ret_ty && ret_ty->is_unsigned;
+                        if (ret_unsigned)
+                            printf("  fcvtzu %s, d0\n", dst);
+                        else
+                            printf("  fcvtzs %s, d0\n", dst);
+                    }
                     if (sz >= 8)
                         printf("  mov x0, %s\n", reg64[r]);
+                    else if (ret_ty && ret_ty->is_unsigned)
+                        printf("  mov w0, %s\n", reg32[r]);
                     else
                         printf("  sxtw x0, %s\n", reg32[r]);
 #else
@@ -7368,13 +7353,13 @@ void codegen(Program *prog) {
                             }
                             printf("  sub x13, %s, x13\n", FRAME_PTR);
                         }
-                        printf("  mov x12, #%d\n", var->ty->size);
+                        printf("  mov x9, #%d\n", var->ty->size);
                         printf(".L.pcopy.%d:\n", c);
-                        printf("  cmp x12, #0\n");
+                        printf("  cmp x9, #0\n");
                         printf("  b.eq .L.pcopy_end.%d\n", c);
-                        printf("  sub x12, x12, #1\n");
-                        printf("  ldrb w14, [x11, x12]\n");
-                        printf("  strb w14, [x13, x12]\n");
+                        printf("  sub x9, x9, #1\n");
+                        printf("  ldrb w16, [x11, x9]\n");
+                        printf("  strb w16, [x13, x9]\n");
                         printf("  b .L.pcopy.%d\n", c);
                         printf(".L.pcopy_end.%d:\n", c);
                     } else {
