@@ -62,7 +62,7 @@ Linux:
 
 Structs, unions, enums, typedefs, arrays (multi-dimensional), pointers (including function pointers), `for`/`while`/`do-while`/`switch`/`goto`, `sizeof`, `_Bool`, `static`, `extern`, variadic `printf`, string literals, compound assignment operators, pre/post increment, ternary operator, comma operator, designated initializers, \_Generic, attribute `__cleanup__`, `__aligned__`, `__packed__`, `__constructor__`, `__destructor__`, Windows and SystemV long doubles (internally all using SSE), ARM64 long doubles (128-bit quad precision via register pairs in elf, 8 byte on APPLE), unicode identifiers and strings, minimal `"wchar.h"`, inline, weak, gcc, enum and ms bitfields, old K&R function definitions, VLA's, atomics (LL/SC on ARM64, xadd/lock on x86), GNU alias, args... macro syntax, basic -g DWARF debugging support (line numbers only), most GCC extensions and builtins.
 
-Not yet: complex, nested functions, C23, -fpie, -fpic,
+Not yet: complex, nested functions, C23, -fpie, -fpic, TLS,
 scalar_storage_order, trampolines, finstrument, vector_size
 
 Top-level `__asm__("...")` statements in AT&T, Intel or ARM syntax are supported and emitted in source order. Unlike GCC (which hoists all file-scope `asm` blocks to the top of the output at `-O2`/`-O3` unless `-fno-toplevel-reorder` is used), rcc always preserves their original position relative to functions.
@@ -97,6 +97,10 @@ make bench
     -I path            add include path
     -Lpath             add linker path
     -lname             add lib
+    -pthread           link with pthreads library
+    -shared            create shared library
+    -static            link statically
+    -Wl,<opt>          pass option to linker
     -E                 preprocessor-only
     -S                 assemble-only
     -c                 compile-only

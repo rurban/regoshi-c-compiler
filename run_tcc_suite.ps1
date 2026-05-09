@@ -47,7 +47,6 @@ $SkipTests = @(
     "60_errors_and_warnings", # no main; TCC -dt mode
     "96_nodata_wanted",       # no main; TCC -dt mode
     "104_inline",             # needs multi-file 104+_inline.c
-    "106_versym",             # requires -pthread
     "112_backtrace",
     "113_btdll",
     "114_bound_signal",
@@ -148,9 +147,12 @@ foreach ($file in $TestFiles) {
         $inTestDir = $true
     }
 
-    $extraFlags = ""
+    $extraFlags = @()
     if ($base -eq "129_scopes") {
-        $extraFlags = "-D__TINYC__"
+        $extraFlags += "-D__TINYC__"
+    }
+    if (Select-String -Path $src -Pattern "pthread" -Quiet) {
+        $extraFlags += "-pthread"
     }
 
     # 1. Compilation - capture stderr (warnings) to mirror Linux runner behaviour
@@ -367,7 +369,7 @@ $summaryFile = Join-Path $ScriptDir "test-tcc-mingw.summary"
 Write-Host "`nTest complete. Summary: $Passed Passed, $Failed Failed." -ForegroundColor Cyan
 Write-Host "Full report saved to $ReportFile"
 
-if ($Passed -ge 108) {
+if ($Passed -ge 112) {
     exit 0
 } else {
     exit 1

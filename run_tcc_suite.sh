@@ -314,8 +314,8 @@ extra_ldflags() {
 	esac
 	srcfile="$2"
 	[ -z "$srcfile" ] && srcfile="$SCRIPT_DIR/tinycc/tests/tests2/$1.c"
-	if [ -f "$srcfile" ] && grep -q 'pthread_create\|pthread_join\|pthread_once\|pthread_cond' "$srcfile" 2>/dev/null; then
-		printf '%s' " -lpthread"
+	if [ -f "$srcfile" ] && grep -q 'pthread_' "$srcfile" 2>/dev/null; then
+		printf '%s' " -pthread"
 	fi
 	printf ''
 }

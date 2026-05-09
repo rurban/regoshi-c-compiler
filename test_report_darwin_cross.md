@@ -2,14 +2,14 @@
 
 **Platform**: macOS ARM64 (darwin cross, compile+link only)
 
-Generated: May 09 2026 09:31
+Generated: May 10 2026 08:12
 
 ## Overall Summary
 
 - **Total**: 1150
-- **Passed**: 1057
-- **Failed**: 22
-- **Overall Pass Rate**: 91%
+- **Passed**: 1077
+- **Failed**: 2
+- **Overall Pass Rate**: 93%
 
 ## TCC Compatibility Tests
 
@@ -21,8 +21,8 @@ Generated: May 09 2026 09:31
 ## GCC Torture Tests
 
 - **Total**: 995
-- **Passed**: 902
-- **Failed**: 22
+- **Passed**: 922
+- **Failed**: 2
 - **Skipped**: 71
-- **FAIL COMPILE**: 22
-- **Pass Rate (excl. skip)**: 97%
+- **FAIL COMPILE**: 2
+- **Pass Rate (excl. skip)**: 99%

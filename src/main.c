@@ -71,6 +71,10 @@ void help(void) {
            "-I path             add include path\n"
            "-Lpath              add linker path\n"
            "-lname              add lib\n"
+           "-pthread            link with pthreads library\n"
+           "-shared             create shared library\n"
+           "-static             link statically\n"
+           "-Wl,<opt>           pass option to linker\n"
            "-E                  preprocessor-only\n"
            "-S                  assemble-only\n"
            "-c                  compile-only\n"
@@ -189,7 +193,14 @@ int main(int argc, char **argv) {
             }
             out_path = argv[i];
             opt_o = true;
-        } else if (!strncmp(argv[i], "-l", 2) || !strncmp(argv[i], "-L", 2)) {
+        } else if (!strcmp(argv[i], "-pthread")) {
+            add_define("_REENTRANT");
+            int n = snprintf(libs + libs_len, sizeof(libs) - libs_len, " %s", argv[i]);
+            if (n > 0 && libs_len + n < (int)sizeof(libs))
+                libs_len += n;
+        } else if (!strncmp(argv[i], "-l", 2) || !strncmp(argv[i], "-L", 2) ||
+                   !strcmp(argv[i], "-shared") || !strcmp(argv[i], "-static") ||
+                   !strncmp(argv[i], "-Wl,", 4)) {
             int n = snprintf(libs + libs_len, sizeof(libs) - libs_len, " %s", argv[i]);
             if (n > 0 && libs_len + n < (int)sizeof(libs))
                 libs_len += n;
