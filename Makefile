@@ -80,6 +80,8 @@ CFLAGS += -march=native
 endif
 endif
 DEF_INCDIR = -DRCC_INCDIR='"$(RCC_INCDIR)"'
+# Prefer mold over ld for faster linking in rcc-compiled programs
+RCC_LD ?= $(notdir $(shell which mold 2>/dev/null || echo ld))
 VERSION ?= $(shell git describe --long --tags --always 2>/dev/null || echo "v1.2-dev")
 MACHINE ?= $(shell $(CC) -dumpmachine 2>/dev/null || echo "unknown")
 
@@ -132,7 +134,7 @@ $(DARWIN_O): lib/darwin.c
 $(MINGW_O): lib/mingw.c
 	$(CC) $(CFLAGS) -c $< -o $@
 src/main$(OBJ_EXT): src/main.c src/sysinc_paths.h
-	$(CC) $(CFLAGS) -c $< -o $@ -DGCC=\"$(CC)\" $(DEF_INCDIR) -DVERSION=\"$(VERSION)\" -DMACHINE=\"$(MACHINE)\"
+	$(CC) $(CFLAGS) -c $< -o $@ -DGCC=\"$(CC)\" $(DEF_INCDIR) -DVERSION=\"$(VERSION)\" -DMACHINE=\"$(MACHINE)\" -DLD=\"$(RCC_LD)\"
 src/preprocess$(OBJ_EXT): src/preprocess.c src/sysinc_paths.h src/gcc_predefined.h
 	$(CC) $(CFLAGS) -c $< -o $@ $(DEF_INCDIR)
 %$(OBJ_EXT): %.c
@@ -145,7 +147,7 @@ compile_commands.json: $(SRCS)
 # Profile build: rcc compiled with -pg for gprof analysis
 rcc_prof: CFLAGS += -pg
 rcc_prof: $(SRCS) src/rcc.h src/sysinc_paths.h src/gcc_predefined.h
-	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $(SRCS) -DGCC=\"$(CC)\" $(DEF_INCDIR) -DVERSION=\"$(VERSION)\" -DMACHINE=\"$(MACHINE)\" -lm
+	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $(SRCS) -DGCC=\"$(CC)\" $(DEF_INCDIR) -DVERSION=\"$(VERSION)\" -DMACHINE=\"$(MACHINE)\" -DLD=\"$(RCC_LD)\" -lm
 
 # Run profile: compile a decent-sized file to generate gmon.out
 prof: rcc_prof

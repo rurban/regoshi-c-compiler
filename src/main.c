@@ -19,6 +19,9 @@ static uint64_t now_us(void) {
 #ifndef GCC
 #define GCC "gcc"
 #endif
+#ifndef LD
+#define LD "ld"
+#endif
 
 void add_define(char *def);
 void add_undef(char *name);
@@ -392,31 +395,21 @@ int main(int argc, char **argv) {
         char cmd[4096];
         int status = 0;
 
-#ifndef __APPLE__
-        // Choose linker: prefer mold, then ld
-        const char *linker = "ld";
-        {
-            // Check if mold is available
-            if (system("which mold >/dev/null 2>&1") == 0)
-                linker = "mold";
-        }
-#endif
-
+        // Use GCC as the linker frontend with -fuse-ld= so it handles crt files,
+        // sysroot, and -Wl,... passthrough correctly across all targets.
+        // LD is probed at build time (mold if available, else ld).
 #ifdef __APPLE__
-        snprintf(cmd, sizeof(cmd), "ld -o %s -arch arm64"
-                                   " -syslibroot /Library/Developer/CommandLineTools/SDKs/MacOSX.sdk"
-                                   " -lSystem",
+        snprintf(cmd, sizeof(cmd), GCC " -o %s -arch arm64"
+                                       " -isysroot /Library/Developer/CommandLineTools/SDKs/MacOSX.sdk"
+                                       " -Wl,-undefined,dynamic_lookup",
                  out_path);
 #else
         if (opt_pie)
-            snprintf(cmd, sizeof(cmd), "%s -pie -o %s", linker, out_path);
+            snprintf(cmd, sizeof(cmd), GCC " -fuse-ld=" LD " -pie -o %s", out_path);
+        else if (opt_pic)
+            snprintf(cmd, sizeof(cmd), GCC " -fuse-ld=" LD " -o %s", out_path);
         else
-            snprintf(cmd, sizeof(cmd), "%s --no-pie -o %s", linker, out_path);
-        // Add dynamic linker and crt files (needed for executable)
-        strncat(cmd, " -dynamic-linker /lib64/ld-linux-x86-64.so.2"
-                     " /usr/lib64/crt1.o /usr/lib64/crti.o"
-                     " -lc /usr/lib64/crtn.o",
-                sizeof(cmd) - strlen(cmd) - 1);
+            snprintf(cmd, sizeof(cmd), GCC " -fuse-ld=" LD " -no-pie -o %s", out_path);
 #endif
 
         // Assemble each .s file to a temp .o and add to linker command
