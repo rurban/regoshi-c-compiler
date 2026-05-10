@@ -1716,7 +1716,9 @@ static int gen_funcall(Node *node, int hidden_ret_reg) {
         printf("  subq $%d, %%rsp\n", stack_reserve);
 
     for (int i = nargs - 1; i >= reg_nargs; i--) {
-        int r = gen(argv[i]);
+        int r = (argv[i]->ty->kind == TY_STRUCT || argv[i]->ty->kind == TY_UNION) && argv[i]->ty->size > 8
+            ? gen_addr(argv[i])
+            : gen(argv[i]);
         if (is_flonum(argv[i]->ty)) {
             printf("  movq %s, %d(%%rsp)\n", reg64[r], shadow_space + (i - reg_nargs) * 8);
         } else {
@@ -5560,7 +5562,9 @@ static int gen(Node *node) {
     case ND_VA_ARG: {
         int r = gen(node->lhs);
         Type *ty = node->ty->base;
+#ifndef _WIN32
         bool is_fp = is_flonum(ty);
+#endif
 #ifdef ARCH_ARM64
         bool is_ptr_struct = (ty->kind == TY_STRUCT || ty->kind == TY_UNION) && ty->size > 16;
         // rcc passes ALL structs >8 bytes by pointer (not by value).
@@ -5624,6 +5628,37 @@ static int gen(Node *node) {
         printf("  mov %s, x12\n", reg64[r]);
 #else
         bool is_ptr_struct = (ty->kind == TY_STRUCT || ty->kind == TY_UNION) && ty->size > 8;
+#ifdef _WIN32
+        // Windows x64: all varargs (incl. float/double) read from GP reg save area.
+        // The caller duplicates FP args into both GP and XMM registers.
+        // gp_offset limit is 32 (4 GP regs * 8 bytes each).
+        // is_fp and is_ptr_struct use an extended check: float and ptr struct
+        // go through GP save area directly, not FP path.
+        if (is_ptr_struct) {
+            printf("  cmpl $24, (%s)\n", reg64[r]);
+            printf("  ja .L.va_overflow.%d\n", rcc_label_count);
+            printf("  movl (%s), %%ecx\n", reg64[r]);
+            printf("  addq 16(%s), %%rcx\n", reg64[r]);
+            printf("  movq (%%rcx), %%rcx\n");
+            printf("  addl $8, (%s)\n", reg64[r]);
+            printf("  jmp .L.va_done.%d\n", rcc_label_count);
+        } else {
+            printf("  cmpl $24, (%s)\n", reg64[r]);
+            printf("  ja .L.va_overflow.%d\n", rcc_label_count);
+            printf("  movl (%s), %%ecx\n", reg64[r]);
+            printf("  addq 16(%s), %%rcx\n", reg64[r]);
+            printf("  addl $8, (%s)\n", reg64[r]);
+            printf("  jmp .L.va_done.%d\n", rcc_label_count);
+        }
+        printf(".L.va_overflow.%d:\n", rcc_label_count);
+        printf("  movq 8(%s), %%rcx\n", reg64[r]);
+        printf("  leaq 8(%%rcx), %%rdx\n");
+        printf("  movq %%rdx, 8(%s)\n", reg64[r]);
+        if (is_ptr_struct)
+            printf("  movq (%%rcx), %%rcx\n");
+        printf(".L.va_done.%d:\n", rcc_label_count);
+        printf("  movq %%rcx, %s\n", reg64[r]);
+#else
         if (is_fp) {
             printf("  cmpl $160, 4(%s)\n", reg64[r]);
             printf("  ja .L.va_overflow.%d\n", rcc_label_count);
@@ -5655,6 +5690,7 @@ static int gen(Node *node) {
             printf("  movq (%%rcx), %%rcx\n");
         printf(".L.va_done.%d:\n", rcc_label_count);
         printf("  movq %%rcx, %s\n", reg64[r]);
+#endif
 #endif
         rcc_label_count++;
         return r;
@@ -7234,6 +7270,17 @@ void codegen(Program *prog) {
                     }
                     param_index++;
                     param_xmm_index++;
+                } else {
+                    // Float on stack
+                    int stack_off = 48 + stack_param_index * 8;
+                    if (var->ty->size == 4) {
+                        printf("  movss %d(%%rbp), %%xmm0\n", stack_off);
+                        printf("  movss %%xmm0, -%d(%%rbp)\n", var->offset);
+                    } else {
+                        printf("  movsd %d(%%rbp), %%xmm0\n", stack_off);
+                        printf("  movsd %%xmm0, -%d(%%rbp)\n", var->offset);
+                    }
+                    stack_param_index++;
                 }
             } else if (param_index < max_param_regs) {
                 char *preg = var->ty->size == 1 ? param_regs8[param_index]
@@ -7350,6 +7397,25 @@ void codegen(Program *prog) {
         if (fn->is_variadic) {
             int gp_count = param_index;
             int va_fp = param_xmm_index;
+#ifdef _WIN32
+            // Windows x64 ABI: 4 GP regs (rcx, rdx, r8, r9), 4 XMM regs (xmm0-xmm3)
+            va_reg_save_ofs = current_fn_stack_size + 96;
+            va_gp_start = gp_count * 8;
+            va_fp_start = va_fp * 16 + 32;
+            va_st_start = 48 + stack_param_index * 8;
+
+            switch (gp_count) {
+            case 0: printf("  movq %%rcx, -%d(%%rbp)\n", va_reg_save_ofs); /* fallthrough */
+            case 1: printf("  movq %%rdx, -%d(%%rbp)\n", va_reg_save_ofs - 8); /* fallthrough */
+            case 2: printf("  movq %%r8, -%d(%%rbp)\n", va_reg_save_ofs - 16); /* fallthrough */
+            case 3: printf("  movq %%r9, -%d(%%rbp)\n", va_reg_save_ofs - 24);
+            }
+            // Save all 4 xmm regs unconditionally (caller puts FP in both GP and XMM)
+            printf("  movaps %%xmm0, -%d(%%rbp)\n", va_reg_save_ofs - 32);
+            printf("  movaps %%xmm1, -%d(%%rbp)\n", va_reg_save_ofs - 48);
+            printf("  movaps %%xmm2, -%d(%%rbp)\n", va_reg_save_ofs - 64);
+            printf("  movaps %%xmm3, -%d(%%rbp)\n", va_reg_save_ofs - 80);
+#else
             va_reg_save_ofs = current_fn_stack_size + 176;
             va_gp_start = gp_count * 8;
             va_fp_start = va_fp * 16 + 48;
@@ -7379,6 +7445,7 @@ void codegen(Program *prog) {
                 printf(".L.va_no_xmm.%d:\n", rcc_label_count);
                 rcc_label_count++;
             }
+#endif
         }
 #else
         // Compute va_list init values for ARM64 (register saves are in Pass 2)
