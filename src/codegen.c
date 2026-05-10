@@ -1708,6 +1708,13 @@ static int gen_funcall(Node *node, int hidden_ret_reg) {
             arg_regs[i] = gen_addr(argv[i]);
         else
             arg_regs[i] = gen(argv[i]);
+#ifdef _WIN32
+        // For struct-returning function used as arg: gen returns buffer address;
+        // for structs ≤8 bytes, load the value from it.
+        if (argv[i]->kind == ND_FUNCALL && (argv[i]->ty->kind == TY_STRUCT || argv[i]->ty->kind == TY_UNION) && argv[i]->ty->size <= 8 && argv[i]->ty->size > 0) {
+            printf("  movq (%s), %s\n", reg64[arg_regs[i]], reg64[arg_regs[i]]);
+        }
+#endif
         arg_sizes[i] = (argv[i]->ty->kind == TY_ARRAY) ? 8 : argv[i]->ty->size;
         arg_is_float[i] = is_flonum(argv[i]->ty);
     }
@@ -1922,8 +1929,9 @@ static int gen_funcall(Node *node, int hidden_ret_reg) {
         // On Windows, structs ≤8 bytes are passed by value. When the caller
         // did NOT provide a hidden ret buffer (hidden_ret_reg == -1), the
         // return register holds the buffer address; load the value from it.
-        if (hidden_ret_reg == -1 && node->ty->size <= 8 && node->ty->size > 0)
+        if (hidden_ret_reg == -1 && node->ty->size <= 8 && node->ty->size > 0) {
             printf("  movq (%s), %s\n", reg64[ret], reg64[ret]);
+        }
 #endif
         return ret;
     }
