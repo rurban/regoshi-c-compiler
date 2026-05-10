@@ -1,12 +1,144 @@
 // SPDX-License-Identifier: LGPL-2.1-or-later
 // Derived from chibicc by Rui Ueyama.
+// Direct byte emission for all printf() calls (like TCC).
+// Peephole optimization is interleaved inline during emission.
+// Replaces the old text-based emit_peephole_body() batch approach.
 #include "rcc.h"
+#include "obj.h"
+#include "asm.h"
+#ifdef ARCH_ARM64
+#include "arm64_enc.h"
+#else
+#include "x86_enc.h"
+#endif
 #include <stdarg.h>
 #include <ctype.h>
 #include <time.h>
 
-static FILE *cg_stream;
 uint64_t time_peep_us = 0;
+
+// ---- Output: emit bytes directly into an ObjFile ----
+static ObjFile *cg_obj;
+static AsmState cg_asm;
+
+// Track the prev instruction for inline peephole matching
+typedef enum {
+    BI_NONE = 0,
+    BI_MOV_RR,
+    BI_MOV_RI,
+    BI_MOV_RM,
+    BI_MOV_MR,
+    BI_ADD_RI,
+    BI_SUB_RI,
+    BI_AND_RI,
+    BI_OR_RI,
+    BI_XOR_RI,
+    BI_ADD_RR,
+    BI_SUB_RR,
+    BI_AND_RR,
+    BI_OR_RR,
+    BI_XOR_RR,
+    BI_IMUL_RR,
+    BI_CMP_RI,
+    BI_CMP_RR,
+    BI_JMP,
+    BI_JCC,
+    BI_LEA,
+    BI_CALL,
+    BI_LABEL, // .L.label:
+    BI_LOAD, // ldr/ldrb/ldrh from memory
+    BI_STORE, // str/strb/strh to memory
+    BI_ARM64_MOV_IMM, // movz/movn/movk
+    BI_OTHER
+} BinInsnKind;
+
+typedef struct {
+    BinInsnKind kind;
+    int size; // 1,2,4,8
+    int dst_reg; // reg index in reg64[] table (0..NUM_REGS-1), or phys reg id
+    int src_reg; // reg index or phys
+    int64_t imm;
+    int disp; // stack offset (from rbp/fp)
+    char label[80]; // for labels and jump targets
+    size_t byte_offset; // offset in cg_obj->text.data
+} BinInsn;
+
+static BinInsn cg_prev; // last emitted instruction
+static BinInsn cg_pending; // instruction held back at block end for cross-block peephole
+static bool cg_has_pending;
+
+static void cg_clear_prev(void) {
+    cg_prev.kind = BI_NONE;
+}
+static void cg_clear_pending(void) {
+    cg_pending.kind = BI_NONE;
+    cg_has_pending = false;
+}
+
+// Called at start of a new node block: check if pending insn (from prev block)
+// can peephole-match against the first insn about to be emitted.
+static void cg_block_entry(void) {
+    if (cg_has_pending) {
+        cg_prev = cg_pending;
+        cg_clear_pending();
+    }
+}
+// Called at end of a node block: save the last emitted insn as pending,
+// so the next block's entry can match against it.
+static void cg_block_exit(void) {
+    if (cg_prev.kind != BI_NONE) {
+        cg_pending = cg_prev;
+        cg_has_pending = true;
+        cg_clear_prev();
+    }
+}
+
+// ---- Peephole pattern checks (inline, against cg_prev) ----
+// Each peep_check_* function examines cg_prev against the new instruction
+// described by its arguments. Returns true if peephole was applied (cg_prev
+// was modified/deleted, and the new instruction should be skipped or modified).
+
+// Pattern 1: mov SRC, REG; mov REG, DST → mov SRC, DST
+static bool peep_check_mov_rr(BinInsnKind k, int sz, int dst, int src) {
+    if (opt_O0) return false;
+    if (cg_prev.kind != BI_MOV_RR) return false;
+    if (k != BI_MOV_RR) return false;
+    // prev: mov SRC, cg_prev.dst_reg; new: mov cg_prev.dst_reg, DST
+    if (src != cg_prev.dst_reg) return false;
+    if (dst == cg_prev.src_reg) return false;
+    cg_prev.dst_reg = dst; // prev now becomes mov cg_prev.src_reg, dst
+    return true; // caller skips the new instruction
+}
+
+// Pattern 4: mov REG, #IMM; OP REG2, REG → OP REG2, #IMM
+static bool peep_check_op_fold_imm(BinInsnKind k, int sz, int dst, int src, int64_t imm) {
+    (void)imm;
+    if (opt_O0) return false;
+    if (cg_prev.kind != BI_MOV_RI) return false;
+    if (cg_prev.dst_reg != src) return false;
+    if (k != BI_ADD_RR && k != BI_SUB_RR && k != BI_AND_RR &&
+        k != BI_OR_RR && k != BI_XOR_RR && k != BI_CMP_RR && k != BI_IMUL_RR)
+        return false;
+    if (k == BI_ADD_RR || k == BI_SUB_RR || k == BI_OR_RR || k == BI_XOR_RR) {
+        if (cg_prev.imm == 0) {
+            cg_prev.kind = BI_NONE;
+            return true;
+        }
+    }
+    if (k == BI_IMUL_RR && cg_prev.imm == 1) {
+        cg_prev.kind = BI_NONE;
+        return true;
+    }
+    cg_prev.kind = k == BI_ADD_RR ? BI_ADD_RI : k == BI_SUB_RR ? BI_SUB_RI
+        : k == BI_AND_RR                                       ? BI_AND_RI
+        : k == BI_OR_RR                                        ? BI_OR_RI
+        : k == BI_XOR_RR                                       ? BI_XOR_RI
+        : k == BI_CMP_RR                                       ? BI_CMP_RI
+                                                               : k;
+    cg_prev.dst_reg = dst;
+    cg_prev.src_reg = -1;
+    return true;
+}
 
 static uint64_t cg_now_us(void) {
     struct timespec ts;
@@ -16,15 +148,584 @@ static uint64_t cg_now_us(void) {
 static Function *current_fn_def;
 static TLItem *all_items;
 static StrLit *all_strs;
+
+// ---- Byte emission helpers ----
+static int cg_cur_sec = SEC_TEXT;
+
+static void cg_set_section(int sec) {
+    cg_cur_sec = sec;
+    cg_asm.cur_sec = sec;
+}
+
+static size_t cg_emit8(uint8_t v) {
+    SecBuf *s = cg_cur_sec == SEC_DATA ? &cg_obj->data : cg_cur_sec == SEC_RODATA ? &cg_obj->rodata
+                                                                                  : &cg_obj->text;
+    return secbuf_emit8(s, v);
+}
+static size_t cg_emit32le(uint32_t v) {
+    SecBuf *s = cg_cur_sec == SEC_DATA ? &cg_obj->data : cg_cur_sec == SEC_RODATA ? &cg_obj->rodata
+                                                                                  : &cg_obj->text;
+    return secbuf_emit32le(s, v);
+}
+static size_t cg_emit64le(uint64_t v) {
+    SecBuf *s = cg_cur_sec == SEC_DATA ? &cg_obj->data : cg_cur_sec == SEC_RODATA ? &cg_obj->rodata
+                                                                                  : &cg_obj->text;
+    return secbuf_emit64le(s, v);
+}
+static void cg_emit_buf(const void *buf, size_t n) {
+    SecBuf *s = cg_cur_sec == SEC_DATA ? &cg_obj->data : cg_cur_sec == SEC_RODATA ? &cg_obj->rodata
+                                                                                  : &cg_obj->text;
+    secbuf_emitbuf(s, buf, n);
+}
+static size_t cg_text_pos(void) { return cg_obj->text.len; }
+static size_t cg_data_pos(void) { return cg_obj->data.len; }
+static size_t cg_rodata_pos(void) { return cg_obj->rodata.len; }
+static void cg_text_align(int align) { secbuf_align(&cg_obj->text, align); }
+static void cg_data_align(int align) { secbuf_align(&cg_obj->data, align); }
+static void cg_rodata_align(int align) { secbuf_align(&cg_obj->rodata, align); }
+static void cg_text_patch32le(size_t off, uint32_t v) { secbuf_patch32le(&cg_obj->text, off, v); }
+static void cg_text_patch64le(size_t off, uint64_t v) { secbuf_patch64le(&cg_obj->text, off, v); }
+
+static void cg_label(const char *name) {
+    objfile_add_sym(cg_obj, name, SEC_TEXT, cg_obj->text.len, 0, SB_LOCAL, ST_NOTYPE);
+}
+static void cg_label_sym(const char *name, SymBind bind, SymType type) {
+    objfile_add_sym(cg_obj, name, SEC_TEXT, cg_obj->text.len, 0, bind, type);
+}
+
+#ifdef ARCH_ARM64
+static int arm64_reg_idx(const char *r) {
+    if (!r) return -1;
+    if (r[0] == 'x' || r[0] == 'w') return (int)strtol(r + 1, NULL, 10);
+    if (!strcmp(r, "sp")) return 31;
+    if (!strcmp(r, "xzr")) return 31;
+    if (!strcmp(r, "wzr")) return 31;
+    if (!strcmp(r, "lr") || !strcmp(r, "x30")) return 30;
+    if (!strcmp(r, "fp") || !strcmp(r, "x29")) return 29;
+    if (r[0] == 's' && r[1] >= '0' && r[1] <= '9') return (int)strtol(r + 1, NULL, 10) + 32;
+    if (r[0] == 'd' && r[1] >= '0' && r[1] <= '9') return (int)strtol(r + 1, NULL, 10) + 32;
+    if (r[0] == 'q' && r[1] >= '0' && r[1] <= '9') return (int)strtol(r + 1, NULL, 10) + 32;
+    return -1;
+}
+#else
+static int x86_reg_idx(const char *r) {
+    if (!r) return -1;
+    if (!strcmp(r, "%rax") || !strcmp(r, "%eax") || !strcmp(r, "%ax") || !strcmp(r, "%al")) return X86_RAX;
+    if (!strcmp(r, "%rcx") || !strcmp(r, "%ecx") || !strcmp(r, "%cx") || !strcmp(r, "%cl")) return X86_RCX;
+    if (!strcmp(r, "%rdx") || !strcmp(r, "%edx") || !strcmp(r, "%dx") || !strcmp(r, "%dl")) return X86_RDX;
+    if (!strcmp(r, "%rbx") || !strcmp(r, "%ebx") || !strcmp(r, "%bx") || !strcmp(r, "%bl")) return X86_RBX;
+    if (!strcmp(r, "%rsp") || !strcmp(r, "%esp") || !strcmp(r, "%sp") || !strcmp(r, "%spl")) return X86_RSP;
+    if (!strcmp(r, "%rbp") || !strcmp(r, "%ebp") || !strcmp(r, "%bp") || !strcmp(r, "%bpl")) return X86_RBP;
+    if (!strcmp(r, "%rsi") || !strcmp(r, "%esi") || !strcmp(r, "%si") || !strcmp(r, "%sil")) return X86_RSI;
+    if (!strcmp(r, "%rdi") || !strcmp(r, "%edi") || !strcmp(r, "%di") || !strcmp(r, "%dil")) return X86_RDI;
+    if (!strcmp(r, "%r8") || !strcmp(r, "%r8d") || !strcmp(r, "%r8w") || !strcmp(r, "%r8b")) return X86_R8;
+    if (!strcmp(r, "%r9") || !strcmp(r, "%r9d") || !strcmp(r, "%r9w") || !strcmp(r, "%r9b")) return X86_R9;
+    if (!strcmp(r, "%r10") || !strcmp(r, "%r10d") || !strcmp(r, "%r10w") || !strcmp(r, "%r10b")) return X86_R10;
+    if (!strcmp(r, "%r11") || !strcmp(r, "%r11d") || !strcmp(r, "%r11w") || !strcmp(r, "%r11b")) return X86_R11;
+    if (!strcmp(r, "%r12") || !strcmp(r, "%r12d") || !strcmp(r, "%r12w") || !strcmp(r, "%r12b")) return X86_R12;
+    if (!strcmp(r, "%r13") || !strcmp(r, "%r13d") || !strcmp(r, "%r13w") || !strcmp(r, "%r13b")) return X86_R13;
+    if (!strcmp(r, "%r14") || !strcmp(r, "%r14d") || !strcmp(r, "%r14w") || !strcmp(r, "%r14b")) return X86_R14;
+    if (!strcmp(r, "%r15") || !strcmp(r, "%r15d") || !strcmp(r, "%r15w") || !strcmp(r, "%r15b")) return X86_R15;
+    return -1;
+}
+#endif
+
+static char *current_fn;
+
+// ---- Direct byte emission: printf replacements ----
+// Each cg_* function calls the appropriate encoder and tracks peephole state.
+// Replaces both printf("  insn ...") and asm_assemble_line().
+
+#ifdef ARCH_ARM64
+// ARM64 encoders emit 4-byte words; we track them as BI_OTHER for now
+#define cg_emit_arm64_insn(word) do { \
+    secbuf_emit32le(&cg_obj->text, (word)); \
+    cg_prev.kind = BI_OTHER; \
+} while(0)
+
+static void cg_arm64_mov_imm(const char *rd, uint64_t imm) {
+    int sf = (rd[0] == 'x') ? 1 : 0;
+    int rn = arm64_reg_idx(rd);
+    cg_emit_arm64_insn(arm64_movz(sf, rn, imm & 0xffff, 0));
+    uint64_t v = imm >> 16;
+    int shift = 16;
+    while (v) {
+        cg_emit_arm64_insn(arm64_movk(sf, rn, v & 0xffff, shift));
+        v >>= 16;
+        shift += 16;
+    }
+}
+static void cg_arm64_mov_reg(const char *rd, const char *rs) {
+    int sf = (rd[0] == 'x' && rs[0] == 'x') ? 1 : (rd[0] == 'w' && rs[0] == 'w') ? 0
+        : (rd[0] == 'x')                                                         ? 1
+                                                                                 : 0;
+    // Use ADD with XZR for register moves
+    cg_emit_arm64_insn(arm64_add_reg(sf, arm64_reg_idx(rd), 31, arm64_reg_idx(rs), ARM64_LSL, 0));
+}
+static void cg_arm64_str(const char *rt, int rn, int off) {
+    int sf = (rt[0] == 'x') ? 1 : 0;
+    if (off >= -256 && off <= 255)
+        cg_emit_arm64_insn(arm64_str_imm(sf, arm64_reg_idx(rt), rn, off, false));
+    else
+        cg_emit_arm64_insn(arm64_stur(sf, arm64_reg_idx(rt), rn, off));
+}
+static void cg_arm64_ldr(const char *rt, int rn, int off) {
+    int sf = (rt[0] == 'x') ? 1 : 0;
+    if (off >= -256 && off <= 255)
+        cg_emit_arm64_insn(arm64_ldr_imm(sf, arm64_reg_idx(rt), rn, off, false));
+    else
+        cg_emit_arm64_insn(arm64_ldur(sf, arm64_reg_idx(rt), rn, off));
+}
+#else
+// x86-64 direct encoders using X86Reg enums
+// In passthrough mode (Pass 1 gen() body), accumulate text; otherwise emit bytes.
+
+// Passthrough state (must be before wrappers that use it)
+static bool cg_passthrough = false;
+static char *cg_body_buf = NULL;
+static size_t cg_body_len = 0;
+static size_t cg_body_cap = 0;
+
+static const char *x86_reg_name(X86Reg r) {
+    static const char *names[] = {
+        [X86_RAX] = "%rax",
+        [X86_RCX] = "%rcx",
+        [X86_RDX] = "%rdx",
+        [X86_RBX] = "%rbx",
+        [X86_RSP] = "%rsp",
+        [X86_RBP] = "%rbp",
+        [X86_RSI] = "%rsi",
+        [X86_RDI] = "%rdi",
+        [X86_R8] = "%r8",
+        [X86_R9] = "%r9",
+        [X86_R10] = "%r10",
+        [X86_R11] = "%r11",
+        [X86_R12] = "%r12",
+        [X86_R13] = "%r13",
+        [X86_R14] = "%r14",
+        [X86_R15] = "%r15",
+    };
+    return r >= 0 && r < 16 ? names[r] : "%?";
+}
+
+static void cg_text_add(const char *line) {
+    size_t n = strlen(line);
+    size_t need = cg_body_len + n + 1;
+    if (need > cg_body_cap) {
+        cg_body_cap = need * 2 + 4096;
+        cg_body_buf = realloc(cg_body_buf, cg_body_cap);
+    }
+    memcpy(cg_body_buf + cg_body_len, line, n + 1);
+    cg_body_len += n;
+}
+
+static void cg_mov_rr(int sz, X86Reg rd, X86Reg rs) {
+    if (cg_passthrough) {
+        cg_text_add(format("  mov%c %s, %s\n", sz == 8 ? 'q' : sz == 4 ? 'l'
+                               : sz == 2                               ? 'w'
+                                                                       : 'b',
+                           x86_reg_name(rs), x86_reg_name(rd)));
+        return;
+    }
+    x86_mov_rr(&cg_obj->text, sz, rd, rs);
+    cg_prev.kind = BI_MOV_RR;
+    cg_prev.dst_reg = rd;
+    cg_prev.src_reg = rs;
+}
+static void cg_mov_ri(int sz, X86Reg rd, int64_t imm) {
+    if (cg_passthrough) {
+        cg_text_add(format("  mov%c $%lld, %s\n", sz == 8 ? 'q' : sz == 4 ? 'l'
+                               : sz == 2                                  ? 'w'
+                                                                          : 'b',
+                           (long long)imm, x86_reg_name(rd)));
+        return;
+    }
+    if (sz == 8 && imm != (int32_t)imm) x86_movabs(&cg_obj->text, rd, (uint64_t)imm);
+    else
+        x86_mov_ri(&cg_obj->text, sz, rd, (int32_t)imm);
+    cg_prev.kind = BI_MOV_RI;
+    cg_prev.dst_reg = rd;
+    cg_prev.imm = imm;
+}
+static void cg_mov_mr(int sz, int off, X86Reg rs) {
+    if (cg_passthrough) {
+        cg_text_add(format("  mov%c %s, -%d(%%rbp)\n", sz == 8 ? 'q' : sz == 4 ? 'l'
+                               : sz == 2                                       ? 'w'
+                                                                               : 'b',
+                           x86_reg_name(rs), off));
+        return;
+    }
+    x86_mov_mr(&cg_obj->text, sz, x86_mem(X86_RBP, -off), rs);
+    cg_prev.kind = BI_STORE;
+}
+static void cg_mov_rm(int sz, X86Reg rd, int off) {
+    if (cg_passthrough) {
+        cg_text_add(format("  mov%c -%d(%%rbp), %s\n", sz == 8 ? 'q' : sz == 4 ? 'l'
+                               : sz == 2                                       ? 'w'
+                                                                               : 'b',
+                           off, x86_reg_name(rd)));
+        return;
+    }
+    x86_mov_rm(&cg_obj->text, sz, rd, x86_mem(X86_RBP, -off));
+    cg_prev.kind = BI_LOAD;
+}
+static void cg_push(X86Reg r) {
+    if (cg_passthrough) {
+        cg_text_add(format("  push%c %s\n", r >= X86_R8 ? 'q' : ' ', x86_reg_name(r)));
+        return;
+    }
+    x86_push(&cg_obj->text, r);
+    cg_prev.kind = BI_OTHER;
+}
+static void cg_pop(X86Reg r) {
+    if (cg_passthrough) {
+        cg_text_add(format("  pop%c %s\n", r >= X86_R8 ? 'q' : ' ', x86_reg_name(r)));
+        return;
+    }
+    x86_pop(&cg_obj->text, r);
+    cg_prev.kind = BI_OTHER;
+}
+static void cg_sub_ri(int sz, X86Reg r, int32_t imm) {
+    if (cg_passthrough) {
+        cg_text_add(format("  sub%c $%d, %s\n", sz == 8 ? 'q' : sz == 4 ? 'l'
+                               : sz == 2                                ? 'w'
+                                                                        : 'b',
+                           imm, x86_reg_name(r)));
+        return;
+    }
+    x86_sub_ri(&cg_obj->text, sz, r, imm);
+    cg_prev.kind = BI_OTHER;
+}
+static void cg_add_ri(int sz, X86Reg r, int32_t imm) {
+    if (cg_passthrough) {
+        cg_text_add(format("  add%c $%d, %s\n", sz == 8 ? 'q' : sz == 4 ? 'l'
+                               : sz == 2                                ? 'w'
+                                                                        : 'b',
+                           imm, x86_reg_name(r)));
+        return;
+    }
+    x86_add_ri(&cg_obj->text, sz, r, imm);
+    cg_prev.kind = BI_OTHER;
+}
+static void cg_lea_rm(int sz, X86Reg rd, int off) {
+    if (cg_passthrough) {
+        cg_text_add(format("  lea%c -%d(%%rbp), %s\n", sz == 8 ? 'q' : sz == 4 ? 'l'
+                               : sz == 2                                       ? 'w'
+                                                                               : 'b',
+                           off, x86_reg_name(rd)));
+        return;
+    }
+    x86_lea(&cg_obj->text, sz, rd, x86_mem(X86_RBP, -off));
+    cg_prev.kind = BI_LEA;
+}
+static void cg_jmp(const char *label) {
+    if (cg_passthrough) {
+        cg_text_add(format("  jmp %s\n", label));
+        return;
+    }
+    size_t off = cg_obj->text.len;
+    x86_jmp_rel32(&cg_obj->text, 0);
+    cg_prev.kind = BI_JMP;
+    if (label) {
+        int si = objfile_add_sym(cg_obj, label, SEC_UNDEF, 0, 0, SB_LOCAL, ST_NOTYPE);
+        objfile_add_reloc(cg_obj, SEC_TEXT, off + 1, si, R_X86_64_PC32, -4);
+    }
+}
+static void cg_jcc(X86Cond cc, const char *label) {
+    if (cg_passthrough) {
+        cg_text_add(format("  jcc %s\n", label));
+        return;
+    }
+    size_t off = cg_obj->text.len;
+    x86_jcc_rel32(&cg_obj->text, cc, 0);
+    cg_prev.kind = BI_JCC;
+    if (label) {
+        int si = objfile_add_sym(cg_obj, label, SEC_UNDEF, 0, 0, SB_LOCAL, ST_NOTYPE);
+        objfile_add_reloc(cg_obj, SEC_TEXT, off + 2, si, R_X86_64_PC32, -4);
+    }
+}
+static void cg_call(const char *func) {
+    if (cg_passthrough) {
+        cg_text_add(format("  call %s\n", func));
+        return;
+    }
+    size_t off = cg_obj->text.len;
+    x86_call_rel32(&cg_obj->text, 0);
+    cg_prev.kind = BI_CALL;
+    if (func) {
+        int si = objfile_add_sym(cg_obj, func, SEC_UNDEF, 0, 0, SB_GLOBAL, ST_FUNC);
+        objfile_add_reloc(cg_obj, SEC_TEXT, off + 1, si, R_X86_64_PLT32, -4);
+    }
+}
+static void cg_ret(void) {
+    if (cg_passthrough) {
+        cg_text_add("  ret\n");
+        return;
+    }
+    x86_ret(&cg_obj->text);
+    cg_prev.kind = BI_OTHER;
+}
+static void cg_cmp_ri(int sz, X86Reg r, int32_t imm) {
+    if (cg_passthrough) {
+        cg_text_add(format("  cmp%c $%d, %s\n", sz == 8 ? 'q' : sz == 4 ? 'l'
+                               : sz == 2                                ? 'w'
+                                                                        : 'b',
+                           imm, x86_reg_name(r)));
+        return;
+    }
+    x86_cmp_ri(&cg_obj->text, sz, r, imm);
+    cg_prev.kind = BI_CMP_RI;
+}
+static void cg_cmp_rr(int sz, X86Reg a, X86Reg b) {
+    if (cg_passthrough) {
+        cg_text_add(format("  cmp%c %s, %s\n", sz == 8 ? 'q' : sz == 4 ? 'l'
+                               : sz == 2                               ? 'w'
+                                                                       : 'b',
+                           x86_reg_name(b), x86_reg_name(a)));
+        return;
+    }
+    x86_cmp_rr(&cg_obj->text, sz, a, b);
+    cg_prev.kind = BI_CMP_RR;
+}
+static void cg_test_rr(int sz, X86Reg a, X86Reg b) {
+    if (cg_passthrough) {
+        cg_text_add(format("  test%c %s, %s\n", sz == 8 ? 'q' : sz == 4 ? 'l'
+                               : sz == 2                                ? 'w'
+                                                                        : 'b',
+                           x86_reg_name(b), x86_reg_name(a)));
+        return;
+    }
+    x86_test_rr(&cg_obj->text, sz, a, b);
+    cg_prev.kind = BI_OTHER;
+}
+static void cg_and_ri(int sz, X86Reg r, int32_t imm) {
+    if (cg_passthrough) {
+        cg_text_add(format("  and%c $%d, %s\n", sz == 8 ? 'q' : sz == 4 ? 'l'
+                               : sz == 2                                ? 'w'
+                                                                        : 'b',
+                           imm, x86_reg_name(r)));
+        return;
+    }
+    x86_and_ri(&cg_obj->text, sz, r, imm);
+    cg_prev.kind = BI_OTHER;
+}
+static void cg_or_ri(int sz, X86Reg r, int32_t imm) {
+    if (cg_passthrough) {
+        cg_text_add(format("  or%c $%d, %s\n", sz == 8 ? 'q' : sz == 4 ? 'l'
+                               : sz == 2                               ? 'w'
+                                                                       : 'b',
+                           imm, x86_reg_name(r)));
+        return;
+    }
+    x86_or_ri(&cg_obj->text, sz, r, imm);
+    cg_prev.kind = BI_OTHER;
+}
+static void cg_xor_ri(int sz, X86Reg r, int32_t imm) {
+    if (cg_passthrough) {
+        cg_text_add(format("  xor%c $%d, %s\n", sz == 8 ? 'q' : sz == 4 ? 'l'
+                               : sz == 2                                ? 'w'
+                                                                        : 'b',
+                           imm, x86_reg_name(r)));
+        return;
+    }
+    x86_xor_ri(&cg_obj->text, sz, r, imm);
+    cg_prev.kind = BI_OTHER;
+}
+static void cg_movsx(int dsz, int ssz, X86Reg rd, X86Reg rs) {
+    if (cg_passthrough) {
+        cg_text_add(format("  movs%c%c %s, %s\n", "bwlq"[ssz - 1], "bwlq"[dsz - 1], x86_reg_name(rs), x86_reg_name(rd)));
+        return;
+    }
+    x86_movsx(&cg_obj->text, dsz, ssz, rd, rs);
+    cg_prev.kind = BI_MOV_RR;
+}
+static void cg_movzx(int dsz, int ssz, X86Reg rd, X86Reg rs) {
+    if (cg_passthrough) {
+        cg_text_add(format("  movz%c%c %s, %s\n", "bwlq"[ssz - 1], "bwlq"[dsz - 1], x86_reg_name(rs), x86_reg_name(rd)));
+        return;
+    }
+    x86_movzx(&cg_obj->text, dsz, ssz, rd, rs);
+    cg_prev.kind = BI_MOV_RR;
+}
+static void cg_shl_ri(int sz, X86Reg r, uint8_t imm) {
+    if (cg_passthrough) {
+        cg_text_add(format("  shl%c $%d, %s\n", sz == 8 ? 'q' : sz == 4 ? 'l'
+                               : sz == 2                                ? 'w'
+                                                                        : 'b',
+                           imm, x86_reg_name(r)));
+        return;
+    }
+    x86_shl_ri(&cg_obj->text, sz, r, imm);
+    cg_prev.kind = BI_OTHER;
+}
+static void cg_shr_ri(int sz, X86Reg r, uint8_t imm) {
+    if (cg_passthrough) {
+        cg_text_add(format("  shr%c $%d, %s\n", sz == 8 ? 'q' : sz == 4 ? 'l'
+                               : sz == 2                                ? 'w'
+                                                                        : 'b',
+                           imm, x86_reg_name(r)));
+        return;
+    }
+    x86_shr_ri(&cg_obj->text, sz, r, imm);
+    cg_prev.kind = BI_OTHER;
+}
+static void cg_sar_ri(int sz, X86Reg r, uint8_t imm) {
+    if (cg_passthrough) {
+        cg_text_add(format("  sar%c $%d, %s\n", sz == 8 ? 'q' : sz == 4 ? 'l'
+                               : sz == 2                                ? 'w'
+                                                                        : 'b',
+                           imm, x86_reg_name(r)));
+        return;
+    }
+    x86_sar_ri(&cg_obj->text, sz, r, imm);
+    cg_prev.kind = BI_OTHER;
+}
+
+static void cg_mov_rr_str(const char *dst, const char *src) {
+    int dlen = (int)strlen(dst);
+    int sz = 8;
+    if (dlen > 1 && (dst[dlen - 1] == 'l' || dst[dlen - 1] == 'd') &&
+        dst[dlen - 2] != 'a')
+        sz = 4;
+    else if (dlen > 1 && dst[dlen - 1] == 'w')
+        sz = 2;
+    else if (dlen > 1 && dst[dlen - 1] == 'b')
+        sz = 1;
+    cg_mov_rr(sz, x86_reg_idx(dst), x86_reg_idx(src));
+}
+#endif
+
+// ---- Directive helpers (replace printf(".xxx ...")) ----
+static void cg_globl(const char *name) {
+    objfile_add_sym(cg_obj, name, SEC_UNDEF, 0, 0, SB_GLOBAL, ST_NOTYPE);
+}
+static void cg_dlabel(const char *name) {
+    objfile_add_sym(cg_obj, name, cg_cur_sec, cg_cur_sec == SEC_TEXT ? cg_obj->text.len : cg_cur_sec == SEC_DATA ? cg_obj->data.len
+                                                                                                                 : cg_obj->rodata.len,
+                    0, SB_LOCAL, ST_NOTYPE);
+}
+static void cg_data_byte(uint8_t v) {
+    secbuf_emit8(cg_cur_sec == SEC_DATA ? &cg_obj->data : &cg_obj->rodata, v);
+}
+static void cg_data_quad(uint64_t v) {
+    SecBuf *s = cg_cur_sec == SEC_DATA ? &cg_obj->data : &cg_obj->rodata;
+    secbuf_emit64le(s, v);
+}
+
+// ---- Text emission (legacy printf passthrough for Pass 1 body) ----
+// During Pass 1 (gen() body), printf output is accumulated as text.
+
+// For non-instruction output (directives, labels, debug info),
+// we use a simplified path that handles them directly or accumulates text.
+static void cg_emit_text(const char *line) {
+    if (cg_passthrough) {
+        size_t n = strlen(line);
+        size_t need = cg_body_len + n + 1;
+        if (need > cg_body_cap) {
+            cg_body_cap = need * 2 + 4096;
+            cg_body_buf = realloc(cg_body_buf, cg_body_cap);
+        }
+        memcpy(cg_body_buf + cg_body_len, line, n + 1);
+        cg_body_len += n;
+    } else {
+        asm_assemble_line(&cg_asm, line);
+    }
+}
+
+// Generic printf → we still use asm_assemble_line as a fallback
+// for complex instructions not yet converted to direct encoders.
 static void cg_emit(const char *fmt, ...) {
     va_list ap;
     va_start(ap, fmt);
-    vfprintf(cg_stream, fmt, ap);
+    char line[1024];
+    vsnprintf(line, sizeof(line), fmt, ap);
     va_end(ap);
+    cg_emit_text(line);
 }
 #define printf(...) cg_emit(__VA_ARGS__)
 
-static char *current_fn;
+// Assemble all accumulated body text lines from Pass 1 into the ObjFile.
+// Forward declarations for peephole helpers (defined later in this file).
+static int peep_mov_reg_reg(char *line, char *dst, int dst_sz, char *src, int src_sz);
+static int is_reg(const char *s);
+static int peep_pattern2(char **lines, int li, int lj);
+static int peep_pattern3(char **lines, int li, int lj);
+static int peep_pattern4(char **lines, int li, int lj);
+static int peep_pattern5(char **lines, int li, int lj, int lk, const char *rest);
+
+static void cg_assemble_body(void) {
+    if (!cg_body_buf || cg_body_len == 0) return;
+    cg_body_buf[cg_body_len] = '\0';
+    char *p = cg_body_buf;
+    char *body_end = cg_body_buf + cg_body_len;
+    // Peephole: maintain prev line copy. Use stack buffers to avoid allocation.
+    char prev_buf[512] = "";
+    bool has_prev = false;
+    while (p < body_end) {
+        char *nl = strchr(p, '\n');
+        size_t linelen = nl ? (size_t)(nl - p) : strlen(p);
+        char line[512];
+        if (linelen >= sizeof(line)) linelen = sizeof(line) - 1;
+        memcpy(line, p, linelen);
+        line[linelen] = '\0';
+        p = nl ? nl + 1 : p + linelen;
+        if (!*line) continue;
+
+        if (!opt_O0 && has_prev) {
+            char *w[3] = {prev_buf, line, NULL};
+            if (peep_pattern2(w, 0, 1) ||
+                peep_pattern3(w, 0, 1) ||
+                peep_pattern4(w, 0, 1)) {
+                if (w[0] && w[0][0]) asm_assemble_line(&cg_asm, w[0]);
+                if (w[1] && w[1][0]) asm_assemble_line(&cg_asm, w[1]);
+                has_prev = false;
+                continue;
+            }
+            {
+                char d1[80], s1[80], d2[80], s2[80];
+                if (peep_mov_reg_reg(prev_buf, d1, sizeof(d1), s1, sizeof(s1)) &&
+                    peep_mov_reg_reg(line, d2, sizeof(d2), s2, sizeof(s2)) &&
+                    !strcmp(d2, s1) && strcmp(d1, d2) && is_reg(d1) && is_reg(s1) && is_reg(s2)) {
+                    char newline[256];
+                    snprintf(newline, sizeof(newline), "  mov %s, %s", d1, s2);
+                    asm_assemble_line(&cg_asm, newline);
+                    has_prev = false;
+                    continue;
+                }
+            }
+            // Pattern 5: 3-line pattern, need to peek at next line
+            if (p < body_end) {
+                char *nnl = strchr(p, '\n');
+                size_t nxtlen = nnl ? (size_t)(nnl - p) : strlen(p);
+                if (nxtlen < 512) {
+                    char next_line[512];
+                    memcpy(next_line, p, nxtlen);
+                    next_line[nxtlen] = '\0';
+                    char *w3[3] = {prev_buf, line, next_line};
+                    if (peep_pattern5(w3, 0, 1, 2, nnl ? nnl + 1 : p + nxtlen)) {
+                        if (w3[0] && w3[0][0]) asm_assemble_line(&cg_asm, w3[0]);
+                        if (w3[1] && w3[1][0]) asm_assemble_line(&cg_asm, w3[1]);
+                        if (w3[2] && w3[2][0]) asm_assemble_line(&cg_asm, w3[2]);
+                        has_prev = false;
+                        p = nnl ? nnl + 1 : p + nxtlen;
+                        continue;
+                    }
+                }
+            }
+        }
+
+        if (has_prev)
+            asm_assemble_line(&cg_asm, prev_buf);
+        memcpy(prev_buf, line, linelen + 1);
+        has_prev = true;
+    }
+    if (has_prev)
+        asm_assemble_line(&cg_asm, prev_buf);
+    free(cg_body_buf);
+    cg_body_buf = NULL;
+    cg_body_len = 0;
+    cg_body_cap = 0;
+}
 static int current_fn_stack_size = 0; // fn->stack_size of the function being generated
 
 // Debug info (DWARF .loc directives, enabled by -g)
@@ -105,6 +806,7 @@ static char *reg64[] = {"%r10", "%r11", "%rbx", "%r12", "%r13", "%r14", "%r15", 
 static char *reg32[] = {"%r10d", "%r11d", "%ebx", "%r12d", "%r13d", "%r14d", "%r15d", "%esi"};
 static char *reg16[] = {"%r10w", "%r11w", "%bx", "%r12w", "%r13w", "%r14w", "%r15w", "%si"};
 static char *reg8[] = {"%r10b", "%r11b", "%bl", "%r12b", "%r13b", "%r14b", "%r15b", "%sil"};
+static X86Reg reg64_idx[] = {X86_R10, X86_R11, X86_RBX, X86_R12, X86_R13, X86_R14, X86_R15, X86_RSI};
 #define NUM_REGS 8
 #define FRAME_PTR "rbp"
 #define STACK_REG "rsp"
@@ -253,12 +955,12 @@ static void emit_cleanup_var(LVar *var) {
             printf("  add x0, %s, #%d\n", FRAME_PTR, -var->offset);
         else {
             int v = var->offset;
-            printf("  mov x16, #%d\n", v & 0xffff);
-            v >>= 16;
+            secbuf_emit32le(&cg_obj->text, arm64_movz(1, 16, v & 0xffff, 0))
+                v >>= 16;
             int s = 16;
             while (v) {
-                printf("  movk x16, #%d, lsl #%d\n", v & 0xffff, s);
-                v >>= 16;
+                secbuf_emit32le(&cg_obj->text, arm64_movk(1, 16, v & 0xffff, s))
+                    v >>= 16;
                 s += 16;
             }
             printf("  sub x0, %s, x16\n", FRAME_PTR);
@@ -282,12 +984,12 @@ static void emit_cleanup_var(LVar *var) {
             printf("  add x0, %s, #%d\n", FRAME_PTR, -off);
         else {
             int v = off;
-            printf("  mov x16, #%d\n", v & 0xffff);
-            v >>= 16;
+            secbuf_emit32le(&cg_obj->text, arm64_movz(1, 16, v & 0xffff, 0))
+                v >>= 16;
             int s = 16;
             while (v) {
-                printf("  movk x16, #%d, lsl #%d\n", v & 0xffff, s);
-                v >>= 16;
+                secbuf_emit32le(&cg_obj->text, arm64_movk(1, 16, v & 0xffff, s))
+                    v >>= 16;
                 s += 16;
             }
             printf("  sub x0, %s, x16\n", FRAME_PTR);
@@ -351,7 +1053,7 @@ static int arm64_hfa_count(Type *ty, int *elem_size) {
 // ARM64: emit load from [fp, #-offset] into x16 (uses x17 for large offsets)
 static void arm64_load_from_fp_minus(int offset, const char *dst) {
     if (offset <= 255)
-        printf("  ldr %s, [%s, #-%d]\n", dst, FRAME_PTR, offset);
+        secbuf_emit32le(&cg_obj->text, arm64_ldur(1, arm64_reg_idx(dst), arm64_reg_idx(FRAME_PTR), -(offset)));
     else if (offset <= 4095) {
         printf("  sub x17, %s, #%d\n", FRAME_PTR, offset);
         printf("  ldr %s, [x17]\n", dst);
@@ -373,7 +1075,7 @@ static void arm64_load_from_fp_minus(int offset, const char *dst) {
 // ARM64: emit store src to [fp, #-offset] (uses x17 for large offsets)
 static void arm64_store_to_fp_minus(const char *src, int offset) {
     if (offset <= 255)
-        printf("  str %s, [%s, #-%d]\n", src, FRAME_PTR, offset);
+        secbuf_emit32le(&cg_obj->text, arm64_stur(1, arm64_reg_idx(src), arm64_reg_idx(FRAME_PTR), -(offset)));
     else if (offset <= 4095) {
         printf("  sub x17, %s, #%d\n", FRAME_PTR, offset);
         printf("  str %s, [x17]\n", src);
@@ -403,7 +1105,7 @@ static void emit_vla_dealloc(LVar *begin, LVar *end) {
     if (outermost_vla) {
 #ifdef ARCH_ARM64
         arm64_load_from_fp_minus(outermost_vla->offset, "x16");
-        printf("  mov sp, x16\n");
+        cg_emit_arm64_insn(arm64_add_reg(1, 31, 16, ARM64_LSL, 0));
 #else
         printf("  movq -%d(%%rbp), %%rsp\n", outermost_vla->offset);
 #endif
@@ -426,9 +1128,9 @@ static void emit_alloca(void) {
 #else
     printf("\n%s:\n  popq %%rdx\n", sym_name("__rcc_alloca"));
 #ifdef _WIN32
-    printf("  movq %%rcx, %%rax\n");
+    cg_mov_rr(8, X86_RAX, X86_RCX);
 #else
-    printf("  movq %%rdi, %%rax\n");
+    cg_mov_rr(8, X86_RAX, X86_RDI);
 #endif
     printf("  addq $15, %%rax\n  andq $-16, %%rax\n  jz .Lalloca3\n");
 #ifdef _WIN32
@@ -603,17 +1305,21 @@ static int gen_funcall(Node *node, int hidden_ret_reg) {
                 int r = gen(arg);
 #ifdef ARCH_ARM64
                 if (is_bswap16) {
-                    printf("  rev16 %s, %s\n", reg32[r], reg32[r]);
+                    // rev16 reg32[r], reg32[r]
+                    secbuf_emit32le(&cg_obj->text, arm64_rev16(1, arm64_reg_idx(reg32[r]), arm64_reg_idx(reg32[r])));
                     printf("  and %s, %s, #0xffff\n", reg32[r], reg32[r]);
                 } else if (is_bswap32) {
-                    printf("  rev %s, %s\n", reg32[r], reg32[r]);
+                    // rev reg32[r], reg32[r]
+                    secbuf_emit32le(&cg_obj->text, arm64_rev(1, arm64_reg_idx(reg32[r]), arm64_reg_idx(reg32[r])));
                 } else {
-                    printf("  rev %s, %s\n", reg64[r], reg64[r]);
+                    // rev reg64[r], reg64[r]
+                    secbuf_emit32le(&cg_obj->text, arm64_rev(1, arm64_reg_idx(reg64[r]), arm64_reg_idx(reg64[r])));
                 }
 #else
                 if (is_bswap16) {
                     printf("  rol $8, %s\n", reg16[r]);
-                    printf("  movzwl %s, %s\n", reg16[r], reg32[r]);
+                    // movzwl reg16[r], reg32[r]
+                    cg_movzx(4, 2, x86_reg_idx(reg32[r]), x86_reg_idx(reg16[r]));
                 } else if (is_bswap32) {
                     printf("  bswap %s\n", reg32[r]);
                 } else {
@@ -632,13 +1338,17 @@ static int gen_funcall(Node *node, int hidden_ret_reg) {
                 bool is64 = is_clzll || (is_clzl && sizeof(long) == 8);
 #ifdef ARCH_ARM64
                 if (is64)
-                    printf("  clz %s, %s\n", reg64[r2], reg64[r]);
+                    // clz reg64[r2], reg64[r]
+                    secbuf_emit32le(&cg_obj->text, arm64_clz(1, arm64_reg_idx(reg64[r2]), arm64_reg_idx(reg64[r])));
                 else
-                    printf("  clz %s, %s\n", reg32[r2], reg32[r]);
+                    // clz reg32[r2], reg32[r]
+                    secbuf_emit32le(&cg_obj->text, arm64_clz(1, arm64_reg_idx(reg32[r2]), arm64_reg_idx(reg32[r])));
 #else
                 if (is64) {
+                    // lzcnt reg64[r], reg64[r2]
                     printf("  lzcnt %s, %s\n", reg64[r], reg64[r2]);
                 } else {
+                    // lzcnt reg32[r], reg32[r2]
                     printf("  lzcnt %s, %s\n", reg32[r], reg32[r2]);
                 }
 #endif
@@ -655,16 +1365,20 @@ static int gen_funcall(Node *node, int hidden_ret_reg) {
                 bool is64 = is_ctzll || (is_ctzl && sizeof(long) == 8);
 #ifdef ARCH_ARM64
                 if (is64) {
-                    printf("  rbit %s, %s\n", reg64[r], reg64[r]);
-                    printf("  clz %s, %s\n", reg64[r2], reg64[r]);
+                    // clz reg64[r2], reg64[r]
+                    secbuf_emit32le(&cg_obj->text, arm64_rbit(1, arm64_reg_idx(reg64[r]), arm64_reg_idx(reg64[r])));
+                    secbuf_emit32le(&cg_obj->text, arm64_clz(1, arm64_reg_idx(reg64[r2]), arm64_reg_idx(reg64[r])));
                 } else {
-                    printf("  rbit %s, %s\n", reg32[r], reg32[r]);
-                    printf("  clz %s, %s\n", reg32[r2], reg32[r]);
+                    // clz reg32[r2], reg32[r]
+                    secbuf_emit32le(&cg_obj->text, arm64_rbit(1, arm64_reg_idx(reg32[r]), arm64_reg_idx(reg32[r])));
+                    secbuf_emit32le(&cg_obj->text, arm64_clz(1, arm64_reg_idx(reg32[r2]), arm64_reg_idx(reg32[r])));
                 }
 #else
                 if (is64) {
+                    // tzcnt reg64[r], reg64[r2]
                     printf("  tzcnt %s, %s\n", reg64[r], reg64[r2]);
                 } else {
+                    // tzcnt reg32[r], reg32[r2]
                     printf("  tzcnt %s, %s\n", reg32[r], reg32[r2]);
                 }
 #endif
@@ -728,13 +1442,15 @@ static int gen_funcall(Node *node, int hidden_ret_reg) {
                 int lbl = ++rcc_label_count;
                 int r3 = alloc_reg();
                 if (is64) {
-                    printf("  mov %s, %s\n", reg64[r], reg64[r3]);
+                    // mov reg64[r], reg64[r3]
+                    cg_mov_rr_str(reg64[r3], reg64[r]);
                     printf("  sar $63, %s\n", reg64[r3]);
                     printf("  xor %s, %s\n", reg64[r3], reg64[r]);
                     printf("  lzcnt %s, %s\n", reg64[r], reg64[r2]);
                     printf("  dec %s\n", reg64[r2]);
                 } else {
-                    printf("  mov %s, %s\n", reg32[r], reg32[r3]);
+                    // mov reg32[r], reg64[r3]
+                    cg_mov_rr_str(reg32[r3], reg32[r]);
                     printf("  sar $31, %s\n", reg32[r3]);
                     printf("  xor %s, %s\n", reg32[r3], reg32[r]);
                     printf("  lzcnt %s, %s\n", reg32[r], reg32[r2]);
@@ -757,16 +1473,24 @@ static int gen_funcall(Node *node, int hidden_ret_reg) {
                 bool is64 = is_ffsll || (is_ffsl && sizeof(long) == 8);
 #ifdef ARCH_ARM64
                 if (is64) {
-                    printf("  rbit %s, %s\n", reg64[r], reg64[r]);
-                    printf("  clz %s, %s\n", reg64[r3], reg64[r]);
-                    printf("  add %s, %s, #1\n", reg64[r3], reg64[r3]);
-                    printf("  cmp %s, #0\n", reg64[r]);
+                    // rbit reg64[r], reg64[r]
+                    secbuf_emit32le(&cg_obj->text, arm64_rbit(1, arm64_reg_idx(reg64[r]), arm64_reg_idx(reg64[r])));
+                    // clz reg64[r3], reg64[r]
+                    secbuf_emit32le(&cg_obj->text, arm64_clz(1, arm64_reg_idx(reg64[r3]), arm64_reg_idx(reg64[r])));
+                    // add reg64[r3], reg64[r3], #1
+                    secbuf_emit32le(&cg_obj->text, arm64_add_imm(1, arm64_reg_idx(reg64[r3]), arm64_reg_idx(reg64[r3]), 1, 0));
+                    // cmp reg64[r], #0
+                    secbuf_emit32le(&cg_obj->text, arm64_subs_imm(1, 31, arm64_reg_idx(reg64[r]), 0, 0));
                     printf("  csel %s, xzr, %s, eq\n", reg64[r2], reg64[r3]);
                 } else {
-                    printf("  rbit %s, %s\n", reg32[r], reg32[r]);
-                    printf("  clz %s, %s\n", reg32[r3], reg32[r]);
-                    printf("  add %s, %s, #1\n", reg32[r3], reg32[r3]);
-                    printf("  cmp %s, #0\n", reg32[r]);
+                    // rbit reg32[r], reg32[r]
+                    secbuf_emit32le(&cg_obj->text, arm64_rbit(1, arm64_reg_idx(reg32[r]), arm64_reg_idx(reg32[r])));
+                    // clz reg32[r3], reg32[r]
+                    secbuf_emit32le(&cg_obj->text, arm64_clz(1, arm64_reg_idx(reg32[r3]), arm64_reg_idx(reg32[r])));
+                    // add reg32[r3], reg32[r3], #1
+                    secbuf_emit32le(&cg_obj->text, arm64_add_imm(1, arm64_reg_idx(reg32[r3]), arm64_reg_idx(reg32[r3]), 1, 0));
+                    // cmp reg32[r], #0
+                    secbuf_emit32le(&cg_obj->text, arm64_subs_imm(1, 31, arm64_reg_idx(reg32[r]), 0, 0));
                     printf("  csel %s, wzr, %s, eq\n", reg32[r2], reg32[r3]);
                 }
 #else
@@ -776,7 +1500,8 @@ static int gen_funcall(Node *node, int hidden_ret_reg) {
                     printf("  leaq 1(%s), %s\n", reg64[r3], reg64[r3]);
                     printf("  cmovnz %s, %s\n", reg64[r3], reg64[r2]);
                 } else {
-                    printf("  movl $0, %s\n", reg32[r2]);
+                    // movl $0, reg32[r2]
+                    cg_mov_ri(4, x86_reg_idx(reg32[r2]), 0);
                     printf("  bsf %s, %s\n", reg32[r], reg32[r3]);
                     printf("  leal 1(%s), %s\n", reg32[r3], reg32[r3]);
                     printf("  cmovnz %s, %s\n", reg32[r3], reg32[r2]);
@@ -835,7 +1560,7 @@ static int gen_funcall(Node *node, int hidden_ret_reg) {
 #ifdef ARCH_ARM64
                 printf("  lsr %s, %s, #63\n", reg64[r], reg64[r_arg]);
 #else
-                printf("  movq %s, %%xmm0\n", reg64[r_arg]);
+                printf("  movq %s, %%xmm0\n", reg64[r_arg], X86_XMM0);
                 printf("  movq %%xmm0, %s\n", reg64[r]);
                 printf("  shrq $63, %s\n", reg64[r]);
 #endif
@@ -851,16 +1576,16 @@ static int gen_funcall(Node *node, int hidden_ret_reg) {
 #ifdef ARCH_ARM64
                 int arg_size = (arg->ty && !is_flonum(arg->ty)) ? arg->ty->size : 8;
                 if (arg_size <= 4 && !(arg->ty && arg->ty->is_unsigned))
-                    printf("  sxtw %s, %s\n", reg64[r], reg32[r]);
-                printf("  cmp %s, #0\n", reg64[r]);
+                    secbuf_emit32le(&cg_obj->text, arm64_sxtw(arm64_reg_idx(reg64[r]), arm64_reg_idx(reg32[r])));
+                secbuf_emit32le(&cg_obj->text, arm64_subs_imm(1, 31, arm64_reg_idx(reg64[r]), 0, 0));
                 printf("  cneg %s, %s, mi\n", reg64[r], reg64[r]);
                 return r;
 #else
                 int r2 = alloc_reg();
                 int arg_size = (arg->ty && !is_flonum(arg->ty)) ? arg->ty->size : 8;
                 if (arg_size <= 4 && !(arg->ty && arg->ty->is_unsigned))
-                    printf("  movslq %s, %s\n", reg32[r], reg64[r]);
-                printf("  movq %s, %s\n", reg64[r], reg64[r2]);
+                    cg_movsx(8, 4, x86_reg_idx(reg64[r]), x86_reg_idx(reg32[r]));
+                cg_mov_rr(8, x86_reg_idx(reg64[r2]), x86_reg_idx(reg64[r]));
                 printf("  sarq $63, %s\n", reg64[r2]);
                 printf("  xorq %s, %s\n", reg64[r2], reg64[r]);
                 printf("  subq %s, %s\n", reg64[r2], reg64[r]);
@@ -877,11 +1602,11 @@ static int gen_funcall(Node *node, int hidden_ret_reg) {
 #ifdef ARCH_ARM64
             printf("  mov %s, " FRAME_PTR "\n", reg64[r]);
             for (int i = 0; i < depth; i++)
-                printf("  ldr %s, [%s]\n", reg64[r], reg64[r]);
+                secbuf_emit32le(&cg_obj->text, arm64_ldr_uoff(3, arm64_reg_idx(reg64[r]), arm64_reg_idx(reg64[r]), 0));
 #else
             printf("  movq %%rbp, %s\n", reg64[r]);
             for (int i = 0; i < depth; i++)
-                printf("  mov (%s), %s\n", reg64[r], reg64[r]);
+                x86_mov_rm(&cg_obj->text, 8, x86_reg_idx(reg64[r]), x86_mem(x86_reg_idx(reg64[r]), 0));
 #endif
             return r;
         }
@@ -894,12 +1619,12 @@ static int gen_funcall(Node *node, int hidden_ret_reg) {
 #ifdef ARCH_ARM64
             printf("  mov %s, " FRAME_PTR "\n", reg64[r]);
             for (int i = 0; i < depth; i++)
-                printf("  ldr %s, [%s]\n", reg64[r], reg64[r]);
+                secbuf_emit32le(&cg_obj->text, arm64_ldr_uoff(3, arm64_reg_idx(reg64[r]), arm64_reg_idx(reg64[r]), 0));
             printf("  ldr %s, [%s, #8]\n", reg64[r], reg64[r]);
 #else
             printf("  movq %%rbp, %s\n", reg64[r]);
             for (int i = 0; i < depth; i++)
-                printf("  mov (%s), %s\n", reg64[r], reg64[r]);
+                x86_mov_rm(&cg_obj->text, 8, x86_reg_idx(reg64[r]), x86_mem(x86_reg_idx(reg64[r]), 0));
             printf("  mov 8(%s), %s\n", reg64[r], reg64[r]);
 #endif
             return r;
@@ -910,12 +1635,12 @@ static int gen_funcall(Node *node, int hidden_ret_reg) {
             int rbuf = gen(node->args);
             int c = ++rcc_label_count;
             int r = alloc_reg();
-            printf("  str %s, [%s]\n", FRAME_PTR, reg64[rbuf]); // buf[0] = fp
+            secbuf_emit32le(&cg_obj->text, arm64_str_uoff(3, arm64_reg_idx(FRAME_PTR), arm64_reg_idx(reg64[rbuf]), 0)); // buf[0] = fp
             printf("  adr x16, .L.sjr.%d\n", c); // x16 = resume addr
             printf("  str x16, [%s, #8]\n", reg64[rbuf]); // buf[1] = resume addr
-            printf("  mov x16, sp\n");
+            cg_emit_arm64_insn(arm64_add_reg(1, 16, 31, ARM64_LSL, 0));
             printf("  str x16, [%s, #16]\n", reg64[rbuf]); // buf[2] = sp
-            printf("  mov x0, #0\n");
+            secbuf_emit32le(&cg_obj->text, arm64_movz(1, 0, 0, 0));
             printf("  b .L.sja.%d\n", c);
             printf(".L.sjr.%d:\n", c); // longjmp lands here
             printf(".L.sja.%d:\n", c); // normal path joins here
@@ -927,12 +1652,12 @@ static int gen_funcall(Node *node, int hidden_ret_reg) {
             // Inline __builtin_longjmp: restore fp, sp from buf; jump to resume addr with val
             int rbuf = gen(node->args);
             int rval = gen(node->args->next);
-            printf("  ldr %s, [%s]\n", FRAME_PTR, reg64[rbuf]); // restore fp
+            secbuf_emit32le(&cg_obj->text, arm64_ldr_uoff(3, arm64_reg_idx(FRAME_PTR), arm64_reg_idx(reg64[rbuf]), 0)); // restore fp
             printf("  ldr x16, [%s, #16]\n", reg64[rbuf]); // x16 = saved sp
-            printf("  mov sp, x16\n"); // restore sp
+            cg_emit_arm64_insn(arm64_add_reg(1, 31, 16, ARM64_LSL, 0)); // restore sp
             printf("  ldr x16, [%s, #8]\n", reg64[rbuf]); // x16 = resume addr
             printf("  mov x0, %s\n", reg64[rval]); // x0 = val
-            printf("  br x16\n"); // jump to resume
+            secbuf_emit32le(&cg_obj->text, arm64_br(16)); // jump to resume
             free_reg(rbuf);
             free_reg(rval);
             return -1;
@@ -958,31 +1683,31 @@ static int gen_funcall(Node *node, int hidden_ret_reg) {
                 if (sz == 8) {
                     if (is_unsigned) {
                         printf("  umulh %s, %s, %s\n", reg64[r2], reg64[ra], reg64[rb]);
-                        printf("  mul %s, %s, %s\n", reg64[ra], reg64[ra], reg64[rb]);
-                        printf("  cmp %s, #0\n", reg64[r2]);
-                        printf("  cset %s, ne\n", reg32[r_result]);
+                        secbuf_emit32le(&cg_obj->text, arm64_mul(1, arm64_reg_idx(reg64[ra]), arm64_reg_idx(reg64[ra]), arm64_reg_idx(reg64[rb])));
+                        secbuf_emit32le(&cg_obj->text, arm64_subs_imm(1, 31, arm64_reg_idx(reg64[r2]), 0, 0));
+                        secbuf_emit32le(&cg_obj->text, arm64_cset(1, arm64_reg_idx(reg32[r_result]), ARM64_NE));
                     } else {
                         int r3 = alloc_reg();
                         printf("  smulh %s, %s, %s\n", reg64[r2], reg64[ra], reg64[rb]);
-                        printf("  mul %s, %s, %s\n", reg64[ra], reg64[ra], reg64[rb]);
+                        secbuf_emit32le(&cg_obj->text, arm64_mul(1, arm64_reg_idx(reg64[ra]), arm64_reg_idx(reg64[ra]), arm64_reg_idx(reg64[rb])));
                         printf("  asr %s, %s, #63\n", reg64[r3], reg64[ra]);
-                        printf("  cmp %s, %s\n", reg64[r2], reg64[r3]);
-                        printf("  cset %s, ne\n", reg32[r_result]);
+                        secbuf_emit32le(&cg_obj->text, arm64_subs_reg(1, 31, arm64_reg_idx(reg64[r2]), arm64_reg_idx(reg64[r3]), 0, 0));
+                        secbuf_emit32le(&cg_obj->text, arm64_cset(1, arm64_reg_idx(reg32[r_result]), ARM64_NE));
                         free_reg(r3);
                     }
                 } else {
                     if (is_unsigned) {
                         printf("  umull %s, %s, %s\n", reg64[ra], reg32[ra], reg32[rb]);
                         printf("  lsr %s, %s, #32\n", reg64[r2], reg64[ra]);
-                        printf("  cmp %s, #0\n", reg64[r2]);
-                        printf("  cset %s, ne\n", reg32[r_result]);
+                        secbuf_emit32le(&cg_obj->text, arm64_subs_imm(1, 31, arm64_reg_idx(reg64[r2]), 0, 0));
+                        secbuf_emit32le(&cg_obj->text, arm64_cset(1, arm64_reg_idx(reg32[r_result]), ARM64_NE));
                     } else {
                         int r3 = alloc_reg();
                         printf("  smull %s, %s, %s\n", reg64[ra], reg32[ra], reg32[rb]);
                         printf("  asr %s, %s, #31\n", reg64[r2], reg64[ra]);
                         printf("  lsr %s, %s, #32\n", reg64[r3], reg64[ra]);
-                        printf("  cmp %s, %s\n", reg64[r2], reg64[r3]);
-                        printf("  cset %s, ne\n", reg32[r_result]);
+                        secbuf_emit32le(&cg_obj->text, arm64_subs_reg(1, 31, arm64_reg_idx(reg64[r2]), arm64_reg_idx(reg64[r3]), 0, 0));
+                        secbuf_emit32le(&cg_obj->text, arm64_cset(1, arm64_reg_idx(reg32[r_result]), ARM64_NE));
                         free_reg(r3);
                     }
                 }
@@ -990,7 +1715,7 @@ static int gen_funcall(Node *node, int hidden_ret_reg) {
             }
             if (argres && !is_mul_overflow_p) {
                 int rr = gen_addr(argres);
-                printf("  str %s, [%s]\n", reg(ra, sz), reg64[rr]);
+                secbuf_emit32le(&cg_obj->text, arm64_str_uoff(3, arm64_reg_idx(reg(ra), arm64_reg_idx(sz), 0)), reg64[rr]);
                 free_reg(rr);
             }
             free_reg(ra);
@@ -1009,7 +1734,7 @@ static int gen_funcall(Node *node, int hidden_ret_reg) {
             int sz = arga && arga->ty && arga->ty->size > 4 ? 8 : 4;
             if (is_add_overflow) {
                 printf("  %s %s, %s\n", sz == 8 ? "add" : "add", reg(ra, sz), reg(rb, sz));
-                printf("  setc %%al\n");
+                x86_setcc(&cg_obj->text, X86_C, X86_RAX);
                 if (argres) {
                     int rr = gen_addr(argres);
                     printf("  mov %s, (%s)\n", reg(ra, sz), reg64[rr]);
@@ -1017,7 +1742,7 @@ static int gen_funcall(Node *node, int hidden_ret_reg) {
                 }
             } else if (is_sub_overflow) {
                 printf("  sub %s, %s\n", reg(rb, sz), reg(ra, sz));
-                printf("  setc %%al\n");
+                x86_setcc(&cg_obj->text, X86_C, X86_RAX);
                 if (argres) {
                     int rr = gen_addr(argres);
                     printf("  mov %s, (%s)\n", reg(ra, sz), reg64[rr]);
@@ -1028,7 +1753,7 @@ static int gen_funcall(Node *node, int hidden_ret_reg) {
                 if (sz == 8) {
                     printf("  movq %s, %%rax\n", reg(ra, sz));
                     printf("  mul %s\n", reg(rb, sz));
-                    printf("  movq %%rax, %s\n", reg64[ra]);
+                    cg_mov_rr(8, reg64_idx[ra], X86_RAX);
                     printf("  movq %%rdx, %s\n", reg64[r2]);
                 } else {
                     printf("  movl %s, %%eax\n", reg(ra, 4));
@@ -1037,7 +1762,7 @@ static int gen_funcall(Node *node, int hidden_ret_reg) {
                     printf("  movl %%edx, %s\n", reg(r2, 4));
                 }
                 printf("  cmp $0, %s\n", reg(r2, sz));
-                printf("  setne %%al\n");
+                x86_setcc(&cg_obj->text, X86_NE, X86_RAX);
                 free_reg(r2);
                 if (argres && !is_mul_overflow_p) {
                     int rr = gen_addr(argres);
@@ -1083,24 +1808,24 @@ static int gen_funcall(Node *node, int hidden_ret_reg) {
                 int dst_r = gen(dst);
                 int v2_r = gen(v2);
                 int len_r = gen(len);
-                printf("  mov %s, %s\n", reg64[dst_r], reg64[r]);
+                cg_mov_rr_str(reg64[r], reg64[dst_r]);
 
-                printf("  cld\n");
-                printf("  pushq %%rdi\n");
-                if (is_memcpy) printf("  pushq %%rsi\n");
-                printf("  pushq %%rcx\n");
+                x86_cld(&cg_obj->text);
+                cg_push(X86_RDI);
+                if (is_memcpy) cg_push(X86_RSI);
+                cg_push(X86_RCX);
                 printf("  movq %s, %%rdi\n", reg64[dst_r]);
-                printf("  movq %s, %%rcx\n", reg64[len_r]);
+                cg_mov_rr(8, X86_RCX, x86_reg_idx(reg64[len_r]));
                 if (is_memset) {
                     printf("  movzbl %s, %%eax\n", reg8[v2_r]);
-                    printf("  rep stosb\n");
+                    x86_rep_prefix(&cg_obj->text);
                 } else {
                     printf("  movq %s, %%rsi\n", reg64[v2_r]);
-                    printf("  rep movsb\n");
+                    x86_rep_prefix(&cg_obj->text);
                 }
-                printf("  popq %%rcx\n");
-                if (is_memcpy) printf("  popq %%rsi\n");
-                printf("  popq %%rdi\n");
+                cg_pop(X86_RCX);
+                if (is_memcpy) cg_pop(X86_RSI);
+                cg_pop(X86_RDI);
 
                 free_reg(dst_r);
                 free_reg(v2_r);
@@ -1119,25 +1844,25 @@ static int gen_funcall(Node *node, int hidden_ret_reg) {
                 int s2_r = gen(src2);
                 int len_r = gen(len);
 
-                printf("  cld\n");
-                printf("  pushq %%rdi\n");
-                printf("  pushq %%rsi\n");
-                printf("  pushq %%rcx\n");
+                x86_cld(&cg_obj->text);
+                cg_push(X86_RDI);
+                cg_push(X86_RSI);
+                cg_push(X86_RCX);
                 printf("  movq %s, %%rdi\n", reg64[s1_r]);
                 printf("  movq %s, %%rsi\n", reg64[s2_r]);
-                printf("  movq %s, %%rcx\n", reg64[len_r]);
+                cg_mov_rr(8, X86_RCX, x86_reg_idx(reg64[len_r]));
                 printf("  repe cmpsb\n");
                 printf("  jne .L.memcmp_diff.%d\n", ++rcc_label_count);
-                printf("  xorl %%eax, %%eax\n");
+                x86_xor_rr(&cg_obj->text, 4, X86_RAX, X86_RAX);
                 printf("  jmp .L.memcmp_end.%d\n", rcc_label_count);
                 printf(".L.memcmp_diff.%d:\n", rcc_label_count);
                 printf("  movsbl -1(%%rdi), %%eax\n");
                 printf("  movsbl -1(%%rsi), %%ecx\n");
-                printf("  subl %%ecx, %%eax\n");
+                x86_sub_rr(&cg_obj->text, 4, X86_RAX, X86_RCX);
                 printf(".L.memcmp_end.%d:\n", rcc_label_count);
-                printf("  popq %%rcx\n");
-                printf("  popq %%rsi\n");
-                printf("  popq %%rdi\n");
+                cg_pop(X86_RCX);
+                cg_pop(X86_RSI);
+                cg_pop(X86_RDI);
 
                 free_reg(s1_r);
                 free_reg(s2_r);
@@ -1154,23 +1879,23 @@ static int gen_funcall(Node *node, int hidden_ret_reg) {
             if (str && !str->next) {
                 int str_r = gen(str);
 
-                printf("  cld\n");
-                printf("  pushq %%rdi\n");
-                printf("  pushq %%rcx\n");
+                x86_cld(&cg_obj->text);
+                cg_push(X86_RDI);
+                cg_push(X86_RCX);
                 printf("  movq %s, %%rdi\n", reg64[str_r]);
-                printf("  xorb %%al, %%al\n");
-                printf("  movq $-1, %%rcx\n");
-                printf("  repne scasb\n");
-                printf("  notq %%rcx\n");
-                printf("  decq %%rcx\n");
-                printf("  movq %%rcx, %%rax\n");
-                printf("  popq %%rcx\n");
-                printf("  popq %%rdi\n");
+                x86_xor_rr(&cg_obj->text, 1, X86_RAX, X86_RAX);
+                cg_mov_ri(8, X86_RCX, -1);
+                x86_repne_prefix(&cg_obj->text);
+                x86_not_r(&cg_obj->text, 8, X86_RCX);
+                x86_dec_r(&cg_obj->text, 8, X86_RCX);
+                cg_mov_rr(8, X86_RAX, X86_RCX);
+                cg_pop(X86_RCX);
+                cg_pop(X86_RDI);
 
                 free_reg(str_r);
 
                 int r = alloc_reg();
-                printf("  movq %%rax, %s\n", reg64[r]);
+                cg_mov_rr(8, reg64_idx[r], X86_RAX);
                 return r;
             }
         }
@@ -1182,30 +1907,30 @@ static int gen_funcall(Node *node, int hidden_ret_reg) {
                 int r = gen(s1);
                 int r2 = gen(s2);
                 int cl = ++rcc_label_count;
-                printf("  pushq %%rdi\n");
-                printf("  pushq %%rsi\n");
+                cg_push(X86_RDI);
+                cg_push(X86_RSI);
                 printf("  movq %s, %%rdi\n", reg64[r]);
                 printf("  movq %s, %%rsi\n", reg64[r2]);
                 printf(".L.strcmp_loop.%d:\n", cl);
-                printf("  movb (%%rdi), %%al\n");
-                printf("  cmpb (%%rsi), %%al\n");
+                x86_mov_rm(&cg_obj->text, 1, X86_RAX, x86_mem(X86_RDI, 0));
+                x86_cmp_rm(&cg_obj->text, 1, X86_RAX, x86_mem(X86_RSI, 0));
                 printf("  jne .L.strcmp_diff.%d\n", cl);
-                printf("  testb %%al, %%al\n");
+                x86_test_rr(&cg_obj->text, 1, X86_RAX, X86_RAX);
                 printf("  jz .L.strcmp_eq.%d\n", cl);
-                printf("  incq %%rdi\n");
-                printf("  incq %%rsi\n");
+                x86_inc_r(&cg_obj->text, 8, X86_RDI);
+                x86_inc_r(&cg_obj->text, 8, X86_RSI);
                 printf("  jmp .L.strcmp_loop.%d\n", cl);
                 printf(".L.strcmp_diff.%d:\n", cl);
-                printf("  movzbl %%al, %%eax\n");
-                printf("  movzbl (%%rsi), %%ecx\n");
-                printf("  subl %%ecx, %%eax\n");
+                cg_movzx(4, 1, X86_RAX, X86_RAX);
+                x86_movzx_rm(&cg_obj->text, 4, 1, X86_RCX, x86_mem(X86_RSI, 0));
+                x86_sub_rr(&cg_obj->text, 4, X86_RAX, X86_RCX);
                 printf("  jmp .L.strcmp_end.%d\n", cl);
                 printf(".L.strcmp_eq.%d:\n", cl);
-                printf("  xorl %%eax, %%eax\n");
+                x86_xor_rr(&cg_obj->text, 4, X86_RAX, X86_RAX);
                 printf(".L.strcmp_end.%d:\n", cl);
                 printf(".L.strcmp_end.%d:\n", cl);
-                printf("  popq %%rsi\n");
-                printf("  popq %%rdi\n");
+                cg_pop(X86_RSI);
+                cg_pop(X86_RDI);
                 free_reg(r);
                 free_reg(r2);
                 int ret = alloc_reg();
@@ -1221,29 +1946,29 @@ static int gen_funcall(Node *node, int hidden_ret_reg) {
                 int sr = gen(s);
                 int cr = gen(c);
                 int cl = ++rcc_label_count;
-                printf("  pushq %%rdi\n");
-                printf("  pushq %%rcx\n");
+                cg_push(X86_RDI);
+                cg_push(X86_RCX);
                 printf("  movq %s, %%rdi\n", reg64[sr]);
                 printf("  movzbl %s, %%eax\n", reg8[cr]);
                 printf(".L.strchr_loop.%d:\n", cl);
-                printf("  cmpb %%al, (%%rdi)\n");
+                x86_cmp_mr(&cg_obj->text, 1, x86_mem(X86_RDI, 0), X86_RAX);
                 printf("  je .L.strchr_found.%d\n", cl);
                 printf("  cmpb $0, (%%rdi)\n");
                 printf("  je .L.strchr_null.%d\n", cl);
-                printf("  incq %%rdi\n");
+                x86_inc_r(&cg_obj->text, 8, X86_RDI);
                 printf("  jmp .L.strchr_loop.%d\n", cl);
                 printf(".L.strchr_found.%d:\n", cl);
-                printf("  movq %%rdi, %%rax\n");
+                cg_mov_rr(8, X86_RAX, X86_RDI);
                 printf("  jmp .L.strchr_end.%d\n", cl);
                 printf(".L.strchr_null.%d:\n", cl);
-                printf("  xorl %%eax, %%eax\n");
+                x86_xor_rr(&cg_obj->text, 4, X86_RAX, X86_RAX);
                 printf(".L.strchr_end.%d:\n", cl);
-                printf("  popq %%rcx\n");
-                printf("  popq %%rdi\n");
+                cg_pop(X86_RCX);
+                cg_pop(X86_RDI);
                 free_reg(sr);
                 free_reg(cr);
                 int ret = alloc_reg();
-                printf("  movq %%rax, %s\n", reg64[ret]);
+                cg_mov_rr(8, reg64_idx[ret], X86_RAX);
                 return ret;
             }
         }
@@ -1431,7 +2156,7 @@ static int gen_funcall(Node *node, int hidden_ret_reg) {
                 int tmp_slot = current_fn_stack_size + fn_struct_ret_off;
                 addr = alloc_reg();
                 emit_mov_imm64("x16", (uint64_t)tmp_slot);
-                printf("  sub %s, %s, x16\n", reg64[addr], FRAME_PTR);
+                secbuf_emit32le(&cg_obj->text, arm64_sub_reg(1, arm64_reg_idx(reg64[addr]), arm64_reg_idx(FRAME_PTR), 16, 0, 0));
                 // Zero out the slot (handles up to 16 bytes; larger structs need a loop)
                 for (int zb = 0; zb < alloc; zb += 16)
                     printf("  stp xzr, xzr, [%s, #%d]\n", reg64[addr], zb);
@@ -1440,9 +2165,9 @@ static int gen_funcall(Node *node, int hidden_ret_reg) {
                 if (val >= 0) {
                     int vsz = argv[i]->ty->size < 8 ? argv[i]->ty->size : 8;
                     if (vsz == 4)
-                        printf("  str %s, [%s]\n", reg32[val], reg64[addr]);
+                        secbuf_emit32le(&cg_obj->text, arm64_str_uoff(3, arm64_reg_idx(reg32[val]), arm64_reg_idx(reg64[addr]), 0));
                     else
-                        printf("  str %s, [%s]\n", reg64[val], reg64[addr]);
+                        secbuf_emit32le(&cg_obj->text, arm64_str_uoff(3, arm64_reg_idx(reg64[val]), arm64_reg_idx(reg64[addr]), 0));
                     free_reg(val);
                 }
             }
@@ -1462,7 +2187,7 @@ static int gen_funcall(Node *node, int hidden_ret_reg) {
     if (sv_count > 0 || stack_args > 0) {
         int total = (sv_count + stack_args) * 8;
         total = (total + 15) & ~15;
-        printf("  sub %s, %s, #%d\n", STACK_REG, STACK_REG, total);
+        secbuf_emit32le(&cg_obj->text, arm64_sub_imm(1, arm64_reg_idx(STACK_REG), arm64_reg_idx(STACK_REG), total, 0))
     }
 
     // Save caller-saved regs ABOVE stack args area
@@ -1498,19 +2223,18 @@ static int gen_funcall(Node *node, int hidden_ret_reg) {
                 fn_struct_ret_total = fn_struct_ret_off;
             temp_ret_slot = current_fn_stack_size + fn_struct_ret_off;
             if (temp_ret_slot <= 4095)
-                printf("  add %s, %s, #%d\n", reg64[temp_ret_reg], FRAME_PTR, -temp_ret_slot);
-            else {
-                int v = temp_ret_slot;
-                printf("  mov x16, #%d\n", v & 0xffff);
-                v >>= 16;
-                int s = 16;
-                while (v) {
-                    printf("  movk x16, #%d, lsl #%d\n", v & 0xffff, s);
-                    v >>= 16;
-                    s += 16;
+                secbuf_emit32le(&cg_obj->text, arm64_add_imm(1, arm64_reg_idx(reg64[temp_ret_reg]), arm64_reg_idx(FRAME_PTR), -temp_ret_slot, 0)) else {
+                    int v = temp_ret_slot;
+                    secbuf_emit32le(&cg_obj->text, arm64_movz(1, 16, v & 0xffff, 0))
+                        v >>= 16;
+                    int s = 16;
+                    while (v) {
+                        secbuf_emit32le(&cg_obj->text, arm64_movk(1, 16, v & 0xffff, s))
+                            v >>= 16;
+                        s += 16;
+                    }
+                    secbuf_emit32le(&cg_obj->text, arm64_sub_reg(1, arm64_reg_idx(reg64[temp_ret_reg]), arm64_reg_idx(FRAME_PTR), 16, 0, 0));
                 }
-                printf("  sub %s, %s, x16\n", reg64[temp_ret_reg], FRAME_PTR);
-            }
             hidden_ret_reg = temp_ret_reg;
         }
         printf("  mov x8, %s\n", reg64[hidden_ret_reg]);
@@ -1531,26 +2255,26 @@ static int gen_funcall(Node *node, int hidden_ret_reg) {
                 // Unnamed variadic long double: pass as IEEE 754 quad (128-bit) for ABI
                 int cl = ++rcc_label_count;
                 char *vr = reg64[arg_regs[i]];
-                printf("  cmp %s, #0\n", vr);
+                secbuf_emit32le(&cg_obj->text, arm64_subs_imm(1, 31, arm64_reg_idx(vr), 0, 0));
                 printf("  b.eq .L.quad_z.%d\n", cl);
                 printf("  ubfx x17, %s, #52, #11\n", vr);
-                printf("  mov x16, #15360\n");
-                printf("  add x17, x17, x16\n");
+                secbuf_emit32le(&cg_obj->text, arm64_movz(1, 16, 15360, 0));
+                secbuf_emit32le(&cg_obj->text, arm64_add_reg(1, 17, 17, 16, 0, 0));
                 printf("  lsl x16, %s, #12\n", vr);
-                printf("  lsr x16, x16, #12\n");
-                printf("  and x1, x16, #0xF\n");
-                printf("  lsl x1, x1, #60\n");
-                printf("  lsr x2, x16, #4\n");
-                printf("  lsl x17, x17, #48\n");
-                printf("  orr x2, x2, x17\n");
+                secbuf_emit32le(&cg_obj->text, arm64_lsr_imm(1, 16, 16, 12));
+                secbuf_emit32le(&cg_obj->text, arm64_and_imm(1, 1, 16, 0xF));
+                secbuf_emit32le(&cg_obj->text, arm64_lsl_imm(1, 1, 1, 60));
+                secbuf_emit32le(&cg_obj->text, arm64_lsr_imm(1, 2, 16, 4));
+                secbuf_emit32le(&cg_obj->text, arm64_lsl_imm(1, 17, 17, 48));
+                cg_emit_arm64_insn(arm64_orr_reg(1, 2, 2, 17, ARM64_LSL, 0));
                 printf("  asr x17, %s, #63\n", vr);
-                printf("  and x17, x17, #1\n");
-                printf("  lsl x17, x17, #63\n");
-                printf("  orr x2, x2, x17\n");
+                secbuf_emit32le(&cg_obj->text, arm64_and_imm(1, 17, 17, 1));
+                secbuf_emit32le(&cg_obj->text, arm64_lsl_imm(1, 17, 17, 63));
+                cg_emit_arm64_insn(arm64_orr_reg(1, 2, 2, 17, ARM64_LSL, 0));
                 printf("  b .L.quad_d.%d\n", cl);
                 printf(".L.quad_z.%d:\n", cl);
-                printf("  mov x1, #0\n");
-                printf("  mov x2, #0\n");
+                secbuf_emit32le(&cg_obj->text, arm64_movz(1, 1, 0, 0));
+                secbuf_emit32le(&cg_obj->text, arm64_movz(1, 2, 0, 0));
                 printf(".L.quad_d.%d:\n", cl);
                 printf("  ins v%d.d[0], x1\n", arg_fp_idx[i]);
                 printf("  ins v%d.d[1], x2\n", arg_fp_idx[i]);
@@ -1583,7 +2307,7 @@ static int gen_funcall(Node *node, int hidden_ret_reg) {
             if (arg_sizes[i] == 4)
                 printf("  ldr w16, [%s]\n  mov %s, x16\n", reg64[arg_regs[i]], argreg64[arg_gp_idx[i]]);
             else
-                printf("  ldr %s, [%s]\n", argreg64[arg_gp_idx[i]], reg64[arg_regs[i]]);
+                secbuf_emit32le(&cg_obj->text, arm64_ldr_uoff(3, arm64_reg_idx(argreg64[arg_gp_idx[i]]), arm64_reg_idx(reg64[arg_regs[i]]), 0));
             free_reg(arg_regs[i]);
             continue;
         }
@@ -1604,20 +2328,20 @@ static int gen_funcall(Node *node, int hidden_ret_reg) {
                 }
             }
             if (arg_gp_idx[i] >= 0)
-                printf("  mov %s, %s\n", argreg64[arg_gp_idx[i]], reg64[arg_regs[i]]);
+                cg_mov_rr_str(reg64[arg_regs[i]], argreg64[arg_gp_idx[i]]);
         } else if (arg_is_float[i] && arg_gp_idx[i] >= 0) {
             // Variadic: float value (double bit pattern in GP reg) to GP arg reg
-            printf("  mov %s, %s\n", argreg64[arg_gp_idx[i]], reg64[arg_regs[i]]);
+            cg_mov_rr_str(reg64[arg_regs[i]], argreg64[arg_gp_idx[i]]);
         } else if (arg_sizes[i] == 1 || arg_sizes[i] == 2) {
             // For small types, use 64-bit move (caller extends)
-            printf("  mov %s, %s\n", argreg64[arg_gp_idx[i]], reg64[arg_regs[i]]);
+            cg_mov_rr_str(reg64[arg_regs[i]], argreg64[arg_gp_idx[i]]);
         } else if (arg_sizes[i] == 4) {
             if (argv[i]->ty->is_unsigned)
-                printf("  mov %s, %s\n", argreg32[arg_gp_idx[i]], reg32[arg_regs[i]]);
+                cg_mov_rr_str(reg32[arg_regs[i]], argreg32[arg_gp_idx[i]]);
             else
-                printf("  mov %s, %s\n", argreg64[arg_gp_idx[i]], reg64[arg_regs[i]]);
+                cg_mov_rr_str(reg64[arg_regs[i]], argreg64[arg_gp_idx[i]]);
         } else {
-            printf("  mov %s, %s\n", argreg64[arg_gp_idx[i]], reg64[arg_regs[i]]);
+            cg_mov_rr_str(reg64[arg_regs[i]], argreg64[arg_gp_idx[i]]);
         }
         free_reg(arg_regs[i]);
     }
@@ -1651,25 +2375,24 @@ static int gen_funcall(Node *node, int hidden_ret_reg) {
     if (sv_count > 0 || stack_args > 0) {
         int total = (sv_count + stack_args) * 8;
         total = (total + 15) & ~15;
-        printf("  add %s, %s, #%d\n", STACK_REG, STACK_REG, total);
+        secbuf_emit32le(&cg_obj->text, arm64_add_imm(1, arm64_reg_idx(STACK_REG), arm64_reg_idx(STACK_REG), total, 0))
     }
 
     if (has_hidden_retbuf) {
         if (temp_ret_reg != -1) {
             if (temp_ret_slot <= 4095)
-                printf("  add %s, %s, #%d\n", reg64[temp_ret_reg], FRAME_PTR, -temp_ret_slot);
-            else {
-                int v = temp_ret_slot;
-                printf("  mov x16, #%d\n", v & 0xffff);
-                v >>= 16;
-                int s = 16;
-                while (v) {
-                    printf("  movk x16, #%d, lsl #%d\n", v & 0xffff, s);
-                    v >>= 16;
-                    s += 16;
+                secbuf_emit32le(&cg_obj->text, arm64_add_imm(1, arm64_reg_idx(reg64[temp_ret_reg]), arm64_reg_idx(FRAME_PTR), -temp_ret_slot, 0)) else {
+                    int v = temp_ret_slot;
+                    secbuf_emit32le(&cg_obj->text, arm64_movz(1, 16, v & 0xffff, 0))
+                        v >>= 16;
+                    int s = 16;
+                    while (v) {
+                        secbuf_emit32le(&cg_obj->text, arm64_movk(1, 16, v & 0xffff, s))
+                            v >>= 16;
+                        s += 16;
+                    }
+                    secbuf_emit32le(&cg_obj->text, arm64_sub_reg(1, arm64_reg_idx(reg64[temp_ret_reg]), arm64_reg_idx(FRAME_PTR), 16, 0, 0));
                 }
-                printf("  sub %s, %s, x16\n", reg64[temp_ret_reg], FRAME_PTR);
-            }
         }
         return temp_ret_reg != -1 ? temp_ret_reg : hidden_ret_reg;
     }
@@ -1677,8 +2400,8 @@ static int gen_funcall(Node *node, int hidden_ret_reg) {
     int r = alloc_reg();
     if (node->ty && is_flonum(node->ty)) {
         if (node->ty->kind == TY_FLOAT)
-            printf("  fcvt d0, s0\n");
-        printf("  fmov %s, d0\n", reg64[r]);
+            cg_emit_arm64_insn(arm64_fcvt(0, 0, 0));
+        secbuf_emit32le(&cg_obj->text, arm64_fmov_i2f(1, arm64_reg_idx(reg64[r]), 0));
     } else {
         printf("  mov %s, x0\n", reg64[r]);
     }
@@ -1713,7 +2436,7 @@ static int gen_funcall(Node *node, int hidden_ret_reg) {
     }
 
     if (stack_reserve > 0)
-        printf("  subq $%d, %%rsp\n", stack_reserve);
+        cg_sub_ri(8, X86_RSP, stack_reserve);
 
     for (int i = nargs - 1; i >= reg_nargs; i--) {
         int r = gen(argv[i]);
@@ -1721,9 +2444,9 @@ static int gen_funcall(Node *node, int hidden_ret_reg) {
             printf("  movq %s, %d(%%rsp)\n", reg64[r], shadow_space + (i - reg_nargs) * 8);
         } else {
             if (argv[i]->ty->size == 1)
-                printf("  movzbl %s, %s\n", reg8[r], reg32[r]);
+                cg_movzx(4, 1, x86_reg_idx(reg32[r]), x86_reg_idx(reg8[r]));
             else if (argv[i]->ty->size == 4)
-                printf("  mov %s, %s\n", reg32[r], reg32[r]);
+                cg_mov_rr_str(reg32[r], reg32[r]);
             printf("  movq %s, %d(%%rsp)\n", reg64[r], shadow_space + (i - reg_nargs) * 8);
         }
         free_reg(r);
@@ -1742,8 +2465,7 @@ static int gen_funcall(Node *node, int hidden_ret_reg) {
                     fn_struct_ret_total = fn_struct_ret_off;
                 int tmp_slot = current_fn_stack_size + fn_struct_ret_off;
                 addr = alloc_reg();
-                printf("  lea -%d(%%rbp), %s\n", tmp_slot, reg64[addr]);
-                int val = gen(argv[i]);
+                cg_lea_rm(8, x86_reg_idx(reg64[addr]), tmp_slot) int val = gen(argv[i]);
                 printf("  mov %s, (%s)\n", reg(val, argv[i]->ty->size), reg64[addr]);
                 free_reg(val);
             }
@@ -1762,7 +2484,7 @@ static int gen_funcall(Node *node, int hidden_ret_reg) {
             reg_arg_mask |= (1 << arg_regs[i]);
 
     if (stack_reserve > 0)
-        printf("  subq $%d, %%rsp\n", stack_reserve);
+        cg_sub_ri(8, X86_RSP, stack_reserve);
 
     for (int i = nargs - 1; i >= 0; i--) {
         if (arg_stack_idx[i] < 0)
@@ -1815,10 +2537,10 @@ static int gen_funcall(Node *node, int hidden_ret_reg) {
             if (fn_struct_ret_off > fn_struct_ret_total)
                 fn_struct_ret_total = fn_struct_ret_off;
             temp_ret_slot = current_fn_stack_size + fn_struct_ret_off;
-            printf("  lea -%d(%%rbp), %s\n", temp_ret_slot, reg64[temp_ret_reg]);
-            hidden_ret_reg = temp_ret_reg;
+            cg_lea_rm(8, x86_reg_idx(reg64[temp_ret_reg]), temp_ret_slot)
+                hidden_ret_reg = temp_ret_reg;
         }
-        printf("  mov %s, %s\n", reg64[hidden_ret_reg], argreg64[0]);
+        cg_mov_rr_str(argreg64[0], reg64[hidden_ret_reg]);
     }
 
 #ifdef _WIN32
@@ -1826,17 +2548,17 @@ static int gen_funcall(Node *node, int hidden_ret_reg) {
         int argi = i + (has_hidden_retbuf ? 1 : 0);
         if (arg_is_float[i]) {
             printf("  movq %s, %s\n", reg64[arg_regs[i]], argxmm[argi]);
-            printf("  mov %s, %s\n", reg64[arg_regs[i]], argreg64[argi]);
+            cg_mov_rr_str(argreg64[argi], reg64[arg_regs[i]]);
         } else if (arg_sizes[i] == 1) {
             if (argv[i]->ty && !argv[i]->ty->is_unsigned)
-                printf("  movsbl %s, %s\n", reg8[arg_regs[i]], argreg32[argi]);
+                cg_movsx(4, 1, x86_reg_idx(argreg32[argi]), x86_reg_idx(reg8[arg_regs[i]]));
             else
-                printf("  movzbl %s, %s\n", reg8[arg_regs[i]], argreg32[argi]);
+                cg_movzx(4, 1, x86_reg_idx(argreg32[argi]), x86_reg_idx(reg8[arg_regs[i]]));
         } else if (arg_sizes[i] == 2) {
             if (argv[i]->ty && !argv[i]->ty->is_unsigned)
-                printf("  movswl %s, %s\n", reg16[arg_regs[i]], argreg32[argi]);
+                cg_movsx(4, 2, x86_reg_idx(argreg32[argi]), x86_reg_idx(reg16[arg_regs[i]]));
             else
-                printf("  movzwl %s, %s\n", reg16[arg_regs[i]], argreg32[argi]);
+                cg_movzx(4, 2, x86_reg_idx(argreg32[argi]), x86_reg_idx(reg16[arg_regs[i]]));
         } else if (arg_sizes[i] == 4) {
             if (argv[i]->ty->is_unsigned)
                 printf("  mov %s, %s\n", reg(arg_regs[i], 4), argreg32[argi]);
@@ -1862,14 +2584,14 @@ static int gen_funcall(Node *node, int hidden_ret_reg) {
                 printf("  movq %s, %s\n", reg64[arg_regs[i]], argxmm[arg_fp_idx[i]]);
             } else if (arg_sizes[i] == 1) {
                 if (argv[i]->ty && !argv[i]->ty->is_unsigned)
-                    printf("  movsbl %s, %s\n", reg8[arg_regs[i]], argreg32[arg_gp_idx[i]]);
+                    cg_movsx(4, 1, x86_reg_idx(argreg32[arg_gp_idx[i]]), x86_reg_idx(reg8[arg_regs[i]]));
                 else
-                    printf("  movzbl %s, %s\n", reg8[arg_regs[i]], argreg32[arg_gp_idx[i]]);
+                    cg_movzx(4, 1, x86_reg_idx(argreg32[arg_gp_idx[i]]), x86_reg_idx(reg8[arg_regs[i]]));
             } else if (arg_sizes[i] == 2) {
                 if (argv[i]->ty && !argv[i]->ty->is_unsigned)
-                    printf("  movswl %s, %s\n", reg16[arg_regs[i]], argreg32[arg_gp_idx[i]]);
+                    cg_movsx(4, 2, x86_reg_idx(argreg32[arg_gp_idx[i]]), x86_reg_idx(reg16[arg_regs[i]]));
                 else
-                    printf("  movzwl %s, %s\n", reg16[arg_regs[i]], argreg32[arg_gp_idx[i]]);
+                    cg_movzx(4, 2, x86_reg_idx(argreg32[arg_gp_idx[i]]), x86_reg_idx(reg16[arg_regs[i]]));
             } else if (arg_sizes[i] == 4) {
                 if (argv[i]->ty->is_unsigned)
                     printf("  mov %s, %s\n", reg(arg_regs[i], 4), argreg32[arg_gp_idx[i]]);
@@ -1898,7 +2620,7 @@ static int gen_funcall(Node *node, int hidden_ret_reg) {
     }
 
     if (stack_reserve > 0)
-        printf("  addq $%d, %%rsp\n", stack_reserve);
+        cg_add_ri(8, X86_RSP, stack_reserve);
 
     if ((saved_scratch & 2) && hidden_ret_reg != 1) {
         used_regs |= 2;
@@ -1913,7 +2635,7 @@ static int gen_funcall(Node *node, int hidden_ret_reg) {
         if (temp_ret_reg != -1) {
             // temp_ret_reg (r10/r11) may have been clobbered by the callee; reload
             // the frame-relative address — it is always valid.
-            printf("  lea -%d(%%rbp), %s\n", temp_ret_slot, reg64[temp_ret_reg]);
+            cg_lea_rm(8, x86_reg_idx(reg64[temp_ret_reg]), temp_ret_slot)
         }
         return temp_ret_reg != -1 ? temp_ret_reg : hidden_ret_reg;
     }
@@ -1922,11 +2644,11 @@ static int gen_funcall(Node *node, int hidden_ret_reg) {
     if (node->ty && is_flonum(node->ty)) {
 #ifndef ARCH_ARM64
         if (node->ty->kind == TY_FLOAT)
-            printf("  cvtss2sd %%xmm0, %%xmm0\n");
+            x86_cvtss2sd(&cg_obj->text, X86_XMM0, X86_XMM0);
 #endif
         printf("  movq %%xmm0, %s\n", reg64[r]);
     } else {
-        printf("  movq %%rax, %s\n", reg64[r]);
+        cg_mov_rr(8, reg64_idx[r], X86_RAX);
     }
     return r;
 #endif
@@ -2034,12 +2756,12 @@ static char *reg(int r, int size) {
 #ifdef ARCH_ARM64
 // Emit mov reg, #imm64 handling any size (movz + movk)
 static void emit_mov_imm64(const char *reg, uint64_t val) {
-    printf("  mov %s, #%llu\n", reg, val & 0xffffULL);
-    val >>= 16;
+    cg_emit_arm64_insn(arm64_movz(1, arm64_reg_idx(reg), (uint16_t)(val & 0xffffULL), 0))
+        val >>= 16;
     int shift = 16;
     while (val) {
-        printf("  movk %s, #%llu, lsl #%d\n", reg, val & 0xffffULL, shift);
-        val >>= 16;
+        cg_emit_arm64_insn(arm64_movk(1, arm64_reg_idx(reg), (uint16_t)(val & 0xffffULL), shift))
+            val >>= 16;
         shift += 16;
     }
 }
@@ -2048,13 +2770,13 @@ static void emit_mov_imm64(const char *reg, uint64_t val) {
 static void emit_mov_imm(const char *reg, int imm) {
     bool is_w = (reg[0] == 'w');
     uint64_t val = is_w ? (uint64_t)(uint32_t)imm : (uint64_t)(int64_t)(int32_t)imm;
-    printf("  mov %s, #%llu\n", reg, val & 0xffffULL);
-    val >>= 16;
+    cg_emit_arm64_insn(arm64_movz(1, arm64_reg_idx(reg), (uint16_t)(val & 0xffffULL), 0))
+        val >>= 16;
     int shift = 16;
     int max_shift = is_w ? 16 : 48;
     while (val && shift <= max_shift) {
-        printf("  movk %s, #%llu, lsl #%d\n", reg, val & 0xffffULL, shift);
-        val >>= 16;
+        cg_emit_arm64_insn(arm64_movk(1, arm64_reg_idx(reg), (uint16_t)(val & 0xffffULL), shift))
+            val >>= 16;
         shift += 16;
     }
 }
@@ -2064,8 +2786,8 @@ static void emit_mov_imm(const char *reg, int imm) {
 // Darwin: adrp reg, label@PAGE / add reg, reg, label@PAGEOFF
 static void emit_adrp_add(const char *reg, const char *label) {
 #if defined(__APPLE__)
-    printf("  adrp %s, %s@GOTPAGE\n", reg, label);
-    printf("  ldr %s, [%s, %s@GOTPAGEOFF]\n", reg, reg, label);
+    printf("  adrp reg, label@GOTPAGE\n");
+    printf("  ldr reg, [reg, label@GOTPAGEOFF]\n");
 #else
     printf("  adrp %s, %s\n", reg, label);
     printf("  add %s, %s, :lo12:%s\n", reg, reg, label);
@@ -2076,8 +2798,8 @@ static void emit_adrp_add(const char *reg, const char *label) {
 // Required on Linux ARM64; Darwin already uses GOT in emit_adrp_add.
 static void emit_adrp_got(const char *reg, const char *label) {
 #if defined(__APPLE__)
-    printf("  adrp %s, %s@GOTPAGE\n", reg, label);
-    printf("  ldr %s, [%s, %s@GOTPAGEOFF]\n", reg, reg, label);
+    printf("  adrp reg, label@GOTPAGE\n");
+    printf("  ldr reg, [reg, label@GOTPAGEOFF]\n");
 #else
     printf("  adrp %s, :got:%s\n", reg, label);
     printf("  ldr %s, [%s, :got_lo12:%s]\n", reg, reg, label);
@@ -2092,23 +2814,23 @@ static int emit_stack_addr(int offset) {
 #ifdef ARCH_ARM64
     int ta = alloc_reg();
     if (offset <= 4095)
-        printf("  sub %s, %s, #%d\n", reg64[ta], FRAME_PTR, offset);
+        secbuf_emit32le(&cg_obj->text, arm64_sub_imm(1, arm64_reg_idx(reg64[ta]), arm64_reg_idx(FRAME_PTR), offset, 0))
     else {
         int v = offset;
-        printf("  mov %s, #%d\n", reg64[ta], v & 0xffff);
+        cg_emit_arm64_insn(arm64_movz(1, arm64_reg_idx(reg64[ta]), v & 0xffff, 0))
         v >>= 16;
         int s = 16;
         while (v) {
-            printf("  movk %s, #%d, lsl #%d\n", reg64[ta], v & 0xffff, s);
+            cg_emit_arm64_insn(arm64_movk(1, arm64_reg_idx(reg64[ta]), v & 0xffff, s))
             v >>= 16;
             s += 16;
         }
-        printf("  sub %s, %s, %s\n", reg64[ta], FRAME_PTR, reg64[ta]);
+        secbuf_emit32le(&cg_obj->text, arm64_sub_reg(1, arm64_reg_idx(reg64[ta]), arm64_reg_idx(FRAME_PTR), arm64_reg_idx(reg64[ta]), 0, 0));
     }
     return ta;
 #else
     int ta = alloc_reg();
-    printf("  lea -%d(%%rbp), %s\n", offset, reg64[ta]);
+    cg_lea_rm(8, x86_reg_idx(reg64[ta]), offset)
     return ta;
 #endif
 }
@@ -2156,43 +2878,43 @@ static void sign_extend_to(int r, int from_size, int to_size) {
     if (to_size == 8) {
         if (from_size == 4)
 #ifdef ARCH_ARM64
-            printf("  sxtw %s, %s\n", reg64[r], reg32[r]);
+            secbuf_emit32le(&cg_obj->text, arm64_sxtw(arm64_reg_idx(reg64[r]), arm64_reg_idx(reg32[r])));
 #else
-            printf("  movslq %s, %s\n", reg32[r], reg64[r]);
+            cg_movsx(8, 4, x86_reg_idx(reg64[r]), x86_reg_idx(reg32[r]));
 #endif
         else if (from_size == 2)
 #ifdef ARCH_ARM64
-            printf("  sxth %s, %s\n", reg64[r], reg32[r]);
+            secbuf_emit32le(&cg_obj->text, arm64_sxth(1, arm64_reg_idx(reg64[r]), arm64_reg_idx(reg32[r])));
 #else
             printf("  movswq %s, %s\n", reg16[r], reg64[r]);
 #endif
         else if (from_size == 1)
 #ifdef ARCH_ARM64
-            printf("  sxtb %s, %s\n", reg64[r], reg32[r]);
+            secbuf_emit32le(&cg_obj->text, arm64_sxtb(1, arm64_reg_idx(reg64[r]), arm64_reg_idx(reg32[r])));
 #else
             printf("  movsbq %s, %s\n", reg8[r], reg64[r]);
 #endif
         else
 #ifdef ARCH_ARM64
-            printf("  sxtw %s, %s\n", reg64[r], reg32[r]);
+            secbuf_emit32le(&cg_obj->text, arm64_sxtw(arm64_reg_idx(reg64[r]), arm64_reg_idx(reg32[r])));
 #else
-            printf("  movslq %s, %s\n", reg32[r], reg64[r]);
+            cg_movsx(8, 4, x86_reg_idx(reg64[r]), x86_reg_idx(reg32[r]));
 #endif
     } else if (to_size == 4) {
         if (from_size == 2)
 #ifdef ARCH_ARM64
-            printf("  sxth %s, %s\n", reg32[r], reg32[r]);
+            secbuf_emit32le(&cg_obj->text, arm64_sxth(1, arm64_reg_idx(reg32[r]), arm64_reg_idx(reg32[r])));
 #else
-            printf("  movswl %s, %s\n", reg16[r], reg32[r]);
+            cg_movsx(4, 2, x86_reg_idx(reg32[r]), x86_reg_idx(reg16[r]));
 #endif
         else if (from_size == 1)
 #ifdef ARCH_ARM64
-            printf("  sxtb %s, %s\n", reg32[r], reg32[r]);
+            secbuf_emit32le(&cg_obj->text, arm64_sxtb(1, arm64_reg_idx(reg32[r]), arm64_reg_idx(reg32[r])));
 #else
-            printf("  movsbl %s, %s\n", reg8[r], reg32[r]);
+            cg_movsx(4, 1, x86_reg_idx(reg32[r]), x86_reg_idx(reg8[r]));
 #endif
         else
-            printf("  mov %s, %s\n", reg32[r], reg32[r]);
+            cg_mov_rr_str(reg32[r], reg32[r]);
     }
 }
 
@@ -2201,36 +2923,36 @@ static void zero_extend_to(int r, int from_size, int to_size) {
         return;
     if (to_size == 8) {
         if (from_size == 4)
-            printf("  mov %s, %s\n", reg32[r], reg32[r]);
+            cg_mov_rr_str(reg32[r], reg32[r]);
         else if (from_size == 2)
 #ifdef ARCH_ARM64
-            printf("  uxth %s, %s\n", reg64[r], reg32[r]);
+            secbuf_emit32le(&cg_obj->text, arm64_uxth(arm64_reg_idx(reg64[r]), arm64_reg_idx(reg32[r])));
 #else
-            printf("  movzwl %s, %s\n", reg16[r], reg32[r]);
+            cg_movzx(4, 2, x86_reg_idx(reg32[r]), x86_reg_idx(reg16[r]));
 #endif
         else if (from_size == 1)
 #ifdef ARCH_ARM64
-            printf("  uxtb %s, %s\n", reg64[r], reg32[r]);
+            secbuf_emit32le(&cg_obj->text, arm64_uxtb(arm64_reg_idx(reg64[r]), arm64_reg_idx(reg32[r])));
 #else
-            printf("  movzbl %s, %s\n", reg8[r], reg32[r]);
+            cg_movzx(4, 1, x86_reg_idx(reg32[r]), x86_reg_idx(reg8[r]));
 #endif
         else
-            printf("  mov %s, %s\n", reg32[r], reg32[r]);
+            cg_mov_rr_str(reg32[r], reg32[r]);
     } else if (to_size == 4) {
         if (from_size == 2)
 #ifdef ARCH_ARM64
-            printf("  uxth %s, %s\n", reg32[r], reg32[r]);
+            secbuf_emit32le(&cg_obj->text, arm64_uxth(arm64_reg_idx(reg32[r]), arm64_reg_idx(reg32[r])));
 #else
-            printf("  movzwl %s, %s\n", reg16[r], reg32[r]);
+            cg_movzx(4, 2, x86_reg_idx(reg32[r]), x86_reg_idx(reg16[r]));
 #endif
         else if (from_size == 1)
 #ifdef ARCH_ARM64
-            printf("  uxtb %s, %s\n", reg32[r], reg32[r]);
+            secbuf_emit32le(&cg_obj->text, arm64_uxtb(arm64_reg_idx(reg32[r]), arm64_reg_idx(reg32[r])));
 #else
-            printf("  movzbl %s, %s\n", reg8[r], reg32[r]);
+            cg_movzx(4, 1, x86_reg_idx(reg32[r]), x86_reg_idx(reg8[r]));
 #endif
         else
-            printf("  mov %s, %s\n", reg32[r], reg32[r]);
+            cg_mov_rr_str(reg32[r], reg32[r]);
     }
 }
 
@@ -2275,26 +2997,25 @@ static void emit_store_offset(Type *ty, int r, const char *base, int offset) {
     // ARM64 unscaled offset range is -256..255; use temp register for larger
     if (abs_off > 255) {
         int ta = alloc_reg();
-        printf("  mov %s, #%d\n", reg64[ta], abs_off & 0xffff);
-        int v = abs_off >> 16;
+        cg_emit_arm64_insn(arm64_movz(1, arm64_reg_idx(reg64[ta]), abs_off & 0xffff, 0)) int v = abs_off >> 16;
         int s = 16;
         while (v) {
-            printf("  movk %s, #%d, lsl #%d\n", reg64[ta], v & 0xffff, s);
-            v >>= 16;
+            cg_emit_arm64_insn(arm64_movk(1, arm64_reg_idx(reg64[ta]), v & 0xffff, s))
+                v >>= 16;
             s += 16;
         }
         if (offset < 0)
-            printf("  sub %s, %s, %s\n", reg64[ta], base, reg64[ta]);
+            secbuf_emit32le(&cg_obj->text, arm64_sub_reg(1, arm64_reg_idx(reg64[ta]), arm64_reg_idx(base), arm64_reg_idx(reg64[ta]), 0, 0));
         else
-            printf("  add %s, %s, %s\n", reg64[ta], base, reg64[ta]);
+            secbuf_emit32le(&cg_obj->text, arm64_add_reg(1, arm64_reg_idx(reg64[ta]), arm64_reg_idx(base), arm64_reg_idx(reg64[ta]), 0, 0));
         if (sz == 1)
             printf("  strb %s, [%s]\n", reg(r, 4), reg64[ta]);
         else if (sz == 2)
             printf("  strh %s, [%s]\n", reg(r, 4), reg64[ta]);
         else if (sz == 4)
-            printf("  str %s, [%s]\n", reg(r, 4), reg64[ta]);
+            secbuf_emit32le(&cg_obj->text, arm64_str_uoff(3, arm64_reg_idx(reg(r), arm64_reg_idx(4), 0)), reg64[ta]);
         else
-            printf("  str %s, [%s]\n", reg(r, 8), reg64[ta]);
+            secbuf_emit32le(&cg_obj->text, arm64_str_uoff(3, arm64_reg_idx(reg(r), arm64_reg_idx(8), 0)), reg64[ta]);
         free_reg(ta);
     } else {
         if (sz == 1)
@@ -2333,7 +3054,7 @@ static void emit_load(Type *ty, int r, char *addr) {
             addr = "[x16]";
             ta = -1;
         } else {
-            printf("  mov %s, %s\n", reg64[ta], reg64[r]);
+            cg_mov_rr_str(reg64[r], reg64[ta]);
             addr = format("[%s]", reg64[ta]);
         }
     }
@@ -2341,27 +3062,26 @@ static void emit_load(Type *ty, int r, char *addr) {
     if (sscanf(addr, "[%31[^,], #%d]", base, &off) == 2 && off < -255) {
         int tr = alloc_reg();
         if (-off <= 4095)
-            printf("  sub %s, %s, #%d\n", reg64[tr], base, -off);
-        else {
-            int v = -off;
-            printf("  mov %s, #%d\n", reg64[tr], v & 0xffff);
-            v >>= 16;
-            int s = 16;
-            while (v) {
-                printf("  movk %s, #%d, lsl #%d\n", reg64[tr], v & 0xffff, s);
-                v >>= 16;
-                s += 16;
+            secbuf_emit32le(&cg_obj->text, arm64_sub_imm(1, arm64_reg_idx(reg64[tr]), arm64_reg_idx(base), -off, 0)) else {
+                int v = -off;
+                cg_emit_arm64_insn(arm64_movz(1, arm64_reg_idx(reg64[tr]), v & 0xffff, 0))
+                    v >>= 16;
+                int s = 16;
+                while (v) {
+                    cg_emit_arm64_insn(arm64_movk(1, arm64_reg_idx(reg64[tr]), v & 0xffff, s))
+                        v >>= 16;
+                    s += 16;
+                }
+                secbuf_emit32le(&cg_obj->text, arm64_sub_reg(1, arm64_reg_idx(reg64[tr]), arm64_reg_idx(base), arm64_reg_idx(reg64[tr]), 0, 0));
             }
-            printf("  sub %s, %s, %s\n", reg64[tr], base, reg64[tr]);
-        }
         if (ty->size == 1) {
             printf("  %s %s, [%s]\n", ty->is_unsigned ? "ldrb" : "ldrsb", reg(r, 4), reg64[tr]);
         } else if (ty->size == 2) {
             printf("  %s %s, [%s]\n", ty->is_unsigned ? "ldrh" : "ldrsh", reg(r, 4), reg64[tr]);
         } else if (ty->size == 4) {
-            printf("  ldr %s, [%s]\n", reg(r, 4), reg64[tr]);
+            secbuf_emit32le(&cg_obj->text, arm64_ldr_uoff(3, arm64_reg_idx(reg(r), arm64_reg_idx(4), 0)), reg64[tr]);
         } else {
-            printf("  ldr %s, [%s]\n", reg(r, 8), reg64[tr]);
+            secbuf_emit32le(&cg_obj->text, arm64_ldr_uoff(3, arm64_reg_idx(reg(r), arm64_reg_idx(8), 0)), reg64[tr]);
         }
         free_reg(tr);
         if (ta >= 0) free_reg(ta);
@@ -2722,21 +3442,20 @@ static int gen_addr(Node *node) {
             } else {
 #ifdef ARCH_ARM64
                 if (node->var->offset <= 4095)
-                    printf("  sub %s, %s, #%d\n", reg64[r], FRAME_PTR, node->var->offset);
-                else {
-                    int v = node->var->offset;
-                    printf("  mov %s, #%d\n", reg64[r], v & 0xffff);
-                    v >>= 16;
-                    int s = 16;
-                    while (v) {
-                        printf("  movk %s, #%d, lsl #%d\n", reg64[r], v & 0xffff, s);
-                        v >>= 16;
-                        s += 16;
+                    secbuf_emit32le(&cg_obj->text, arm64_sub_imm(1, arm64_reg_idx(reg64[r]), arm64_reg_idx(FRAME_PTR), node->var->offset, 0)) else {
+                        int v = node->var->offset;
+                        cg_emit_arm64_insn(arm64_movz(1, arm64_reg_idx(reg64[r]), v & 0xffff, 0))
+                            v >>= 16;
+                        int s = 16;
+                        while (v) {
+                            cg_emit_arm64_insn(arm64_movk(1, arm64_reg_idx(reg64[r]), v & 0xffff, s))
+                                v >>= 16;
+                            s += 16;
+                        }
+                        secbuf_emit32le(&cg_obj->text, arm64_sub_reg(1, arm64_reg_idx(reg64[r]), arm64_reg_idx(FRAME_PTR), arm64_reg_idx(reg64[r]), 0, 0));
                     }
-                    printf("  sub %s, %s, %s\n", reg64[r], FRAME_PTR, reg64[r]);
-                }
 #else
-                printf("  lea -%d(%%rbp), %s\n", node->var->offset, reg64[r]);
+                cg_lea_rm(8, x86_reg_idx(reg64[r]), node->var->offset)
 #endif
             }
         } else {
@@ -2767,20 +3486,19 @@ static int gen_addr(Node *node) {
         int r = gen_addr(node->lhs);
 #ifdef ARCH_ARM64
         if (node->member->offset > 0 && node->member->offset <= 4095)
-            printf("  add %s, %s, #%d\n", reg64[r], reg64[r], node->member->offset);
-        else if (node->member->offset > 0) {
-            int ti = alloc_reg();
-            printf("  mov %s, #%d\n", reg64[ti], node->member->offset);
-            printf("  add %s, %s, %s\n", reg64[r], reg64[r], reg64[ti]);
-            free_reg(ti);
-        } else if (node->member->offset < 0 && -node->member->offset <= 4095)
-            printf("  sub %s, %s, #%d\n", reg64[r], reg64[r], -node->member->offset);
-        else if (node->member->offset < 0) {
-            int ti = alloc_reg();
-            printf("  mov %s, #%d\n", reg64[ti], -node->member->offset);
-            printf("  sub %s, %s, %s\n", reg64[r], reg64[r], reg64[ti]);
-            free_reg(ti);
-        }
+            secbuf_emit32le(&cg_obj->text, arm64_add_imm(1, arm64_reg_idx(reg64[r]), arm64_reg_idx(reg64[r]), node->member->offset, 0)) else if (node->member->offset > 0) {
+                int ti = alloc_reg();
+                cg_emit_arm64_insn(arm64_movz(1, arm64_reg_idx(reg64[ti]), node->member->offset, 0))
+                    secbuf_emit32le(&cg_obj->text, arm64_add_reg(1, arm64_reg_idx(reg64[r]), arm64_reg_idx(reg64[r]), arm64_reg_idx(reg64[ti]), 0, 0));
+                free_reg(ti);
+            }
+        else if (node->member->offset < 0 && -node->member->offset <= 4095)
+            secbuf_emit32le(&cg_obj->text, arm64_sub_imm(1, arm64_reg_idx(reg64[r]), arm64_reg_idx(reg64[r]), -node->member->offset, 0)) else if (node->member->offset < 0) {
+                int ti = alloc_reg();
+                cg_emit_arm64_insn(arm64_movz(1, arm64_reg_idx(reg64[ti]), -node->member->offset, 0))
+                    secbuf_emit32le(&cg_obj->text, arm64_sub_reg(1, arm64_reg_idx(reg64[r]), arm64_reg_idx(reg64[r]), arm64_reg_idx(reg64[ti]), 0, 0));
+                free_reg(ti);
+            }
 #else
         printf("  add $%d, %s\n", node->member->offset, reg64[r]);
 #endif
@@ -2796,12 +3514,12 @@ static int gen_addr(Node *node) {
         printf("  b.eq .L.else.%d\n", c);
         free_reg(cond);
         int then_r = gen_addr(node->then);
-        printf("  mov %s, %s\n", reg64[r], reg64[then_r]);
+        cg_mov_rr_str(reg64[then_r], reg64[r]);
         free_reg(then_r);
         printf("  b .L.end.%d\n", c);
         printf(".L.else.%d:\n", c);
         int else_r = gen_addr(node->els);
-        printf("  mov %s, %s\n", reg64[r], reg64[else_r]);
+        cg_mov_rr_str(reg64[else_r], reg64[r]);
         free_reg(else_r);
         printf(".L.end.%d:\n", c);
 #else
@@ -2809,12 +3527,12 @@ static int gen_addr(Node *node) {
         printf("  je .L.else.%d\n", c);
         free_reg(cond);
         int then_r = gen_addr(node->then);
-        printf("  mov %s, %s\n", reg64[then_r], reg64[r]);
+        cg_mov_rr_str(reg64[r], reg64[then_r]);
         free_reg(then_r);
         printf("  jmp .L.end.%d\n", c);
         printf(".L.else.%d:\n", c);
         int else_r = gen_addr(node->els);
-        printf("  mov %s, %s\n", reg64[else_r], reg64[r]);
+        cg_mov_rr_str(reg64[r], reg64[else_r]);
         free_reg(else_r);
         printf(".L.end.%d:\n", c);
 #endif
@@ -2878,9 +3596,9 @@ static void gen_cond_branch_inv(Node *cond, char *label) {
             int r_lhs = gen(cond->lhs);
             int r_rhs = gen(cond->rhs);
 #ifdef ARCH_ARM64
-            printf("  fmov d0, %s\n", reg64[r_lhs]);
+            secbuf_emit32le(&cg_obj->text, arm64_fmov_f2i(1, 0, arm64_reg_idx(reg64[r_lhs])));
             printf("  fmov d1, %s\n", reg64[r_rhs]);
-            printf("  fcmp d0, d1\n");
+            cg_emit_arm64_insn(arm64_fcmp(1, 0, 1));
             if (cond->kind == ND_EQ)
                 printf("  b.ne %s\n  b.vs %s\n", label, label);
             else if (cond->kind == ND_NE) {
@@ -2893,9 +3611,9 @@ static void gen_cond_branch_inv(Node *cond, char *label) {
             else if (cond->kind == ND_LE)
                 printf("  b.hi %s\n", label);
 #else
-            printf("  movq %s, %%xmm0\n", reg64[r_lhs]);
+            printf("  movq %s, %%xmm0\n", reg64[r_lhs], X86_XMM0);
             printf("  movq %s, %%xmm1\n", reg64[r_rhs]);
-            printf("  ucomisd %%xmm1, %%xmm0\n");
+            x86_ucomisd(&cg_obj->text, X86_XMM0, X86_XMM1);
             if (cond->kind == ND_EQ)
                 printf("  jne %s\n  jp %s\n", label, label);
             else if (cond->kind == ND_NE) {
@@ -2991,18 +3709,18 @@ static int gen(Node *node) {
         uint64_t v = (uint64_t)(long long)node->val;
         // Use x register for 64-bit immediates, w for 32-bit (stops at lsl #16)
         if (op_size(node->ty) == 4) {
-            printf("  mov %s, #%llu\n", reg32[r], v & 0xffff);
-            v >>= 16;
+            cg_emit_arm64_insn(arm64_movz(1, arm64_reg_idx(reg32[r]), (uint16_t)(v & 0xffff), 0))
+                v >>= 16;
             if (v) {
                 printf("  movk %s, #%llu, lsl #16\n", reg32[r], v & 0xffff);
             }
         } else {
-            printf("  mov %s, #%llu\n", reg64[r], v & 0xffff);
-            v >>= 16;
+            cg_emit_arm64_insn(arm64_movz(1, arm64_reg_idx(reg64[r]), (uint16_t)(v & 0xffff), 0))
+                v >>= 16;
             int shift = 16;
             while (v) {
-                printf("  movk %s, #%llu, lsl #%d\n", reg64[r], v & 0xffff, shift);
-                v >>= 16;
+                cg_emit_arm64_insn(arm64_movk(1, arm64_reg_idx(reg64[r]), (uint16_t)(v & 0xffff), shift))
+                    v >>= 16;
                 shift += 16;
             }
         }
@@ -3010,7 +3728,7 @@ static int gen(Node *node) {
         if (node->val == (int32_t)node->val) {
             printf("  mov $%lld, %s\n", (long long)node->val, reg(r, op_size(node->ty)));
         } else {
-            printf("  movabs $%lld, %s\n", (long long)node->val, reg64[r]);
+            cg_mov_ri(8, x86_reg_idx(reg64[r]), (int64_t)(long long)node->val)
         }
 #endif
         return r;
@@ -3021,7 +3739,7 @@ static int gen(Node *node) {
 #ifdef ARCH_ARM64
         emit_adrp_add(reg64[r], format(".LF%d", id));
         printf("  ldr d0, [%s]\n", reg64[r]);
-        printf("  fmov %s, d0\n", reg64[r]);
+        secbuf_emit32le(&cg_obj->text, arm64_fmov_i2f(1, arm64_reg_idx(reg64[r]), 0));
 #else
         printf("  movsd .LF%d(%%rip), %%xmm0\n", id);
         printf("  movq %%xmm0, %s\n", reg64[r]);
@@ -3047,11 +3765,11 @@ static int gen(Node *node) {
                     emit_adrp_got(reg64[r], asm_sym_name(var_sym_label(node->var)));
                 else
                     emit_adrp_add(reg64[r], asm_sym_name(var_sym_label(node->var)));
-                printf("  ldr %s, [%s]\n", reg64[r], reg64[r]);
+                secbuf_emit32le(&cg_obj->text, arm64_ldr_uoff(3, arm64_reg_idx(reg64[r]), arm64_reg_idx(reg64[r]), 0));
 #else
                 if (var_needs_got(node->var)) {
                     printf("  mov %s@GOTPCREL(%%rip), %s\n", label, reg64[r]);
-                    printf("  mov (%s), %s\n", reg64[r], reg64[r]);
+                    x86_mov_rm(&cg_obj->text, 8, x86_reg_idx(reg64[r]), x86_mem(x86_reg_idx(reg64[r]), 0));
                 } else {
                     printf("  mov %s(%%rip), %s\n", label, reg64[r]);
                 }
@@ -3061,33 +3779,32 @@ static int gen(Node *node) {
             if (node->var->is_local)
 #ifdef ARCH_ARM64
                 if (node->var->offset <= 4095)
-                    printf("  sub %s, %s, #%d\n", reg64[r], FRAME_PTR, node->var->offset);
-                else {
-                    int v = node->var->offset;
-                    printf("  mov %s, #%d\n", reg64[r], v & 0xffff);
-                    v >>= 16;
-                    int s = 16;
-                    while (v) {
-                        printf("  movk %s, #%d, lsl #%d\n", reg64[r], v & 0xffff, s);
-                        v >>= 16;
-                        s += 16;
+                    secbuf_emit32le(&cg_obj->text, arm64_sub_imm(1, arm64_reg_idx(reg64[r]), arm64_reg_idx(FRAME_PTR), node->var->offset, 0)) else {
+                        int v = node->var->offset;
+                        cg_emit_arm64_insn(arm64_movz(1, arm64_reg_idx(reg64[r]), v & 0xffff, 0))
+                            v >>= 16;
+                        int s = 16;
+                        while (v) {
+                            cg_emit_arm64_insn(arm64_movk(1, arm64_reg_idx(reg64[r]), v & 0xffff, s))
+                                v >>= 16;
+                            s += 16;
+                        }
+                        secbuf_emit32le(&cg_obj->text, arm64_sub_reg(1, arm64_reg_idx(reg64[r]), arm64_reg_idx(FRAME_PTR), arm64_reg_idx(reg64[r]), 0, 0));
                     }
-                    printf("  sub %s, %s, %s\n", reg64[r], FRAME_PTR, reg64[r]);
-                }
 #else
-                printf("  lea -%d(%%rbp), %s\n", node->var->offset, reg64[r]);
+                cg_lea_rm(8, x86_reg_idx(reg64[r]), node->var->offset)
 #endif
-            else
+                else
 #ifdef ARCH_ARM64
-                if (var_needs_got(node->var))
-                emit_adrp_got(reg64[r], asm_sym_name(var_sym_label(node->var)));
-            else
-                emit_adrp_add(reg64[r], asm_sym_name(var_sym_label(node->var)));
+                    if (var_needs_got(node->var))
+                    emit_adrp_got(reg64[r], asm_sym_name(var_sym_label(node->var)));
+                else
+                    emit_adrp_add(reg64[r], asm_sym_name(var_sym_label(node->var)));
 #else
-                if (var_needs_got(node->var))
-                printf("  mov %s@GOTPCREL(%%rip), %s\n", label, reg64[r]);
+                    if (var_needs_got(node->var))
+                        printf("  mov %s@GOTPCREL(%%rip), %s\n", label, reg64[r]);
             else
-                printf("  lea %s(%%rip), %s\n", label, reg64[r]);
+                printf("  lea label(%%rip), reg64[r]\n");
 #endif
         } else if (!node->var->is_local && node->var->is_function) {
             if (node->var->is_weak) {
@@ -3106,7 +3823,7 @@ static int gen(Node *node) {
             if (var_needs_got(node->var))
                 printf("  mov %s@GOTPCREL(%%rip), %s\n", label, reg64[r]);
             else
-                printf("  lea %s(%%rip), %s\n", label, reg64[r]);
+                printf("  lea label(%%rip), reg64[r]\n");
 #endif
         } else if (is_flonum(node->var->ty)) {
             {
@@ -3114,10 +3831,10 @@ static int gen(Node *node) {
                     if (node->var->ty->size == 4) {
 #ifdef ARCH_ARM64
                         arm64_load_from_fp_minus(node->var->offset, "s0");
-                        printf("  fcvt d0, s0\n");
+                        cg_emit_arm64_insn(arm64_fcvt(0, 0, 0));
 #else
                         printf("  movss -%d(%%rbp), %%xmm0\n", node->var->offset);
-                        printf("  cvtss2sd %%xmm0, %%xmm0\n");
+                        x86_cvtss2sd(&cg_obj->text, X86_XMM0, X86_XMM0);
 #endif
                     } else {
 #ifdef ARCH_ARM64
@@ -3134,15 +3851,15 @@ static int gen(Node *node) {
                         else
                             emit_adrp_add(reg64[r], asm_sym_name(var_sym_label(node->var)));
                         printf("  ldr s0, [%s]\n", reg64[r]);
-                        printf("  fcvt d0, s0\n");
+                        cg_emit_arm64_insn(arm64_fcvt(0, 0, 0));
 #else
                         if (var_needs_got(node->var)) {
                             printf("  mov %s@GOTPCREL(%%rip), %s\n", label, reg64[r]);
-                            printf("  movss (%s), %%xmm0\n", reg64[r]);
+                            x86_movss_rm(&cg_obj->text, X86_XMM0, x86_mem(x86_reg_idx(reg64[r]), 0));
                         } else {
-                            printf("  movss %s(%%rip), %%xmm0\n", label);
+                            printf("  movss label(%%rip), %%xmm0\n");
                         }
-                        printf("  cvtss2sd %%xmm0, %%xmm0\n");
+                        x86_cvtss2sd(&cg_obj->text, X86_XMM0, X86_XMM0);
 #endif
                     } else {
 #ifdef ARCH_ARM64
@@ -3154,15 +3871,15 @@ static int gen(Node *node) {
 #else
                         if (var_needs_got(node->var)) {
                             printf("  mov %s@GOTPCREL(%%rip), %s\n", label, reg64[r]);
-                            printf("  movsd (%s), %%xmm0\n", reg64[r]);
+                            x86_movsd_rm(&cg_obj->text, X86_XMM0, x86_mem(x86_reg_idx(reg64[r]), 0));
                         } else {
-                            printf("  movsd %s(%%rip), %%xmm0\n", label);
+                            printf("  movsd label(%%rip), %%xmm0\n");
                         }
 #endif
                     }
                 }
 #ifdef ARCH_ARM64
-                printf("  fmov %s, d0\n", reg64[r]);
+                secbuf_emit32le(&cg_obj->text, arm64_fmov_i2f(1, arm64_reg_idx(reg64[r]), 0));
 #else
                 printf("  movq %%xmm0, %s\n", reg64[r]);
 #endif
@@ -3239,11 +3956,11 @@ static int gen(Node *node) {
                 int copy_len = str_len < lhs_size ? str_len : lhs_size;
                 if (copy_len > 0) {
 #ifdef ARCH_ARM64
-                    printf("  mov x9, #%d\n", copy_len);
-                    printf(".L.copy.%d:\n", c);
-                    printf("  cmp x9, #0\n");
+                    secbuf_emit32le(&cg_obj->text, arm64_movz(1, 9, copy_len, 0))
+                        printf(".L.copy.%d:\n", c);
+                    cg_emit_arm64_insn(arm64_subs_imm(1, 31, 9, 0, 0));
                     printf("  b.eq .L.copy_end.%d\n", c);
-                    printf("  sub x9, x9, #1\n");
+                    cg_emit_arm64_insn(arm64_sub_imm(1, 9, 9, 1, 0));
                     printf("  ldrb w16, [%s, x9]\n", reg64[src]);
                     printf("  strb w16, [%s, x9]\n", reg64[dst]);
                     printf("  b .L.copy.%d\n", c);
@@ -3252,30 +3969,29 @@ static int gen(Node *node) {
                 if (copy_len < lhs_size) {
                     // Zero dst[copy_len .. lhs_size-1]; count x12 from lhs_size down to copy_len
                     int c2 = ++rcc_label_count;
-                    printf("  mov x9, #%d\n", lhs_size);
-                    printf(".L.copy.%d:\n", c2);
+                    secbuf_emit32le(&cg_obj->text, arm64_movz(1, 9, lhs_size, 0))
+                        printf(".L.copy.%d:\n", c2);
                     if (copy_len >= 0 && copy_len <= 4095)
                         printf("  cmp x9, #%d\n", copy_len);
                     else {
-                        printf("  mov x16, #%d\n", copy_len & 0xffff);
-                        if (copy_len >> 16)
+                        secbuf_emit32le(&cg_obj->text, arm64_movz(1, 16, copy_len & 0xffff, 0)) if (copy_len >> 16)
                             printf("  movk x16, #%d, lsl #16\n", (copy_len >> 16) & 0xffff);
-                        printf("  cmp x9, x16\n");
+                        secbuf_emit32le(&cg_obj->text, arm64_subs_reg(1, 31, 9, 16, 0, 0));
                     }
                     printf("  b.eq .L.copy_end.%d\n", c2);
-                    printf("  sub x9, x9, #1\n");
+                    cg_emit_arm64_insn(arm64_sub_imm(1, 9, 9, 1, 0));
                     printf("  strb wzr, [%s, x9]\n", reg64[dst]);
                     printf("  b .L.copy.%d\n", c2);
                     printf(".L.copy_end.%d:\n", c2);
                 }
 #else
-                    printf("  movq $%d, %%rcx\n", copy_len);
+                    cg_mov_ri(8, X86_RCX, copy_len);
                     printf(".L.copy.%d:\n", c);
-                    printf("  cmpq $0, %%rcx\n");
+                    cg_cmp_ri(8, X86_RCX, 0);
                     printf("  je .L.copy_end.%d\n", c);
                     printf("  movb -1(%s,%%rcx), %%al\n", reg64[src]);
                     printf("  movb %%al, -1(%s,%%rcx)\n", reg64[dst]);
-                    printf("  subq $1, %%rcx\n");
+                    cg_sub_ri(8, X86_RCX, 1);
                     printf("  jmp .L.copy.%d\n", c);
                     printf(".L.copy_end.%d:\n", c);
                 }
@@ -3283,10 +3999,10 @@ static int gen(Node *node) {
                     printf("  movq $%d, %%rcx\n", lhs_size - copy_len);
                     int c2 = ++rcc_label_count;
                     printf(".L.copy.%d:\n", c2);
-                    printf("  cmpq $0, %%rcx\n");
+                    cg_cmp_ri(8, X86_RCX, 0);
                     printf("  je .L.copy_end.%d\n", c2);
                     printf("  movb $0, %d-1(%s,%%rcx)\n", copy_len, reg64[dst]);
-                    printf("  subq $1, %%rcx\n");
+                    cg_sub_ri(8, X86_RCX, 1);
                     printf("  jmp .L.copy.%d\n", c2);
                     printf(".L.copy_end.%d:\n", c2);
                 }
@@ -3321,26 +4037,26 @@ static int gen(Node *node) {
             if (copy_is_vla_struct && r_vla_sz >= 0)
                 printf("  mov x9, %s\n", reg64[r_vla_sz]);
             else
-                printf("  mov x9, #%d\n", node->lhs->ty->size);
-            printf(".L.copy.%d:\n", c);
-            printf("  cmp x9, #0\n");
+                secbuf_emit32le(&cg_obj->text, arm64_movz(1, 9, node->lhs->ty->size, 0))
+                    printf(".L.copy.%d:\n", c);
+            cg_emit_arm64_insn(arm64_subs_imm(1, 31, 9, 0, 0));
             printf("  b.eq .L.copy_end.%d\n", c);
-            printf("  sub x9, x9, #1\n");
+            cg_emit_arm64_insn(arm64_sub_imm(1, 9, 9, 1, 0));
             printf("  ldrb w16, [%s, x9]\n", reg64[src]);
             printf("  strb w16, [%s, x9]\n", reg64[dst]);
             printf("  b .L.copy.%d\n", c);
             printf(".L.copy_end.%d:\n", c);
 #else
             if (copy_is_vla_struct && r_vla_sz >= 0)
-                printf("  movq %s, %%rcx\n", reg64[r_vla_sz]);
+                cg_mov_rr(8, X86_RCX, x86_reg_idx(reg64[r_vla_sz]));
             else
                 printf("  movq $%d, %%rcx\n", node->lhs->ty->size);
             printf(".L.copy.%d:\n", c);
-            printf("  cmpq $0, %%rcx\n");
+            cg_cmp_ri(8, X86_RCX, 0);
             printf("  je .L.copy_end.%d\n", c);
             printf("  movb -1(%s,%%rcx), %%al\n", reg64[src]);
             printf("  movb %%al, -1(%s,%%rcx)\n", reg64[dst]);
-            printf("  subq $1, %%rcx\n");
+            cg_sub_ri(8, X86_RCX, 1);
             printf("  jmp .L.copy.%d\n", c);
             printf(".L.copy_end.%d:\n", c);
 #endif
@@ -3352,9 +4068,9 @@ static int gen(Node *node) {
 #ifdef ARCH_ARM64
             int r2 = gen(node->rhs);
             int r1 = gen_addr(node->lhs);
-            printf("  fmov d0, %s\n", reg64[r2]);
+            secbuf_emit32le(&cg_obj->text, arm64_fmov_f2i(1, 0, arm64_reg_idx(reg64[r2])));
             if (node->lhs->ty->size == 4) {
-                printf("  fcvt s0, d0\n");
+                cg_emit_arm64_insn(arm64_fcvt(1, 0, 0));
                 printf("  str s0, [%s]\n", reg64[r1]);
             } else {
                 printf("  str d0, [%s]\n", reg64[r1]);
@@ -3367,23 +4083,23 @@ static int gen(Node *node) {
                 // Store long double as 64-bit double (truncated)
                 int r2 = gen(node->rhs);
                 int r1 = gen_addr(node->lhs);
-                printf("  movq %s, %%xmm0\n", reg64[r2]);
-                printf("  movsd %%xmm0, (%s)\n", reg64[r1]);
+                printf("  movq %s, %%xmm0\n", reg64[r2], X86_XMM0);
+                x86_movsd_mr(&cg_obj->text, x86_mem(x86_reg_idx(reg64[r1]), 0), X86_XMM0);
                 free_reg(r2);
                 free_reg(r1);
                 int dummy = alloc_reg();
-                printf("  mov $0, %s\n", reg64[dummy]);
+                cg_mov_ri(4, x86_reg_idx(reg64[dummy]), 0);
                 return dummy;
             }
 #endif
             int r2 = gen(node->rhs);
             int r1 = gen_addr(node->lhs);
-            printf("  movq %s, %%xmm0\n", reg64[r2]);
+            printf("  movq %s, %%xmm0\n", reg64[r2], X86_XMM0);
             if (node->lhs->ty->size == 4) {
-                printf("  cvtsd2ss %%xmm0, %%xmm0\n");
-                printf("  movss %%xmm0, (%s)\n", reg64[r1]);
+                x86_cvtsd2ss(&cg_obj->text, X86_XMM0, X86_XMM0);
+                x86_movss_mr(&cg_obj->text, x86_mem(x86_reg_idx(reg64[r1]), 0), X86_XMM0);
             } else {
-                printf("  movsd %%xmm0, (%s)\n", reg64[r1]);
+                x86_movsd_mr(&cg_obj->text, x86_mem(x86_reg_idx(reg64[r1]), 0), X86_XMM0);
             }
             free_reg(r1);
             return r2;
@@ -3437,29 +4153,29 @@ static int gen(Node *node) {
             // Helper: emit unsigned load of unit_sz bytes
 #ifdef ARCH_ARM64
 #define BF_LOAD(sz, ra, rt) do { \
-    if ((sz) == 1) printf("  ldrb %s, [%s]\n", reg32[rt], reg64[ra]); \
-    else if ((sz) == 2) printf("  ldrh %s, [%s]\n", reg32[rt], reg64[ra]); \
-    else if ((sz) == 4) printf("  ldr %s, [%s]\n", reg32[rt], reg64[ra]); \
-    else printf("  ldr %s, [%s]\n", reg64[rt], reg64[ra]); \
+    if ((sz) == 1) secbuf_emit32le(&cg_obj->text, arm64_ldrb_uoff(arm64_reg_idx(reg32[rt]), arm64_reg_idx(reg64[ra]), 0)); \
+    else if ((sz) == 2) secbuf_emit32le(&cg_obj->text, arm64_ldrh_uoff(arm64_reg_idx(reg32[rt]), arm64_reg_idx(reg64[ra]), 0)); \
+    else if ((sz) == 4) secbuf_emit32le(&cg_obj->text, arm64_ldr_uoff(3, arm64_reg_idx(reg32[rt]), arm64_reg_idx(reg64[ra]), 0)); \
+    else secbuf_emit32le(&cg_obj->text, arm64_ldr_uoff(3, arm64_reg_idx(reg64[rt]), arm64_reg_idx(reg64[ra]), 0)); \
 } while (0)
 #define BF_STORE(sz, ra, rt) do { \
-    if ((sz) == 1) printf("  strb %s, [%s]\n", reg32[rt], reg64[ra]); \
-    else if ((sz) == 2) printf("  strh %s, [%s]\n", reg32[rt], reg64[ra]); \
-    else if ((sz) == 4) printf("  str %s, [%s]\n", reg32[rt], reg64[ra]); \
-    else printf("  str %s, [%s]\n", reg64[rt], reg64[ra]); \
+    if ((sz) == 1) secbuf_emit32le(&cg_obj->text, arm64_strb_uoff(arm64_reg_idx(reg32[rt]), arm64_reg_idx(reg64[ra]), 0)); \
+    else if ((sz) == 2) secbuf_emit32le(&cg_obj->text, arm64_strh_uoff(arm64_reg_idx(reg32[rt]), arm64_reg_idx(reg64[ra]), 0)); \
+    else if ((sz) == 4) secbuf_emit32le(&cg_obj->text, arm64_str_uoff(3, arm64_reg_idx(reg32[rt]), arm64_reg_idx(reg64[ra]), 0)); \
+    else secbuf_emit32le(&cg_obj->text, arm64_str_uoff(3, arm64_reg_idx(reg64[rt]), arm64_reg_idx(reg64[ra]), 0)); \
 } while (0)
 #else
 #define BF_LOAD(sz, ra, rt) do { \
-    if ((sz) == 1) printf("  movzbl (%s), %s\n", reg64[ra], reg32[rt]); \
-    else if ((sz) == 2) printf("  movzwl (%s), %s\n", reg64[ra], reg32[rt]); \
-    else if ((sz) == 4) printf("  movl (%s), %s\n", reg64[ra], reg32[rt]); \
-    else printf("  movq (%s), %s\n", reg64[ra], reg64[rt]); \
+    if ((sz) == 1) x86_movzx_rm(&cg_obj->text, 4, 1, x86_reg_idx(reg32[rt]), x86_mem(x86_reg_idx(reg64[ra]), 0)); \
+    else if ((sz) == 2) x86_movzx_rm(&cg_obj->text, 4, 2, x86_reg_idx(reg32[rt]), x86_mem(x86_reg_idx(reg64[ra]), 0)); \
+    else if ((sz) == 4) x86_mov_rm(&cg_obj->text, 4, x86_reg_idx(reg32[rt]), x86_mem(x86_reg_idx(reg64[ra]), 0)); \
+    else x86_mov_rm(&cg_obj->text, 8, x86_reg_idx(reg64[rt]), x86_mem(x86_reg_idx(reg64[ra]), 0)); \
 } while (0)
 #define BF_STORE(sz, ra, rt) do { \
-    if ((sz) == 1) printf("  movb %s, (%s)\n", reg8[rt], reg64[ra]); \
+    if ((sz) == 1) x86_mov_mr(&cg_obj->text, 1, x86_mem(x86_reg_idx(reg64[ra]), 0), x86_reg_idx(reg8[rt])); \
     else if ((sz) == 2) printf("  movw %s, (%s)\n", reg(rt, 2), reg64[ra]); \
     else if ((sz) == 4) printf("  movl %s, (%s)\n", reg(rt, 4), reg64[ra]); \
-    else printf("  movq %s, (%s)\n", reg64[rt], reg64[ra]); \
+    else x86_mov_mr(&cg_obj->text, 8, x86_mem(x86_reg_idx(reg64[ra]), 0), x86_reg_idx(reg64[rt])); \
 } while (0)
 #endif
 
@@ -3473,36 +4189,35 @@ static int gen(Node *node) {
                 BF_LOAD(eff_sz_rhs, ra, rt);
 #ifdef ARCH_ARM64
                 emit_mov_imm64("x16", ~mask);
-                printf("  and %s, %s, x16\n", reg64[rt], reg64[rt]);
+                secbuf_emit32le(&cg_obj->text, arm64_and_reg(1, arm64_reg_idx(reg64[rt]), arm64_reg_idx(reg64[rt]), 16, 0, 0));
                 emit_mov_imm64("x16", (1ULL << bw) - 1);
                 int rv = alloc_reg();
-                printf("  mov %s, %s\n", reg64[rv], reg64[r2]);
-                printf("  and %s, %s, x16\n", reg64[rv], reg64[rv]);
-                if (bo > 0) printf("  lsl %s, %s, #%d\n", reg64[rv], reg64[rv], bo);
-                printf("  orr %s, %s, %s\n", reg64[rt], reg64[rt], reg64[rv]);
+                cg_mov_rr_str(reg64[r2], reg64[rv]);
+                secbuf_emit32le(&cg_obj->text, arm64_and_reg(1, arm64_reg_idx(reg64[rv]), arm64_reg_idx(reg64[rv]), 16, 0, 0));
+                if (bo > 0) secbuf_emit32le(&cg_obj->text, arm64_lsl_imm(1, arm64_reg_idx(reg64[rv]), arm64_reg_idx(reg64[rv]), bo))
+                    secbuf_emit32le(&cg_obj->text, arm64_orr_reg(1, arm64_reg_idx(reg64[rt]), arm64_reg_idx(reg64[rt]), arm64_reg_idx(reg64[rv]), 0, 0));
                 BF_STORE(eff_sz_rhs, ra, rt);
                 free_reg(rv);
                 // Reload stored bitfield value for assignment expression result
                 {
                     int new_eff_sz_rhs = eff_sz_rhs;
                     if (new_eff_sz_rhs <= 2)
-                        printf("  ldrh %s, [%s]\n", reg32[rt], reg64[ra]);
+                        secbuf_emit32le(&cg_obj->text, arm64_ldrh_uoff(arm64_reg_idx(reg32[rt]), arm64_reg_idx(reg64[ra]), 0));
                     else if (new_eff_sz_rhs == 4)
-                        printf("  ldr %s, [%s]\n", reg32[rt], reg64[ra]);
+                        secbuf_emit32le(&cg_obj->text, arm64_ldr_uoff(3, arm64_reg_idx(reg32[rt]), arm64_reg_idx(reg64[ra]), 0));
                     else
-                        printf("  ldr %s, [%s]\n", reg64[rt], reg64[ra]);
+                        secbuf_emit32le(&cg_obj->text, arm64_ldr_uoff(3, arm64_reg_idx(reg64[rt]), arm64_reg_idx(reg64[ra]), 0));
                     if (bo > 0)
-                        printf("  lsr %s, %s, #%d\n", reg64[rt], reg64[rt], bo);
-                    if (bw < new_eff_sz_rhs * 8) {
-                        if (node->lhs->member->ty->is_unsigned || node->lhs->member->ty->is_enum) {
-                            emit_mov_imm64("x16", (1ULL << bw) - 1);
-                            printf("  and %s, %s, x16\n", reg64[rt], reg64[rt]);
-                        } else {
-                            int shift = 64 - bw;
-                            printf("  lsl %s, %s, #%d\n", reg64[rt], reg64[rt], shift);
-                            printf("  asr %s, %s, #%d\n", reg64[rt], reg64[rt], shift);
+                        secbuf_emit32le(&cg_obj->text, arm64_lsr_imm(1, arm64_reg_idx(reg64[rt]), arm64_reg_idx(reg64[rt]), bo)) if (bw < new_eff_sz_rhs * 8) {
+                            if (node->lhs->member->ty->is_unsigned || node->lhs->member->ty->is_enum) {
+                                emit_mov_imm64("x16", (1ULL << bw) - 1);
+                                secbuf_emit32le(&cg_obj->text, arm64_and_reg(1, arm64_reg_idx(reg64[rt]), arm64_reg_idx(reg64[rt]), 16, 0, 0));
+                            } else {
+                                int shift = 64 - bw;
+                                secbuf_emit32le(&cg_obj->text, arm64_lsl_imm(1, arm64_reg_idx(reg64[rt]), arm64_reg_idx(reg64[rt]), shift))
+                                    secbuf_emit32le(&cg_obj->text, arm64_asr_imm(1, arm64_reg_idx(reg64[rt]), arm64_reg_idx(reg64[rt]), shift))
+                            }
                         }
-                    }
                     free_reg(r2);
                     int ret_reg = rt;
                     free_reg(ra);
@@ -3517,69 +4232,67 @@ static int gen(Node *node) {
             int eff_sz = unit_sz > 8 ? 8 : unit_sz;
             BF_LOAD(eff_sz, ra, rt);
             emit_mov_imm64("x16", ~mask);
-            printf("  and %s, %s, x16\n", reg64[rt], reg64[rt]);
+            secbuf_emit32le(&cg_obj->text, arm64_and_reg(1, arm64_reg_idx(reg64[rt]), arm64_reg_idx(reg64[rt]), 16, 0, 0));
             emit_mov_imm64("x16", (1ULL << bw) - 1);
             int rv = alloc_reg();
-            printf("  mov %s, %s\n", reg64[rv], reg64[r2]);
-            printf("  and %s, %s, x16\n", reg64[rv], reg64[rv]);
-            if (bo > 0) printf("  lsl %s, %s, #%d\n", reg64[rv], reg64[rv], bo);
-            printf("  orr %s, %s, %s\n", reg64[rt], reg64[rt], reg64[rv]);
+            cg_mov_rr_str(reg64[r2], reg64[rv]);
+            secbuf_emit32le(&cg_obj->text, arm64_and_reg(1, arm64_reg_idx(reg64[rv]), arm64_reg_idx(reg64[rv]), 16, 0, 0));
+            if (bo > 0) secbuf_emit32le(&cg_obj->text, arm64_lsl_imm(1, arm64_reg_idx(reg64[rv]), arm64_reg_idx(reg64[rv]), bo))
+                secbuf_emit32le(&cg_obj->text, arm64_orr_reg(1, arm64_reg_idx(reg64[rt]), arm64_reg_idx(reg64[rt]), arm64_reg_idx(reg64[rv]), 0, 0));
             BF_STORE(eff_sz, ra, rt);
             if (unit_sz > 8 && bo + bw > 64) {
                 int overflow = bo + bw - 64;
                 unsigned int ovf_mask = (1u << overflow) - 1;
                 printf("  add %s, %s, #8\n", reg64[ra], reg64[ra]);
-                printf("  ldrb %s, [%s]\n", reg32[rt], reg64[ra]);
+                secbuf_emit32le(&cg_obj->text, arm64_ldrb_uoff(arm64_reg_idx(reg32[rt]), arm64_reg_idx(reg64[ra]), 0));
                 printf("  and %s, %s, #%u\n", reg32[rt], reg32[rt], (unsigned)(~ovf_mask & 0xFF));
-                printf("  mov %s, %s\n", reg64[rv], reg64[r2]);
-                printf("  lsr %s, %s, #%d\n", reg64[rv], reg64[rv], 64 - bo);
-                printf("  and %s, %s, #%u\n", reg32[rv], reg32[rv], ovf_mask);
-                printf("  orr %s, %s, %s\n", reg32[rt], reg32[rt], reg32[rv]);
-                printf("  strb %s, [%s]\n", reg32[rt], reg64[ra]);
+                cg_mov_rr_str(reg64[r2], reg64[rv]);
+                secbuf_emit32le(&cg_obj->text, arm64_lsr_imm(1, arm64_reg_idx(reg64[rv]), arm64_reg_idx(reg64[rv]), 64 - bo))
+                    printf("  and %s, %s, #%u\n", reg32[rv], reg32[rv], ovf_mask);
+                secbuf_emit32le(&cg_obj->text, arm64_orr_reg(1, arm64_reg_idx(reg32[rt]), arm64_reg_idx(reg32[rt]), arm64_reg_idx(reg32[rv]), 0, 0));
+                secbuf_emit32le(&cg_obj->text, arm64_strb_uoff(arm64_reg_idx(reg32[rt]), arm64_reg_idx(reg64[ra]), 0));
             }
 #else
-                if (bo > 0) printf("  shr $%d, %s\n", bo, reg64[rt]);
-                if (bw < unit_sz * 8) {
-                    unsigned long long m = (1ULL << bw) - 1;
-                    printf("  movabsq $%llu, %%rax\n", m);
-                    printf("  andq %%rax, %s\n", reg64[rt]);
-                }
+                if (bo > 0) cg_shr_ri(8, x86_reg_idx(reg64[rt]), bo) if (bw < unit_sz * 8) {
+                        unsigned long long m = (1ULL << bw) - 1;
+                        cg_mov_ri(8, X86_RAX, (int64_t)m);
+                        x86_and_rr(&cg_obj->text, 8, x86_reg_idx(reg64[rt]), X86_RAX);
+                    }
                 // Re-load for modify
                 BF_LOAD(unit_sz, ra, rt);
-                printf("  movabsq $%llu, %%rax\n", ~mask);
-                printf("  andq %%rax, %s\n", reg64[rt]);
+                cg_mov_ri(8, X86_RAX, (int64_t)~mask);
+                x86_and_rr(&cg_obj->text, 8, x86_reg_idx(reg64[rt]), X86_RAX);
                 int rv = alloc_reg();
-                printf("  mov %s, %s\n", reg64[r2], reg64[rv]);
-                printf("  movabsq $%llu, %%rax\n", (1ULL << bw) - 1);
-                printf("  andq %%rax, %s\n", reg64[rv]);
-                if (bo > 0) printf("  shl $%d, %s\n", bo, reg64[rv]);
-                printf("  or %s, %s\n", reg64[rv], reg64[rt]);
+                cg_mov_rr_str(reg64[rv], reg64[r2]);
+                cg_mov_ri(8, X86_RAX, (int64_t)(1ULL << bw) - 1);
+                x86_and_rr(&cg_obj->text, 8, x86_reg_idx(reg64[rv]), X86_RAX);
+                if (bo > 0) cg_shl_ri(8, x86_reg_idx(reg64[rv]), bo)
+                    printf("  or %s, %s\n", reg64[rv], reg64[rt]);
                 BF_STORE(unit_sz, ra, rt);
                 free_reg(rv);
                 // Reload stored bitfield value for assignment expression result
                 {
                     int new_eff_sz = unit_sz > 8 ? 8 : unit_sz;
                     if (new_eff_sz == 1)
-                        printf("  movzbl (%s), %s\n", reg64[ra], reg32[rt]);
+                        x86_movzx_rm(&cg_obj->text, 4, 1, x86_reg_idx(reg32[rt]), x86_mem(x86_reg_idx(reg64[ra]), 0));
                     else if (new_eff_sz == 2)
-                        printf("  movzwl (%s), %s\n", reg64[ra], reg32[rt]);
+                        x86_movzx_rm(&cg_obj->text, 4, 2, x86_reg_idx(reg32[rt]), x86_mem(x86_reg_idx(reg64[ra]), 0));
                     else if (new_eff_sz == 4)
-                        printf("  movl (%s), %s\n", reg64[ra], reg32[rt]);
+                        x86_mov_rm(&cg_obj->text, 4, x86_reg_idx(reg32[rt]), x86_mem(x86_reg_idx(reg64[ra]), 0));
                     else
-                        printf("  movq (%s), %s\n", reg64[ra], reg64[rt]);
+                        x86_mov_rm(&cg_obj->text, 8, x86_reg_idx(reg64[rt]), x86_mem(x86_reg_idx(reg64[ra]), 0));
                     if (bo > 0)
-                        printf("  shr $%d, %s\n", bo, reg64[rt]);
-                    if (bw < new_eff_sz * 8) {
-                        if (node->lhs->member->ty->is_unsigned || node->lhs->member->ty->is_enum) {
-                            unsigned long long m = (1ULL << bw) - 1;
-                            printf("  movabsq $%llu, %%rax\n", m);
-                            printf("  andq %%rax, %s\n", reg64[rt]);
-                        } else {
-                            int shift = 64 - bw;
-                            printf("  shl $%d, %s\n", shift, reg64[rt]);
-                            printf("  sar $%d, %s\n", shift, reg64[rt]);
+                        cg_shr_ri(8, x86_reg_idx(reg64[rt]), bo) if (bw < new_eff_sz * 8) {
+                            if (node->lhs->member->ty->is_unsigned || node->lhs->member->ty->is_enum) {
+                                unsigned long long m = (1ULL << bw) - 1;
+                                cg_mov_ri(8, X86_RAX, (int64_t)m);
+                                x86_and_rr(&cg_obj->text, 8, x86_reg_idx(reg64[rt]), X86_RAX);
+                            } else {
+                                int shift = 64 - bw;
+                                cg_shl_ri(8, x86_reg_idx(reg64[rt]), shift)
+                                    cg_sar_ri(8, x86_reg_idx(reg64[rt]), shift)
+                            }
                         }
-                    }
                     free_reg(r2);
                     int ret_reg = rt;
                     free_reg(ra);
@@ -3593,14 +4306,14 @@ static int gen(Node *node) {
             int rt = alloc_reg();
             int eff_sz = unit_sz > 8 ? 8 : unit_sz;
             BF_LOAD(eff_sz, ra, rt);
-            printf("  movabsq $%llu, %%rax\n", ~mask);
-            printf("  andq %%rax, %s\n", reg64[rt]);
+            cg_mov_ri(8, X86_RAX, (int64_t)~mask);
+            x86_and_rr(&cg_obj->text, 8, x86_reg_idx(reg64[rt]), X86_RAX);
             int rv = alloc_reg();
-            printf("  mov %s, %s\n", reg64[r2], reg64[rv]);
-            printf("  movabsq $%llu, %%rax\n", (1ULL << bw) - 1);
-            printf("  andq %%rax, %s\n", reg64[rv]);
-            if (bo > 0) printf("  shl $%d, %s\n", bo, reg64[rv]);
-            printf("  or %s, %s\n", reg64[rv], reg64[rt]);
+            cg_mov_rr_str(reg64[rv], reg64[r2]);
+            cg_mov_ri(8, X86_RAX, (int64_t)(1ULL << bw) - 1);
+            x86_and_rr(&cg_obj->text, 8, x86_reg_idx(reg64[rv]), X86_RAX);
+            if (bo > 0) cg_shl_ri(8, x86_reg_idx(reg64[rv]), bo)
+                printf("  or %s, %s\n", reg64[rv], reg64[rt]);
             BF_STORE(eff_sz, ra, rt);
             // Handle overflow bits beyond the first 8 bytes
             if (unit_sz > 8 && bo + bw > 64) {
@@ -3608,13 +4321,13 @@ static int gen(Node *node) {
                 unsigned int ovf_mask = (1u << overflow) - 1;
                 // Read-modify-write the byte at addr+8
                 printf("  add $8, %s\n", reg64[ra]);
-                printf("  movzbl (%s), %s\n", reg64[ra], reg32[rt]);
+                x86_movzx_rm(&cg_obj->text, 4, 1, x86_reg_idx(reg32[rt]), x86_mem(x86_reg_idx(reg64[ra]), 0));
                 printf("  and $%u, %s\n", (unsigned)(~ovf_mask & 0xFF), reg32[rt]);
-                printf("  mov %s, %s\n", reg64[r2], reg64[rv]);
-                printf("  shr $%d, %s\n", 64 - bo, reg64[rv]);
-                printf("  and $%u, %s\n", ovf_mask, reg32[rv]);
+                cg_mov_rr_str(reg64[rv], reg64[r2]);
+                cg_shr_ri(8, x86_reg_idx(reg64[rv]), 64 - bo)
+                    printf("  and $%u, %s\n", ovf_mask, reg32[rv]);
                 printf("  or %s, %s\n", reg32[rv], reg32[rt]);
-                printf("  movb %s, (%s)\n", reg8[rt], reg64[ra]);
+                x86_mov_mr(&cg_obj->text, 1, x86_mem(x86_reg_idx(reg64[ra]), 0), x86_reg_idx(reg8[rt]));
             }
 #endif
 #undef BF_LOAD
@@ -3625,23 +4338,22 @@ static int gen(Node *node) {
             {
                 int new_eff_sz = eff_sz;
                 if (new_eff_sz <= 2)
-                    printf("  ldrh %s, [%s]\n", reg32[rt], reg64[ra]);
+                    secbuf_emit32le(&cg_obj->text, arm64_ldrh_uoff(arm64_reg_idx(reg32[rt]), arm64_reg_idx(reg64[ra]), 0));
                 else if (new_eff_sz == 4)
-                    printf("  ldr %s, [%s]\n", reg32[rt], reg64[ra]);
+                    secbuf_emit32le(&cg_obj->text, arm64_ldr_uoff(3, arm64_reg_idx(reg32[rt]), arm64_reg_idx(reg64[ra]), 0));
                 else
-                    printf("  ldr %s, [%s]\n", reg64[rt], reg64[ra]);
+                    secbuf_emit32le(&cg_obj->text, arm64_ldr_uoff(3, arm64_reg_idx(reg64[rt]), arm64_reg_idx(reg64[ra]), 0));
                 if (bo > 0)
-                    printf("  lsr %s, %s, #%d\n", reg64[rt], reg64[rt], bo);
-                if (bw < new_eff_sz * 8) {
-                    if (node->lhs->member && (node->lhs->member->ty->is_unsigned || node->lhs->member->ty->is_enum)) {
-                        emit_mov_imm64("x16", (1ULL << bw) - 1);
-                        printf("  and %s, %s, x16\n", reg64[rt], reg64[rt]);
-                    } else {
-                        int shift = 64 - bw;
-                        printf("  lsl %s, %s, #%d\n", reg64[rt], reg64[rt], shift);
-                        printf("  asr %s, %s, #%d\n", reg64[rt], reg64[rt], shift);
+                    secbuf_emit32le(&cg_obj->text, arm64_lsr_imm(1, arm64_reg_idx(reg64[rt]), arm64_reg_idx(reg64[rt]), bo)) if (bw < new_eff_sz * 8) {
+                        if (node->lhs->member && (node->lhs->member->ty->is_unsigned || node->lhs->member->ty->is_enum)) {
+                            emit_mov_imm64("x16", (1ULL << bw) - 1);
+                            secbuf_emit32le(&cg_obj->text, arm64_and_reg(1, arm64_reg_idx(reg64[rt]), arm64_reg_idx(reg64[rt]), 16, 0, 0));
+                        } else {
+                            int shift = 64 - bw;
+                            secbuf_emit32le(&cg_obj->text, arm64_lsl_imm(1, arm64_reg_idx(reg64[rt]), arm64_reg_idx(reg64[rt]), shift))
+                                secbuf_emit32le(&cg_obj->text, arm64_asr_imm(1, arm64_reg_idx(reg64[rt]), arm64_reg_idx(reg64[rt]), shift))
+                        }
                     }
-                }
                 free_reg(r2);
                 int ret_reg = rt;
                 free_reg(ra);
@@ -3652,26 +4364,25 @@ static int gen(Node *node) {
             {
                 int new_eff_sz = eff_sz;
                 if (new_eff_sz == 1)
-                    printf("  movzbl (%s), %s\n", reg64[ra], reg32[rt]);
+                    x86_movzx_rm(&cg_obj->text, 4, 1, x86_reg_idx(reg32[rt]), x86_mem(x86_reg_idx(reg64[ra]), 0));
                 else if (new_eff_sz == 2)
-                    printf("  movzwl (%s), %s\n", reg64[ra], reg32[rt]);
+                    x86_movzx_rm(&cg_obj->text, 4, 2, x86_reg_idx(reg32[rt]), x86_mem(x86_reg_idx(reg64[ra]), 0));
                 else if (new_eff_sz == 4)
-                    printf("  movl (%s), %s\n", reg64[ra], reg32[rt]);
+                    x86_mov_rm(&cg_obj->text, 4, x86_reg_idx(reg32[rt]), x86_mem(x86_reg_idx(reg64[ra]), 0));
                 else
-                    printf("  movq (%s), %s\n", reg64[ra], reg64[rt]);
+                    x86_mov_rm(&cg_obj->text, 8, x86_reg_idx(reg64[rt]), x86_mem(x86_reg_idx(reg64[ra]), 0));
                 if (bo > 0)
-                    printf("  shr $%d, %s\n", bo, reg64[rt]);
-                if (bw < new_eff_sz * 8) {
-                    if (node->lhs->member && (node->lhs->member->ty->is_unsigned || node->lhs->member->ty->is_enum)) {
-                        unsigned long long m = (1ULL << bw) - 1;
-                        printf("  movabsq $%llu, %%rax\n", m);
-                        printf("  andq %%rax, %s\n", reg64[rt]);
-                    } else {
-                        int shift = 64 - bw;
-                        printf("  shl $%d, %s\n", shift, reg64[rt]);
-                        printf("  sar $%d, %s\n", shift, reg64[rt]);
+                    cg_shr_ri(8, x86_reg_idx(reg64[rt]), bo) if (bw < new_eff_sz * 8) {
+                        if (node->lhs->member && (node->lhs->member->ty->is_unsigned || node->lhs->member->ty->is_enum)) {
+                            unsigned long long m = (1ULL << bw) - 1;
+                            cg_mov_ri(8, X86_RAX, (int64_t)m);
+                            x86_and_rr(&cg_obj->text, 8, x86_reg_idx(reg64[rt]), X86_RAX);
+                        } else {
+                            int shift = 64 - bw;
+                            cg_shl_ri(8, x86_reg_idx(reg64[rt]), shift)
+                                cg_sar_ri(8, x86_reg_idx(reg64[rt]), shift)
+                        }
                     }
-                }
                 free_reg(r2);
                 int ret_reg = rt;
                 free_reg(ra);
@@ -3693,16 +4404,16 @@ static int gen(Node *node) {
         int r = gen(node->lhs);
         if (is_flonum(node->ty)) {
 #ifdef ARCH_ARM64
-            printf("  fmov d0, %s\n", reg64[r]);
-            printf("  fneg d0, d0\n");
-            printf("  fmov %s, d0\n", reg64[r]);
+            secbuf_emit32le(&cg_obj->text, arm64_fmov_f2i(1, 0, arm64_reg_idx(reg64[r])));
+            secbuf_emit32le(&cg_obj->text, arm64_fneg(1, 0, 0));
+            secbuf_emit32le(&cg_obj->text, arm64_fmov_i2f(1, arm64_reg_idx(reg64[r]), 0));
 #else
             // Negate float: xor with sign bit
             printf("  movq %s, %%xmm0\n", reg64[r]);
             // Use pxor with sign bit mask
-            printf("  movabs $%lld, %s\n", (long long)0x8000000000000000LL, reg64[r]);
-            printf("  movq %s, %%xmm1\n", reg64[r]);
-            printf("  xorpd %%xmm1, %%xmm0\n");
+            cg_mov_ri(8, x86_reg_idx(reg64[r]), (int64_t)(long long)0x8000000000000000LL)
+                printf("  movq %s, %%xmm1\n", reg64[r]);
+            x86_xorpd(&cg_obj->text, X86_XMM0, X86_XMM1);
             printf("  movq %%xmm0, %s\n", reg64[r]);
 #endif
         } else {
@@ -3718,18 +4429,18 @@ static int gen(Node *node) {
         int r = gen(node->lhs);
         if (is_flonum(node->lhs->ty)) {
 #ifdef ARCH_ARM64
-            printf("  fmov d0, %s\n", reg64[r]);
-            printf("  fmov d1, xzr\n");
-            printf("  fcmp d0, d1\n");
-            printf("  cset %s, eq\n", reg32[r]);
+            secbuf_emit32le(&cg_obj->text, arm64_fmov_f2i(1, 0, arm64_reg_idx(reg64[r])));
+            secbuf_emit32le(&cg_obj->text, arm64_fmov_imm(1, 1, 0));
+            cg_emit_arm64_insn(arm64_fcmp(1, 0, 1));
+            secbuf_emit32le(&cg_obj->text, arm64_cset(1, arm64_reg_idx(reg32[r]), ARM64_EQ));
             printf("  csel %s, %s, wzr, vs\n", reg32[r], reg32[r]);
 #else
             printf("  movq %s, %%xmm0\n", reg64[r]);
-            printf("  xorpd %%xmm1, %%xmm1\n");
-            printf("  ucomisd %%xmm1, %%xmm0\n");
-            printf("  setnp %%cl\n");
-            printf("  sete %%al\n");
-            printf("  andb %%cl, %%al\n");
+            x86_xorpd(&cg_obj->text, X86_XMM1, X86_XMM1);
+            x86_ucomisd(&cg_obj->text, X86_XMM0, X86_XMM1);
+            x86_setcc(&cg_obj->text, X86_NP, X86_RCX);
+            x86_setcc(&cg_obj->text, X86_E, X86_RAX);
+            x86_and_rr(&cg_obj->text, 1, X86_RAX, X86_RCX);
             printf("  movzbl %%al, %s\n", reg(r, 4));
 #endif
         } else {
@@ -3738,7 +4449,7 @@ static int gen(Node *node) {
             printf("  cset %s, eq\n", reg(r, 4));
 #else
             printf("  cmp $0, %s\n", reg(r, op_size(node->lhs->ty)));
-            printf("  sete %%al\n");
+            x86_setcc(&cg_obj->text, X86_E, X86_RAX);
             printf("  movzbl %%al, %s\n", reg(r, 4));
 #endif
         }
@@ -3757,24 +4468,24 @@ static int gen(Node *node) {
             printf("  sub x11, %s, x16\n", FRAME_PTR);
         }
         if (var->ty->size <= 4095) {
-            printf("  mov x9, #%d\n", var->ty->size);
+            secbuf_emit32le(&cg_obj->text, arm64_movz(1, 9, var->ty->size, 0))
         } else {
             emit_mov_imm64("x12", (uint64_t)var->ty->size);
         }
         printf(".L.zero.%d:\n", c);
-        printf("  cmp x9, #0\n");
+        cg_emit_arm64_insn(arm64_subs_imm(1, 31, 9, 0, 0));
         printf("  b.eq .L.zero_end.%d\n", c);
-        printf("  sub x9, x9, #1\n");
-        printf("  strb wzr, [x11, x9]\n");
+        cg_emit_arm64_insn(arm64_sub_imm(1, 9, 9, 1, 0));
+        secbuf_emit32le(&cg_obj->text, arm64_strb_reg(31, 11, 9));
         printf("  b .L.zero.%d\n", c);
         printf(".L.zero_end.%d:\n", c);
 #else
         printf("  movq $%d, %%rcx\n", var->ty->size);
         printf(".L.zero.%d:\n", c);
-        printf("  cmpq $0, %%rcx\n");
+        cg_cmp_ri(8, X86_RCX, 0);
         printf("  je .L.zero_end.%d\n", c);
         printf("  movb $0, -%d-1(%%rbp,%%rcx)\n", var->offset);
-        printf("  subq $1, %%rcx\n");
+        cg_sub_ri(8, X86_RCX, 1);
         printf("  jmp .L.zero.%d\n", c);
         printf(".L.zero_end.%d:\n", c);
 #endif
@@ -3797,108 +4508,106 @@ static int gen(Node *node) {
 #ifdef ARCH_ARM64
             // Load the full container word (unsigned)
             if (eff_sz == 1)
-                printf("  ldrb %s, [%s]\n", reg32[r2], reg64[r]);
+                secbuf_emit32le(&cg_obj->text, arm64_ldrb_uoff(arm64_reg_idx(reg32[r2]), arm64_reg_idx(reg64[r]), 0));
             else if (eff_sz == 2)
-                printf("  ldrh %s, [%s]\n", reg32[r2], reg64[r]);
+                secbuf_emit32le(&cg_obj->text, arm64_ldrh_uoff(arm64_reg_idx(reg32[r2]), arm64_reg_idx(reg64[r]), 0));
             else if (eff_sz == 4)
-                printf("  ldr %s, [%s]\n", reg32[r2], reg64[r]);
+                secbuf_emit32le(&cg_obj->text, arm64_ldr_uoff(3, arm64_reg_idx(reg32[r2]), arm64_reg_idx(reg64[r]), 0));
             else
-                printf("  ldr %s, [%s]\n", reg64[r2], reg64[r]);
+                secbuf_emit32le(&cg_obj->text, arm64_ldr_uoff(3, arm64_reg_idx(reg64[r2]), arm64_reg_idx(reg64[r]), 0));
             // Extract original bitfield value into r3 (for return)
             int r3 = alloc_reg();
-            printf("  mov %s, %s\n", reg64[r3], reg64[r2]);
+            cg_mov_rr_str(reg64[r2], reg64[r3]);
             if (bo > 0)
-                printf("  lsr %s, %s, #%d\n", reg64[r3], reg64[r3], bo);
-            int load_bits = eff_sz * 8;
+                secbuf_emit32le(&cg_obj->text, arm64_lsr_imm(1, arm64_reg_idx(reg64[r3]), arm64_reg_idx(reg64[r3]), bo)) int load_bits = eff_sz * 8;
             if (bw < load_bits) {
                 if (mem->ty->is_unsigned || mem->ty->is_enum) {
                     emit_mov_imm64("x16", (1ULL << bw) - 1);
-                    printf("  and %s, %s, x16\n", reg64[r3], reg64[r3]);
+                    secbuf_emit32le(&cg_obj->text, arm64_and_reg(1, arm64_reg_idx(reg64[r3]), arm64_reg_idx(reg64[r3]), 16, 0, 0));
                 } else {
                     int shift = 64 - bw;
-                    printf("  lsl %s, %s, #%d\n", reg64[r3], reg64[r3], shift);
-                    printf("  asr %s, %s, #%d\n", reg64[r3], reg64[r3], shift);
+                    secbuf_emit32le(&cg_obj->text, arm64_lsl_imm(1, arm64_reg_idx(reg64[r3]), arm64_reg_idx(reg64[r3]), shift))
+                        secbuf_emit32le(&cg_obj->text, arm64_asr_imm(1, arm64_reg_idx(reg64[r3]), arm64_reg_idx(reg64[r3]), shift))
                 }
             }
             // Clear the field bits in container word (r2)
             emit_mov_imm64("x16", ~mask);
-            printf("  and %s, %s, x16\n", reg64[r2], reg64[r2]);
+            secbuf_emit32le(&cg_obj->text, arm64_and_reg(1, arm64_reg_idx(reg64[r2]), arm64_reg_idx(reg64[r2]), 16, 0, 0));
             // Compute new field value in rn
             int rn = alloc_reg();
-            printf("  mov %s, %s\n", reg64[rn], reg64[r3]);
+            cg_mov_rr_str(reg64[r3], reg64[rn]);
             emit_mov_imm64("x16", (1ULL << bw) - 1);
-            printf("  and %s, %s, x16\n", reg64[rn], reg64[rn]);
+            secbuf_emit32le(&cg_obj->text, arm64_and_reg(1, arm64_reg_idx(reg64[rn]), arm64_reg_idx(reg64[rn]), 16, 0, 0));
             if (node->kind == ND_POST_INC)
-                printf("  add %s, %s, #1\n", reg64[rn], reg64[rn]);
+                secbuf_emit32le(&cg_obj->text, arm64_add_imm(1, arm64_reg_idx(reg64[rn]), arm64_reg_idx(reg64[rn]), 1, 0));
             else
                 printf("  sub %s, %s, #1\n", reg64[rn], reg64[rn]);
             emit_mov_imm64("x16", (1ULL << bw) - 1);
-            printf("  and %s, %s, x16\n", reg64[rn], reg64[rn]);
+            secbuf_emit32le(&cg_obj->text, arm64_and_reg(1, arm64_reg_idx(reg64[rn]), arm64_reg_idx(reg64[rn]), 16, 0, 0));
             if (bo > 0)
-                printf("  lsl %s, %s, #%d\n", reg64[rn], reg64[rn], bo);
-            printf("  orr %s, %s, %s\n", reg64[r2], reg64[r2], reg64[rn]);
+                secbuf_emit32le(&cg_obj->text, arm64_lsl_imm(1, arm64_reg_idx(reg64[rn]), arm64_reg_idx(reg64[rn]), bo))
+                    secbuf_emit32le(&cg_obj->text, arm64_orr_reg(1, arm64_reg_idx(reg64[r2]), arm64_reg_idx(reg64[r2]), arm64_reg_idx(reg64[rn]), 0, 0));
             // Store
             if (eff_sz == 1)
-                printf("  strb %s, [%s]\n", reg32[r2], reg64[r]);
+                secbuf_emit32le(&cg_obj->text, arm64_strb_uoff(arm64_reg_idx(reg32[r2]), arm64_reg_idx(reg64[r]), 0));
             else if (eff_sz == 2)
-                printf("  strh %s, [%s]\n", reg32[r2], reg64[r]);
+                secbuf_emit32le(&cg_obj->text, arm64_strh_uoff(arm64_reg_idx(reg32[r2]), arm64_reg_idx(reg64[r]), 0));
             else if (eff_sz == 4)
-                printf("  str %s, [%s]\n", reg32[r2], reg64[r]);
+                secbuf_emit32le(&cg_obj->text, arm64_str_uoff(3, arm64_reg_idx(reg32[r2]), arm64_reg_idx(reg64[r]), 0));
             else
-                printf("  str %s, [%s]\n", reg64[r2], reg64[r]);
+                secbuf_emit32le(&cg_obj->text, arm64_str_uoff(3, arm64_reg_idx(reg64[r2]), arm64_reg_idx(reg64[r]), 0));
 #else
             // Load the full container word (unsigned)
             if (eff_sz == 1)
-                printf("  movzbl (%s), %s\n", reg64[r], reg32[r2]);
+                x86_movzx_rm(&cg_obj->text, 4, 1, x86_reg_idx(reg32[r2]), x86_mem(x86_reg_idx(reg64[r]), 0));
             else if (eff_sz == 2)
-                printf("  movzwl (%s), %s\n", reg64[r], reg32[r2]);
+                x86_movzx_rm(&cg_obj->text, 4, 2, x86_reg_idx(reg32[r2]), x86_mem(x86_reg_idx(reg64[r]), 0));
             else if (eff_sz == 4)
-                printf("  movl (%s), %s\n", reg64[r], reg32[r2]);
+                x86_mov_rm(&cg_obj->text, 4, x86_reg_idx(reg32[r2]), x86_mem(x86_reg_idx(reg64[r]), 0));
             else
-                printf("  movq (%s), %s\n", reg64[r], reg64[r2]);
+                x86_mov_rm(&cg_obj->text, 8, x86_reg_idx(reg64[r2]), x86_mem(x86_reg_idx(reg64[r]), 0));
             // Extract original bitfield value into r3 (for return)
             int r3 = alloc_reg();
-            printf("  mov %s, %s\n", reg64[r2], reg64[r3]);
+            cg_mov_rr_str(reg64[r3], reg64[r2]);
             if (bo > 0)
-                printf("  shr $%d, %s\n", bo, reg64[r3]);
-            int load_bits = eff_sz * 8;
+                cg_shr_ri(8, x86_reg_idx(reg64[r3]), bo) int load_bits = eff_sz * 8;
             if (bw < load_bits) {
                 if (mem->ty->is_unsigned || mem->ty->is_enum) {
                     unsigned long long m = (1ULL << bw) - 1;
-                    printf("  movabsq $%llu, %%rax\n", m);
-                    printf("  andq %%rax, %s\n", reg64[r3]);
+                    cg_mov_ri(8, X86_RAX, (int64_t)m);
+                    x86_and_rr(&cg_obj->text, 8, x86_reg_idx(reg64[r3]), X86_RAX);
                 } else {
                     int shift = 64 - bw;
-                    printf("  shl $%d, %s\n", shift, reg64[r3]);
-                    printf("  sar $%d, %s\n", shift, reg64[r3]);
+                    cg_shl_ri(8, x86_reg_idx(reg64[r3]), shift)
+                        cg_sar_ri(8, x86_reg_idx(reg64[r3]), shift)
                 }
             }
             // Clear the field bits in container word (r2)
-            printf("  movabsq $%llu, %%rax\n", ~mask);
-            printf("  andq %%rax, %s\n", reg64[r2]);
+            cg_mov_ri(8, X86_RAX, (int64_t)~mask);
+            x86_and_rr(&cg_obj->text, 8, x86_reg_idx(reg64[r2]), X86_RAX);
             // Compute new field value in rn
             int rn = alloc_reg();
-            printf("  mov %s, %s\n", reg64[r3], reg64[rn]);
-            printf("  movabsq $%llu, %%rax\n", (1ULL << bw) - 1);
-            printf("  andq %%rax, %s\n", reg64[rn]); // mask to unsigned bw bits
+            cg_mov_rr_str(reg64[rn], reg64[r3]);
+            cg_mov_ri(8, X86_RAX, (int64_t)(1ULL << bw) - 1);
+            x86_and_rr(&cg_obj->text, 8, x86_reg_idx(reg64[rn]), X86_RAX); // mask to unsigned bw bits
             if (node->kind == ND_POST_INC)
                 printf("  add $1, %s\n", reg(rn, 4));
             else
                 printf("  sub $1, %s\n", reg(rn, 4));
-            printf("  movabsq $%llu, %%rax\n", (1ULL << bw) - 1);
-            printf("  andq %%rax, %s\n", reg64[rn]); // wrap around in field
+            cg_mov_ri(8, X86_RAX, (int64_t)(1ULL << bw) - 1);
+            x86_and_rr(&cg_obj->text, 8, x86_reg_idx(reg64[rn]), X86_RAX); // wrap around in field
             if (bo > 0)
-                printf("  shl $%d, %s\n", bo, reg64[rn]);
-            printf("  or %s, %s\n", reg64[rn], reg64[r2]);
+                cg_shl_ri(8, x86_reg_idx(reg64[rn]), bo)
+                    printf("  or %s, %s\n", reg64[rn], reg64[r2]);
             // Store
             if (eff_sz == 1)
-                printf("  movb %s, (%s)\n", reg8[r2], reg64[r]);
+                x86_mov_mr(&cg_obj->text, 1, x86_mem(x86_reg_idx(reg64[r]), 0), x86_reg_idx(reg8[r2]));
             else if (eff_sz == 2)
                 printf("  movw %s, (%s)\n", reg(r2, 2), reg64[r]);
             else if (eff_sz == 4)
                 printf("  movl %s, (%s)\n", reg(r2, 4), reg64[r]);
             else
-                printf("  movq %s, (%s)\n", reg64[r2], reg64[r]);
+                x86_mov_mr(&cg_obj->text, 8, x86_mem(x86_reg_idx(reg64[r]), 0), x86_reg_idx(reg64[r2]));
 #endif
             free_reg(rn);
             free_reg(r3);
@@ -3915,7 +4624,7 @@ static int gen(Node *node) {
         if (is_flonum(node->lhs->ty)) {
             // Float post-inc/dec: use fp arithmetic via d0/d1
             int id = add_float_literal(1.0, sz);
-            printf("  fmov d0, %s\n", reg64[r3]);
+            secbuf_emit32le(&cg_obj->text, arm64_fmov_f2i(1, 0, arm64_reg_idx(reg64[r3])));
             if (sz == 4) {
                 printf("  ldr s1, .LF%d\n", id);
                 printf("  %s s0, s0, s1\n", node->kind == ND_POST_INC ? "fadd" : "fsub");
@@ -3923,15 +4632,13 @@ static int gen(Node *node) {
                 printf("  ldr d1, .LF%d\n", id);
                 printf("  %s d0, d0, d1\n", node->kind == ND_POST_INC ? "fadd" : "fsub");
             }
-            printf("  fmov %s, d0\n", reg64[r3]);
+            secbuf_emit32le(&cg_obj->text, arm64_fmov_i2f(1, arm64_reg_idx(reg64[r3]), 0));
         } else {
             int delta = 1;
             if (node->lhs->ty->kind == TY_PTR || node->lhs->ty->kind == TY_ARRAY)
                 delta = node->lhs->ty->base->size;
             if (node->kind == ND_POST_INC)
-                printf("  add %s, %s, #%d\n", reg(r3, sz), reg(r3, sz), delta);
-            else
-                printf("  sub %s, %s, #%d\n", reg(r3, sz), reg(r3, sz), delta);
+                secbuf_emit32le(&cg_obj->text, arm64_add_imm(1, arm64_reg_idx(reg(r3, sz)), arm64_reg_idx(reg(r3, sz)), delta, 0)) else secbuf_emit32le(&cg_obj->text, arm64_sub_imm(1, arm64_reg_idx(reg(r3, sz)), arm64_reg_idx(reg(r3, sz)), delta, 0))
         }
         emit_store(node->lhs->ty, r3, format("[%s]", reg64[r]));
         free_reg(r3);
@@ -3940,7 +4647,7 @@ static int gen(Node *node) {
         bool is_float = is_flonum(node->lhs->ty);
         if (is_float) {
             int id = add_float_literal(1.0, sz);
-            printf("  movq %s, %%xmm0\n", reg64[r2]);
+            printf("  movq %s, %%xmm0\n", reg64[r2], X86_XMM0);
             if (sz == 4)
                 printf("  %s .LF%d(%%rip), %%xmm0\n",
                        node->kind == ND_POST_INC ? "addss" : "subss", id);
@@ -3948,9 +4655,9 @@ static int gen(Node *node) {
                 printf("  %s .LF%d(%%rip), %%xmm0\n",
                        node->kind == ND_POST_INC ? "addsd" : "subsd", id);
             if (sz == 4)
-                printf("  movss %%xmm0, (%s)\n", reg64[r]);
+                x86_movss_mr(&cg_obj->text, x86_mem(x86_reg_idx(reg64[r]), 0), X86_XMM0);
             else
-                printf("  movsd %%xmm0, (%s)\n", reg64[r]);
+                x86_movsd_mr(&cg_obj->text, x86_mem(x86_reg_idx(reg64[r]), 0), X86_XMM0);
         } else {
             int delta = 1;
             if (node->lhs->ty->kind == TY_PTR || node->lhs->ty->kind == TY_ARRAY)
@@ -3975,18 +4682,18 @@ static int gen(Node *node) {
 #ifdef ARCH_ARM64
             if (load_ty->size == 4) {
                 printf("  ldr s0, [%s]\n", reg64[r]);
-                printf("  fcvt d0, s0\n");
+                cg_emit_arm64_insn(arm64_fcvt(0, 0, 0));
             } else {
                 printf("  ldr d0, [%s]\n", reg64[r]);
             }
-            printf("  fmov %s, d0\n", reg64[r]);
+            secbuf_emit32le(&cg_obj->text, arm64_fmov_i2f(1, arm64_reg_idx(reg64[r]), 0));
 #else
             if (load_ty->size == 4) {
-                printf("  movss (%s), %%xmm0\n", reg64[r]);
-                printf("  cvtss2sd %%xmm0, %%xmm0\n");
+                x86_movss_rm(&cg_obj->text, X86_XMM0, x86_mem(x86_reg_idx(reg64[r]), 0));
+                x86_cvtss2sd(&cg_obj->text, X86_XMM0, X86_XMM0);
                 printf("  movq %%xmm0, %s\n", reg64[r]);
             } else {
-                printf("  movsd (%s), %%xmm0\n", reg64[r]);
+                x86_movsd_rm(&cg_obj->text, X86_XMM0, x86_mem(x86_reg_idx(reg64[r]), 0));
                 printf("  movq %%xmm0, %s\n", reg64[r]);
             }
 #endif
@@ -3999,74 +4706,72 @@ static int gen(Node *node) {
             if (ls > 8 && bo + bw > 64) {
                 r_addr = alloc_reg();
 #ifdef ARCH_ARM64
-                printf("  mov %s, %s\n", reg64[r_addr], reg64[r]);
+                cg_mov_rr_str(reg64[r], reg64[r_addr]);
 #else
-                printf("  mov %s, %s\n", reg64[r], reg64[r_addr]);
+                cg_mov_rr_str(reg64[r_addr], reg64[r]);
 #endif
             }
 #ifdef ARCH_ARM64
             if (eff_ls <= 2)
-                printf("  ldrh %s, [%s]\n", reg32[r], reg64[r]);
+                secbuf_emit32le(&cg_obj->text, arm64_ldrh_uoff(arm64_reg_idx(reg32[r]), arm64_reg_idx(reg64[r]), 0));
             else if (eff_ls == 4)
-                printf("  ldr %s, [%s]\n", reg32[r], reg64[r]);
+                secbuf_emit32le(&cg_obj->text, arm64_ldr_uoff(3, arm64_reg_idx(reg32[r]), arm64_reg_idx(reg64[r]), 0));
             else
-                printf("  ldr %s, [%s]\n", reg64[r], reg64[r]);
+                secbuf_emit32le(&cg_obj->text, arm64_ldr_uoff(3, arm64_reg_idx(reg64[r]), arm64_reg_idx(reg64[r]), 0));
             if (bo > 0)
-                printf("  lsr %s, %s, #%d\n", reg64[r], reg64[r], bo);
-            if (r_addr >= 0) {
-                int overflow = bo + bw - 64;
-                int tmp = alloc_reg();
-                printf("  ldrb %s, [%s, #8]\n", reg32[tmp], reg64[r_addr]);
-                printf("  and %s, %s, #%d\n", reg32[tmp], reg32[tmp], (1 << overflow) - 1);
-                printf("  lsl %s, %s, #%d\n", reg64[tmp], reg64[tmp], 64 - bo);
-                printf("  orr %s, %s, %s\n", reg64[r], reg64[r], reg64[tmp]);
-                free_reg(tmp);
-                free_reg(r_addr);
-            }
+                secbuf_emit32le(&cg_obj->text, arm64_lsr_imm(1, arm64_reg_idx(reg64[r]), arm64_reg_idx(reg64[r]), bo)) if (r_addr >= 0) {
+                    int overflow = bo + bw - 64;
+                    int tmp = alloc_reg();
+                    printf("  ldrb %s, [%s, #8]\n", reg32[tmp], reg64[r_addr]);
+                    printf("  and %s, %s, #%d\n", reg32[tmp], reg32[tmp], (1 << overflow) - 1);
+                    secbuf_emit32le(&cg_obj->text, arm64_lsl_imm(1, arm64_reg_idx(reg64[tmp]), arm64_reg_idx(reg64[tmp]), 64 - bo))
+                        secbuf_emit32le(&cg_obj->text, arm64_orr_reg(1, arm64_reg_idx(reg64[r]), arm64_reg_idx(reg64[r]), arm64_reg_idx(reg64[tmp]), 0, 0));
+                    free_reg(tmp);
+                    free_reg(r_addr);
+                }
             int load_bits = ls * 8;
             if (bw < load_bits) {
                 if (node->member->ty->is_unsigned || node->member->ty->is_enum) {
                     unsigned long long mask = (1ULL << bw) - 1;
                     emit_mov_imm64("x16", mask);
-                    printf("  and %s, %s, x16\n", reg64[r], reg64[r]);
+                    secbuf_emit32le(&cg_obj->text, arm64_and_reg(1, arm64_reg_idx(reg64[r]), arm64_reg_idx(reg64[r]), 16, 0, 0));
                 } else {
                     int shift = 64 - bw;
-                    printf("  lsl %s, %s, #%d\n", reg64[r], reg64[r], shift);
-                    printf("  asr %s, %s, #%d\n", reg64[r], reg64[r], shift);
+                    secbuf_emit32le(&cg_obj->text, arm64_lsl_imm(1, arm64_reg_idx(reg64[r]), arm64_reg_idx(reg64[r]), shift))
+                        secbuf_emit32le(&cg_obj->text, arm64_asr_imm(1, arm64_reg_idx(reg64[r]), arm64_reg_idx(reg64[r]), shift))
                 }
             }
             return r;
 #else
             if (eff_ls == 1)
-                printf("  movzbl (%s), %s\n", reg64[r], reg32[r]);
+                x86_movzx_rm(&cg_obj->text, 4, 1, x86_reg_idx(reg32[r]), x86_mem(x86_reg_idx(reg64[r]), 0));
             else if (eff_ls == 2)
-                printf("  movzwl (%s), %s\n", reg64[r], reg32[r]);
+                x86_movzx_rm(&cg_obj->text, 4, 2, x86_reg_idx(reg32[r]), x86_mem(x86_reg_idx(reg64[r]), 0));
             else if (eff_ls == 4)
-                printf("  movl (%s), %s\n", reg64[r], reg32[r]);
+                x86_mov_rm(&cg_obj->text, 4, x86_reg_idx(reg32[r]), x86_mem(x86_reg_idx(reg64[r]), 0));
             else
-                printf("  movq (%s), %s\n", reg64[r], reg64[r]);
+                x86_mov_rm(&cg_obj->text, 8, x86_reg_idx(reg64[r]), x86_mem(x86_reg_idx(reg64[r]), 0));
             if (bo > 0)
-                printf("  shr $%d, %s\n", bo, reg64[r]);
-            if (r_addr >= 0) {
-                int overflow = bo + bw - 64;
-                int tmp = alloc_reg();
-                printf("  movzbl 8(%s), %s\n", reg64[r_addr], reg32[tmp]);
-                printf("  and $%d, %s\n", (1 << overflow) - 1, reg32[tmp]);
-                printf("  shl $%d, %s\n", 64 - bo, reg64[tmp]);
-                printf("  or %s, %s\n", reg64[tmp], reg64[r]);
-                free_reg(tmp);
-                free_reg(r_addr);
-            }
+                cg_shr_ri(8, x86_reg_idx(reg64[r]), bo) if (r_addr >= 0) {
+                    int overflow = bo + bw - 64;
+                    int tmp = alloc_reg();
+                    printf("  movzbl 8(%s), %s\n", reg64[r_addr], reg32[tmp]);
+                    printf("  and $%d, %s\n", (1 << overflow) - 1, reg32[tmp]);
+                    cg_shl_ri(8, x86_reg_idx(reg64[tmp]), 64 - bo)
+                        printf("  or %s, %s\n", reg64[tmp], reg64[r]);
+                    free_reg(tmp);
+                    free_reg(r_addr);
+                }
             int load_bits = ls * 8;
             if (bw < load_bits) {
                 if (node->member->ty->is_unsigned || node->member->ty->is_enum) {
                     unsigned long long mask = (1ULL << bw) - 1;
-                    printf("  movabsq $%llu, %%rax\n", mask);
-                    printf("  andq %%rax, %s\n", reg64[r]);
+                    cg_mov_ri(8, X86_RAX, (int64_t)mask);
+                    x86_and_rr(&cg_obj->text, 8, x86_reg_idx(reg64[r]), X86_RAX);
                 } else {
                     int shift = 64 - bw;
-                    printf("  shl $%d, %s\n", shift, reg64[r]);
-                    printf("  sar $%d, %s\n", shift, reg64[r]);
+                    cg_shl_ri(8, x86_reg_idx(reg64[r]), shift)
+                        cg_sar_ri(8, x86_reg_idx(reg64[r]), shift)
                 }
             }
             return r;
@@ -4086,32 +4791,30 @@ static int gen(Node *node) {
                 : node->member->ty->size * 8;
 #ifdef ARCH_ARM64
             if (bo > 0)
-                printf("  lsr %s, %s, #%d\n", reg64[r], reg64[r], bo);
-            if (bw < load_bits) {
-                if (node->member->ty->is_unsigned || node->member->ty->is_enum) {
-                    unsigned long long mask = (1ULL << bw) - 1;
-                    emit_mov_imm64("x16", mask);
-                    printf("  and %s, %s, x16\n", reg64[r], reg64[r]);
-                } else {
-                    int shift = 64 - bw;
-                    printf("  lsl %s, %s, #%d\n", reg64[r], reg64[r], shift);
-                    printf("  asr %s, %s, #%d\n", reg64[r], reg64[r], shift);
+                secbuf_emit32le(&cg_obj->text, arm64_lsr_imm(1, arm64_reg_idx(reg64[r]), arm64_reg_idx(reg64[r]), bo)) if (bw < load_bits) {
+                    if (node->member->ty->is_unsigned || node->member->ty->is_enum) {
+                        unsigned long long mask = (1ULL << bw) - 1;
+                        emit_mov_imm64("x16", mask);
+                        secbuf_emit32le(&cg_obj->text, arm64_and_reg(1, arm64_reg_idx(reg64[r]), arm64_reg_idx(reg64[r]), 16, 0, 0));
+                    } else {
+                        int shift = 64 - bw;
+                        secbuf_emit32le(&cg_obj->text, arm64_lsl_imm(1, arm64_reg_idx(reg64[r]), arm64_reg_idx(reg64[r]), shift))
+                            secbuf_emit32le(&cg_obj->text, arm64_asr_imm(1, arm64_reg_idx(reg64[r]), arm64_reg_idx(reg64[r]), shift))
+                    }
                 }
-            }
 #else
             if (bo > 0)
-                printf("  shr $%d, %s\n", bo, reg64[r]);
-            if (bw < load_bits) {
-                if (node->member->ty->is_unsigned || node->member->ty->is_enum) {
-                    unsigned long long mask = (1ULL << bw) - 1;
-                    printf("  movabsq $%llu, %%rax\n", mask);
-                    printf("  andq %%rax, %s\n", reg64[r]);
-                } else {
-                    int shift = 64 - bw;
-                    printf("  shl $%d, %s\n", shift, reg64[r]);
-                    printf("  sar $%d, %s\n", shift, reg64[r]);
+                cg_shr_ri(8, x86_reg_idx(reg64[r]), bo) if (bw < load_bits) {
+                    if (node->member->ty->is_unsigned || node->member->ty->is_enum) {
+                        unsigned long long mask = (1ULL << bw) - 1;
+                        cg_mov_ri(8, X86_RAX, (int64_t)mask);
+                        x86_and_rr(&cg_obj->text, 8, x86_reg_idx(reg64[r]), X86_RAX);
+                    } else {
+                        int shift = 64 - bw;
+                        cg_shl_ri(8, x86_reg_idx(reg64[r]), shift)
+                            cg_sar_ri(8, x86_reg_idx(reg64[r]), shift)
+                    }
                 }
-            }
 #endif
         }
         return r;
@@ -4124,7 +4827,7 @@ static int gen(Node *node) {
         Type *to = node->ty;
         if (is_flonum(from) && is_integer(to)) {
 #ifdef ARCH_ARM64
-            printf("  fmov d0, %s\n", reg64[r]);
+            secbuf_emit32le(&cg_obj->text, arm64_fmov_f2i(1, 0, arm64_reg_idx(reg64[r])));
             {
                 const char *dst = (to->size >= 8) ? reg64[r] : reg32[r];
                 if (to->is_unsigned)
@@ -4136,46 +4839,46 @@ static int gen(Node *node) {
             printf("  movq %s, %%xmm0\n", reg64[r]);
             if (to->size == 8 && to->is_unsigned) {
                 int c = ++rcc_label_count;
-                printf("  movq $0x43e0000000000000, %%rax\n");
+                cg_mov_ri(8, X86_RAX, (int64_t)0x43e0000000000000ULL);
                 printf("  movq %%rax, %%xmm1\n");
-                printf("  comisd %%xmm1, %%xmm0\n");
+                x86_comisd(&cg_obj->text, X86_XMM0, X86_XMM1);
                 printf("  jb .L.ucast.%d\n", c);
-                printf("  subsd %%xmm1, %%xmm0\n");
-                printf("  cvttsd2si %%xmm0, %s\n", reg64[r]);
-                printf("  movq $0x8000000000000000, %%rcx\n");
+                x86_subsd(&cg_obj->text, X86_XMM0, X86_XMM1);
+                x86_cvttsd2si(&cg_obj->text, 8, x86_reg_idx(reg64[r]), X86_XMM0);
+                cg_mov_ri(8, X86_RCX, (int64_t)0x8000000000000000ULL);
                 printf("  orq %%rcx, %s\n", reg64[r]);
                 printf("  jmp .L.ucast_end.%d\n", c);
                 printf(".L.ucast.%d:\n", c);
-                printf("  cvttsd2si %%xmm0, %s\n", reg64[r]);
+                x86_cvttsd2si(&cg_obj->text, 8, x86_reg_idx(reg64[r]), X86_XMM0);
                 printf(".L.ucast_end.%d:\n", c);
             } else if (to->size <= 4 && to->is_unsigned) {
                 // float-to-unsigned-int: cvttsd2si is signed, so handle [2^31, 2^32) range.
                 int c = ++rcc_label_count;
-                printf("  movq $0x41e0000000000000, %%rax\n"); // 2^31 as double
+                cg_mov_ri(8, X86_RAX, (int64_t)0x41e0000000000000ULL); // 2^31 as double
                 printf("  movq %%rax, %%xmm1\n");
-                printf("  comisd %%xmm1, %%xmm0\n");
+                x86_comisd(&cg_obj->text, X86_XMM0, X86_XMM1);
                 printf("  jb .L.ucast32.%d\n", c);
-                printf("  subsd %%xmm1, %%xmm0\n"); // d -= 2^31
-                printf("  cvttsd2si %%xmm0, %s\n", reg32[r]);
+                x86_subsd(&cg_obj->text, X86_XMM0, X86_XMM1); // d -= 2^31
+                x86_cvttsd2si(&cg_obj->text, 8, x86_reg_idx(reg32[r]), X86_XMM0);
                 printf("  addl $0x80000000, %s\n", reg32[r]); // add back 2^31
                 printf("  jmp .L.ucast32_end.%d\n", c);
                 printf(".L.ucast32.%d:\n", c);
-                printf("  cvttsd2si %%xmm0, %s\n", reg32[r]);
+                x86_cvttsd2si(&cg_obj->text, 8, x86_reg_idx(reg32[r]), X86_XMM0);
                 printf(".L.ucast32_end.%d:\n", c);
             } else if (to->size <= 4 && !to->is_unsigned) {
                 int c = ++rcc_label_count;
                 // cvttsd2si returns 0x80000000 (INT_MIN) on overflow.
                 // If input is >= 0, it was an overflow, saturate to INT_MAX.
-                printf("  cvttsd2si %%xmm0, %s\n", reg32[r]);
+                x86_cvttsd2si(&cg_obj->text, 8, x86_reg_idx(reg32[r]), X86_XMM0);
                 printf("  cmp $0x80000000, %s\n", reg32[r]);
                 printf("  jne .L.sat_end.%d\n", c);
-                printf("  xorpd %%xmm1, %%xmm1\n");
-                printf("  comisd %%xmm1, %%xmm0\n");
+                x86_xorpd(&cg_obj->text, X86_XMM1, X86_XMM1);
+                x86_comisd(&cg_obj->text, X86_XMM0, X86_XMM1);
                 printf("  jb .L.sat_end.%d\n", c);
                 printf("  mov $0x7fffffff, %s\n", reg32[r]);
                 printf(".L.sat_end.%d:\n", c);
             } else {
-                printf("  cvttsd2si %%xmm0, %s\n", to->size == 8 ? reg64[r] : reg32[r]);
+                x86_cvttsd2si(&cg_obj->text, 8, x86_reg_idx(to->size == 8 ? reg64[r] : reg32[r]), X86_XMM0);
             }
 #endif
         } else if (is_integer(from) && is_flonum(to)) {
@@ -4186,10 +4889,10 @@ static int gen(Node *node) {
                 printf("  scvtf d0, %s\n", from->size < 4 ? reg32[r] : reg(r, from->size));
             }
             if (to->kind == TY_FLOAT) {
-                printf("  fcvt s0, d0\n");
-                printf("  fcvt d0, s0\n");
+                cg_emit_arm64_insn(arm64_fcvt(1, 0, 0));
+                cg_emit_arm64_insn(arm64_fcvt(0, 0, 0));
             }
-            printf("  fmov %s, d0\n", reg64[r]);
+            secbuf_emit32le(&cg_obj->text, arm64_fmov_i2f(1, arm64_reg_idx(reg64[r]), 0));
 #else
             if (from->is_unsigned && from->size == 8) {
                 int c = ++rcc_label_count;
@@ -4198,10 +4901,10 @@ static int gen(Node *node) {
                 printf("  cvtsi2sd %s, %%xmm0\n", reg64[r]);
                 printf("  jmp .L.u2f.end.%d\n", c);
                 printf(".L.u2f.high.%d:\n", c);
-                printf("  movq %s, %%rcx\n", reg64[r]);
-                printf("  shrq %%rcx\n");
-                printf("  cvtsi2sd %%rcx, %%xmm0\n");
-                printf("  addsd %%xmm0, %%xmm0\n");
+                cg_mov_rr(8, X86_RCX, x86_reg_idx(reg64[r]));
+                x86_shr_rcl(&cg_obj->text, 8, X86_RCX);
+                x86_cvtsi2sd(&cg_obj->text, 8, X86_XMM0, X86_RCX);
+                x86_addsd(&cg_obj->text, X86_XMM0, X86_XMM0);
                 printf(".L.u2f.end.%d:\n", c);
             } else if (from->is_unsigned && from->size == 4) {
                 printf("  cvtsi2sd %s, %%xmm0\n", reg64[r]);
@@ -4209,24 +4912,24 @@ static int gen(Node *node) {
                 printf("  cvtsi2sd %s, %%xmm0\n", from->size < 4 ? reg32[r] : reg(r, from->size));
             }
             if (to->kind == TY_FLOAT) {
-                printf("  cvtsd2ss %%xmm0, %%xmm0\n");
-                printf("  cvtss2sd %%xmm0, %%xmm0\n");
+                x86_cvtsd2ss(&cg_obj->text, X86_XMM0, X86_XMM0);
+                x86_cvtss2sd(&cg_obj->text, X86_XMM0, X86_XMM0);
             }
             printf("  movq %%xmm0, %s\n", reg64[r]);
 #endif
         } else if (is_flonum(from) && is_flonum(to)) {
 #ifdef ARCH_ARM64
             if (to->kind == TY_FLOAT && from->kind != TY_FLOAT) {
-                printf("  fmov d0, %s\n", reg64[r]);
-                printf("  fcvt s0, d0\n");
-                printf("  fcvt d0, s0\n");
-                printf("  fmov %s, d0\n", reg64[r]);
+                secbuf_emit32le(&cg_obj->text, arm64_fmov_f2i(1, 0, arm64_reg_idx(reg64[r])));
+                cg_emit_arm64_insn(arm64_fcvt(1, 0, 0));
+                cg_emit_arm64_insn(arm64_fcvt(0, 0, 0));
+                secbuf_emit32le(&cg_obj->text, arm64_fmov_i2f(1, arm64_reg_idx(reg64[r]), 0));
             }
 #else
             if (to->kind == TY_FLOAT && from->kind != TY_FLOAT) {
                 printf("  movq %s, %%xmm0\n", reg64[r]);
-                printf("  cvtsd2ss %%xmm0, %%xmm0\n");
-                printf("  cvtss2sd %%xmm0, %%xmm0\n");
+                x86_cvtsd2ss(&cg_obj->text, X86_XMM0, X86_XMM0);
+                x86_cvtss2sd(&cg_obj->text, X86_XMM0, X86_XMM0);
                 printf("  movq %%xmm0, %s\n", reg64[r]);
             }
 #endif
@@ -4235,27 +4938,27 @@ static int gen(Node *node) {
             if (to->is_unsigned)
                 printf("  and %s, %s, #0xff\n", reg32[r], reg32[r]);
             else
-                printf("  sxtb %s, %s\n", reg32[r], reg32[r]);
+                secbuf_emit32le(&cg_obj->text, arm64_sxtb(1, arm64_reg_idx(reg32[r]), arm64_reg_idx(reg32[r])));
 #else
             if (to->is_unsigned)
-                printf("  movzbl %s, %s\n", reg8[r], reg32[r]);
+                cg_movzx(4, 1, x86_reg_idx(reg32[r]), x86_reg_idx(reg8[r]));
             else
-                printf("  movsbl %s, %s\n", reg8[r], reg32[r]);
+                cg_movsx(4, 1, x86_reg_idx(reg32[r]), x86_reg_idx(reg8[r]));
 #endif
         } else if (to->size == 2) {
 #ifdef ARCH_ARM64
             if (to->is_unsigned)
                 printf("  and %s, %s, #0xffff\n", reg32[r], reg32[r]);
             else
-                printf("  sxth %s, %s\n", reg32[r], reg32[r]);
+                secbuf_emit32le(&cg_obj->text, arm64_sxth(1, arm64_reg_idx(reg32[r]), arm64_reg_idx(reg32[r])));
 #else
             if (to->is_unsigned)
-                printf("  movzwl %s, %s\n", reg16[r], reg32[r]);
+                cg_movzx(4, 2, x86_reg_idx(reg32[r]), x86_reg_idx(reg16[r]));
             else
-                printf("  movswl %s, %s\n", reg16[r], reg32[r]);
+                cg_movsx(4, 2, x86_reg_idx(reg32[r]), x86_reg_idx(reg16[r]));
 #endif
         } else if (to->size == 4 && from->size == 8) {
-            printf("  mov %s, %s\n", reg32[r], reg32[r]);
+            cg_mov_rr_str(reg32[r], reg32[r]);
         } else if (to->size == 8 && from->size < 8) {
             if (from->is_unsigned)
                 zero_extend_to(r, from->size, 8);
@@ -4290,17 +4993,17 @@ static int gen(Node *node) {
 #ifdef ARCH_ARM64
             if (node->ty->size == 4) {
                 printf("  ldr s0, [%s]\n", reg64[r]);
-                printf("  fcvt d0, s0\n");
+                cg_emit_arm64_insn(arm64_fcvt(0, 0, 0));
             } else {
                 printf("  ldr d0, [%s]\n", reg64[r]);
             }
-            printf("  fmov %s, d0\n", reg64[r]);
+            secbuf_emit32le(&cg_obj->text, arm64_fmov_i2f(1, arm64_reg_idx(reg64[r]), 0));
 #else
             if (node->ty->size == 4) {
-                printf("  movss (%s), %%xmm0\n", reg64[r]);
-                printf("  cvtss2sd %%xmm0, %%xmm0\n");
+                x86_movss_rm(&cg_obj->text, X86_XMM0, x86_mem(x86_reg_idx(reg64[r]), 0));
+                x86_cvtss2sd(&cg_obj->text, X86_XMM0, X86_XMM0);
             } else {
-                printf("  movsd (%s), %%xmm0\n", reg64[r]);
+                x86_movsd_rm(&cg_obj->text, X86_XMM0, x86_mem(x86_reg_idx(reg64[r]), 0));
             }
             printf("  movq %%xmm0, %s\n", reg64[r]);
 #endif
@@ -4330,38 +5033,38 @@ static int gen(Node *node) {
                     printf("  ldr x11, [%s, #-%d]\n", FRAME_PTR, retbuf_offset);
                 else {
                     int v = retbuf_offset;
-                    printf("  mov x16, #%d\n", v & 0xffff);
-                    v >>= 16;
+                    secbuf_emit32le(&cg_obj->text, arm64_movz(1, 16, v & 0xffff, 0))
+                        v >>= 16;
                     int s = 16;
                     while (v) {
-                        printf("  movk x16, #%d, lsl #%d\n", v & 0xffff, s);
-                        v >>= 16;
+                        secbuf_emit32le(&cg_obj->text, arm64_movk(1, 16, v & 0xffff, s))
+                            v >>= 16;
                         s += 16;
                     }
                     printf("  sub x11, %s, x16\n", FRAME_PTR);
                 }
-                printf("  mov x9, #%d\n", node->lhs->ty->size);
-                printf(".L.retcopy.%d:\n", c);
-                printf("  cmp x9, #0\n");
+                secbuf_emit32le(&cg_obj->text, arm64_movz(1, 9, node->lhs->ty->size, 0))
+                    printf(".L.retcopy.%d:\n", c);
+                cg_emit_arm64_insn(arm64_subs_imm(1, 31, 9, 0, 0));
                 printf("  b.eq .L.retcopy_end.%d\n", c);
-                printf("  sub x9, x9, #1\n");
+                cg_emit_arm64_insn(arm64_sub_imm(1, 9, 9, 1, 0));
                 printf("  ldrb w16, [%s, x9]\n", reg64[src]);
-                printf("  strb w16, [x11, x9]\n");
+                secbuf_emit32le(&cg_obj->text, arm64_strb_reg(16, 11, 9));
                 printf("  b .L.retcopy.%d\n", c);
                 printf(".L.retcopy_end.%d:\n", c);
-                printf("  mov x0, x11\n");
+                secbuf_emit32le(&cg_obj->text, arm64_add_reg(1, 0, 31, 11, 0, 0));
 #else
                 printf("  movq -%d(%%rbp), %%r11\n", retbuf_offset);
                 printf("  movq $%d, %%rcx\n", node->lhs->ty->size);
                 printf(".L.retcopy.%d:\n", c);
-                printf("  cmpq $0, %%rcx\n");
+                cg_cmp_ri(8, X86_RCX, 0);
                 printf("  je .L.retcopy_end.%d\n", c);
                 printf("  movb -1(%s,%%rcx), %%al\n", reg64[src]);
                 printf("  movb %%al, -1(%%r11,%%rcx)\n");
-                printf("  subq $1, %%rcx\n");
+                cg_sub_ri(8, X86_RCX, 1);
                 printf("  jmp .L.retcopy.%d\n", c);
                 printf(".L.retcopy_end.%d:\n", c);
-                printf("  movq %%r11, %%rax\n");
+                cg_mov_rr(8, X86_RAX, X86_R11);
 #endif
                 free_reg(src);
             } else {
@@ -4370,13 +5073,13 @@ static int gen(Node *node) {
                 if (ret_ty && is_flonum(ret_ty)) {
                     if (node->lhs->ty && is_flonum(node->lhs->ty)) {
 #ifdef ARCH_ARM64
-                        printf("  fmov d0, %s\n", reg64[r]);
+                        secbuf_emit32le(&cg_obj->text, arm64_fmov_f2i(1, 0, arm64_reg_idx(reg64[r])));
                         if (ret_ty->kind == TY_FLOAT)
-                            printf("  fcvt s0, d0\n");
+                            cg_emit_arm64_insn(arm64_fcvt(1, 0, 0));
 #else
                         printf("  movq %s, %%xmm0\n", reg64[r]);
                         if (ret_ty->kind == TY_FLOAT)
-                            printf("  cvtsd2ss %%xmm0, %%xmm0\n");
+                            x86_cvtsd2ss(&cg_obj->text, X86_XMM0, X86_XMM0);
 #endif
                     } else if (ret_ty->size == 4) {
 #ifdef ARCH_ARM64
@@ -4396,10 +5099,10 @@ static int gen(Node *node) {
                                 printf("  cvtsi2ss %s, %%xmm0\n", reg64[r]);
                                 printf("  jmp .L.u2f.end.%d\n", c);
                                 printf(".L.u2f.high.%d:\n", c);
-                                printf("  movq %s, %%rcx\n", reg64[r]);
-                                printf("  shrq %%rcx\n");
-                                printf("  cvtsi2ss %%rcx, %%xmm0\n");
-                                printf("  addss %%xmm0, %%xmm0\n");
+                                cg_mov_rr(8, X86_RCX, x86_reg_idx(reg64[r]));
+                                x86_shr_rcl(&cg_obj->text, 8, X86_RCX);
+                                x86_cvtsi2ss(&cg_obj->text, 8, X86_XMM0, X86_RCX);
+                                x86_addss(&cg_obj->text, X86_XMM0, X86_XMM0);
                                 printf(".L.u2f.end.%d:\n", c);
                             } else if (src_u && src_sz <= 4) {
                                 // unsigned int/short/char → float: zero-extend to 64-bit,
@@ -4430,10 +5133,10 @@ static int gen(Node *node) {
                                 printf("  cvtsi2sd %s, %%xmm0\n", reg64[r]);
                                 printf("  jmp .L.u2f.end.%d\n", c);
                                 printf(".L.u2f.high.%d:\n", c);
-                                printf("  movq %s, %%rcx\n", reg64[r]);
-                                printf("  shrq %%rcx\n");
-                                printf("  cvtsi2sd %%rcx, %%xmm0\n");
-                                printf("  addsd %%xmm0, %%xmm0\n");
+                                cg_mov_rr(8, X86_RCX, x86_reg_idx(reg64[r]));
+                                x86_shr_rcl(&cg_obj->text, 8, X86_RCX);
+                                x86_cvtsi2sd(&cg_obj->text, 8, X86_XMM0, X86_RCX);
+                                x86_addsd(&cg_obj->text, X86_XMM0, X86_XMM0);
                                 printf(".L.u2f.end.%d:\n", c);
                             } else if (src_u && src_sz <= 4) {
                                 // unsigned int/short/char → double: zero-extend to 64-bit
@@ -4466,7 +5169,7 @@ static int gen(Node *node) {
                         printf("  sxtw x0, %s\n", reg32[r]);
 #else
                     printf("  cvttsd2si %%xmm0, %s\n", reg(r, sz));
-                    printf("  movq %s, %%rax\n", reg64[r]); // upper 32 bits zero-extended by cvttsd2si
+                    cg_mov_rr(8, X86_RAX, reg64_idx[r]); // upper 32 bits zero-extended by cvttsd2si
 #endif
                 } else {
 #ifdef ARCH_ARM64
@@ -4476,13 +5179,13 @@ static int gen(Node *node) {
                             printf("  and %s, %s, #0x%x\n", reg32[r], reg32[r],
                                    (1 << (ret_ty->size * 8)) - 1);
                         else if (ret_ty->size == 1)
-                            printf("  sxtb %s, %s\n", reg32[r], reg32[r]);
+                            secbuf_emit32le(&cg_obj->text, arm64_sxtb(1, arm64_reg_idx(reg32[r]), arm64_reg_idx(reg32[r])));
                         else
-                            printf("  sxth %s, %s\n", reg32[r], reg32[r]);
+                            secbuf_emit32le(&cg_obj->text, arm64_sxth(1, arm64_reg_idx(reg32[r]), arm64_reg_idx(reg32[r])));
                     }
                     printf("  mov x0, %s\n", reg64[r]);
 #else
-                    printf("  movq %s, %%rax\n", reg64[r]);
+                    cg_mov_rr(8, X86_RAX, reg64_idx[r]);
                     // Truncate return value to match function return type width
                     if (ret_ty && ret_ty->size < 4 && ret_ty->is_unsigned)
                         printf("  andl $%d, %%eax\n", (1 << (ret_ty->size * 8)) - 1);
@@ -4512,36 +5215,36 @@ static int gen(Node *node) {
 #ifdef ARCH_ARM64
         if (node->kind == ND_ALLOCA_ZINIT && node->lhs && node->lhs->kind == ND_NUM && node->lhs->val == 0) {
             arm64_load_from_fp_minus(node->var->offset, "x16");
-            printf("  mov sp, x16\n");
+            cg_emit_arm64_insn(arm64_add_reg(1, 31, 16, ARM64_LSL, 0));
             return -1;
         }
         int r = gen(node->lhs);
         // Save current SP into VLA save slot
-        printf("  mov x16, sp\n");
+        cg_emit_arm64_insn(arm64_add_reg(1, 16, 31, ARM64_LSL, 0));
         arm64_store_to_fp_minus("x16", node->var->offset);
         // Round size up to 16-byte alignment, keep in x16 (scratch, not in pool)
         printf("  add %s, %s, #15\n", reg64[r], reg64[r]);
         printf("  and %s, %s, #-16\n", reg64[r], reg64[r]);
         printf("  mov x16, %s\n", reg64[r]); // size → x16 (scratch, won't clobber pool)
         free_reg(r);
-        printf("  sub sp, sp, x16\n");
+        cg_emit_arm64_insn(arm64_sub_reg(1, 31, 31, 16, ARM64_LSL, 0));
         if (node->kind == ND_ALLOCA_ZINIT) {
             printf(".L.alloca.zero.%d:\n", rcc_label_count);
-            printf("  subs x16, x16, #8\n"); // subs sets flags; sub does not
+            cg_emit_arm64_insn(arm64_subs_imm(1, 16, 16, 8, 0)); // subs sets flags; sub does not
             printf("  b.lt .L.alloca.done.%d\n", rcc_label_count);
-            printf("  str xzr, [sp, x16]\n");
+            secbuf_emit32le(&cg_obj->text, arm64_str_reg(3, 31, 31, 16, false, 0));
             printf("  b .L.alloca.zero.%d\n", rcc_label_count);
         } else {
             printf(".L.alloca.probe.%d:\n", rcc_label_count);
-            printf("  subs x16, x16, #4096\n"); // subs sets flags; sub does not
+            cg_emit_arm64_insn(arm64_subs_imm(1, 16, 16, 4096, 0)); // subs sets flags; sub does not
             printf("  b.lt .L.alloca.done.%d\n", rcc_label_count);
-            printf("  ldrb w17, [sp, x16]\n"); // w17 = scratch, not in pool
+            secbuf_emit32le(&cg_obj->text, arm64_ldrb_reg(17, 31, 16)); // w17 = scratch, not in pool
             printf("  b .L.alloca.probe.%d\n", rcc_label_count);
         }
         printf(".L.alloca.done.%d:\n", rcc_label_count);
         rcc_label_count++;
         // Save VLA data pointer
-        printf("  mov x16, sp\n");
+        cg_emit_arm64_insn(arm64_add_reg(1, 16, 31, ARM64_LSL, 0));
         arm64_store_to_fp_minus("x16", node->var->offset - 8);
 #else
         if (node->kind == ND_ALLOCA_ZINIT && node->lhs && node->lhs->kind == ND_NUM && node->lhs->val == 0) {
@@ -4550,23 +5253,23 @@ static int gen(Node *node) {
         }
         int r = gen(node->lhs);
         printf("  movq %%rsp, -%d(%%rbp)\n", node->var->offset);
-        printf("  movq %s, %%rax\n", reg64[r]);
+        cg_mov_rr(8, X86_RAX, reg64_idx[r]);
         free_reg(r);
-        printf("  movq %%rsp, %%rcx\n");
-        printf("  subq %%rax, %%rsp\n");
+        cg_mov_rr(8, X86_RCX, X86_RSP);
+        x86_sub_rr(&cg_obj->text, 8, X86_RSP, X86_RAX);
         int align = 16;
         printf("  andq $-%d, %%rsp\n", align);
-        printf("  subq %%rsp, %%rcx\n");
+        x86_sub_rr(&cg_obj->text, 8, X86_RCX, X86_RSP);
         if (node->kind == ND_ALLOCA_ZINIT) {
-            printf("  pxor %%xmm0, %%xmm0\n");
+            x86_pxor(&cg_obj->text, X86_XMM0, X86_XMM0);
             printf(".L.alloca.zero.%d:\n", rcc_label_count);
-            printf("  subq $16, %%rcx\n");
+            cg_sub_ri(8, X86_RCX, 16);
             printf("  js .L.alloca.done.%d\n", rcc_label_count);
             printf("  movaps %%xmm0, (%%rsp,%%rcx)\n");
             printf("  jmp .L.alloca.zero.%d\n", rcc_label_count);
         } else {
             printf(".L.alloca.probe.%d:\n", rcc_label_count);
-            printf("  subq $4096, %%rcx\n");
+            cg_sub_ri(8, X86_RCX, 4096);
             printf("  js .L.alloca.done.%d\n", rcc_label_count);
             printf("  orb $0, (%%rsp,%%rcx)\n");
             printf("  jmp .L.alloca.probe.%d\n", rcc_label_count);
@@ -4576,7 +5279,7 @@ static int gen(Node *node) {
         if (node->var)
             printf("  movq %%rsp, -%d(%%rbp)\n", node->var->offset - 8);
         else
-            printf("  movq %%rsp, %%rax\n");
+            cg_mov_rr(8, X86_RAX, X86_RSP);
 #endif
         return -1;
     }
@@ -4635,7 +5338,7 @@ static int gen(Node *node) {
         free_reg(lhs);
         int rhs = gen(node->rhs);
         printf("  cmp $0, %s\n", reg(rhs, node->rhs->ty->size));
-        printf("  setne %%al\n");
+        x86_setcc(&cg_obj->text, X86_NE, X86_RAX);
         printf("  movb %%al, -%d(%%rbp)\n", spill_logand);
 #endif
         free_reg(rhs);
@@ -4667,7 +5370,7 @@ static int gen(Node *node) {
         free_reg(lhs);
         int rhs = gen(node->rhs);
         printf("  cmp $0, %s\n", reg(rhs, node->rhs->ty->size));
-        printf("  setne %%al\n");
+        x86_setcc(&cg_obj->text, X86_NE, X86_RAX);
         printf("  movb %%al, -%d(%%rbp)\n", spill_logand);
 #endif
         free_reg(rhs);
@@ -4688,24 +5391,24 @@ static int gen(Node *node) {
         printf("  b.eq .L.else.%d\n", c);
         free_reg(cond);
         int then_r = gen(node->then);
-        printf("  mov %s, %s\n", reg64[r], reg64[then_r]);
+        cg_mov_rr_str(reg64[then_r], reg64[r]);
         free_reg(then_r);
         printf("  b .L.end.%d\n", c);
         printf(".L.else.%d:\n", c);
         int else_r = gen(node->els);
-        printf("  mov %s, %s\n", reg64[r], reg64[else_r]);
+        cg_mov_rr_str(reg64[else_r], reg64[r]);
         free_reg(else_r);
 #else
         printf("  cmp $0, %s\n", reg(cond, node->cond->ty->size));
         printf("  je .L.else.%d\n", c);
         free_reg(cond);
         int then_r = gen(node->then);
-        printf("  mov %s, %s\n", reg64[then_r], reg64[r]);
+        cg_mov_rr_str(reg64[r], reg64[then_r]);
         free_reg(then_r);
         printf("  jmp .L.end.%d\n", c);
         printf(".L.else.%d:\n", c);
         int else_r = gen(node->els);
-        printf("  mov %s, %s\n", reg64[else_r], reg64[r]);
+        cg_mov_rr_str(reg64[r], reg64[else_r]);
         free_reg(else_r);
 #endif
         printf(".L.end.%d:\n", c);
@@ -4900,8 +5603,8 @@ static int gen(Node *node) {
                     printf("  cmp $%lld, %s\n", (long long)cs->case_val, reg(cond, sz));
                 else {
                     int tmp = alloc_reg();
-                    printf("  movabs $%lld, %s\n", (long long)cs->case_val, reg64[tmp]);
-                    printf("  cmp %s, %s\n", reg(tmp, sz), reg(cond, sz));
+                    cg_mov_ri(8, x86_reg_idx(reg64[tmp]), (int64_t)(long long)cs->case_val)
+                        printf("  cmp %s, %s\n", reg(tmp, sz), reg(cond, sz));
                     free_reg(tmp);
                 }
                 printf("  %s .L.skip.%d\n", is_uns ? "jb" : "jl", skip_lbl);
@@ -4909,8 +5612,8 @@ static int gen(Node *node) {
                     printf("  cmp $%lld, %s\n", (long long)cs->case_end, reg(cond, sz));
                 else {
                     int tmp = alloc_reg();
-                    printf("  movabs $%lld, %s\n", (long long)cs->case_end, reg64[tmp]);
-                    printf("  cmp %s, %s\n", reg(tmp, sz), reg(cond, sz));
+                    cg_mov_ri(8, x86_reg_idx(reg64[tmp]), (int64_t)(long long)cs->case_end)
+                        printf("  cmp %s, %s\n", reg(tmp, sz), reg(cond, sz));
                     free_reg(tmp);
                 }
                 printf("  %s .L.case.%d\n", is_uns ? "jbe" : "jle", cs->label_id);
@@ -4933,8 +5636,8 @@ static int gen(Node *node) {
                     printf("  cmp $%lld, %s\n", (long long)cs->case_val, reg(cond, sz));
                 } else {
                     int tmp = alloc_reg();
-                    printf("  movabs $%lld, %s\n", (long long)cs->case_val, reg64[tmp]);
-                    printf("  cmp %s, %s\n", reg(tmp, sz), reg(cond, sz));
+                    cg_mov_ri(8, x86_reg_idx(reg64[tmp]), (int64_t)(long long)cs->case_val)
+                        printf("  cmp %s, %s\n", reg(tmp, sz), reg(cond, sz));
                     free_reg(tmp);
                 }
                 printf("  je .L.case.%d\n", cs->label_id);
@@ -5154,7 +5857,7 @@ static int gen(Node *node) {
                     // then move it into the output register so the asm
                     // finds it in the shared register.
                     int r_in = gen(op->expr);
-                    printf("  mov %s, %s\n", reg64[r], reg64[r_in]);
+                    cg_mov_rr_str(reg64[r_in], reg64[r]);
                     free_reg(r_in);
                     op_regs[i] = r;
                     op->reg = r;
@@ -5167,7 +5870,7 @@ static int gen(Node *node) {
                     if (r >= 0) {
                         int r_in = gen(op->expr);
                         if (r_in != r)
-                            printf("  mov %s, %s\n", reg64[r], reg64[r_in]);
+                            cg_mov_rr_str(reg64[r_in], reg64[r]);
                         free_reg(r_in);
                     }
                 }
@@ -5392,7 +6095,7 @@ static int gen(Node *node) {
                     if (sz <= 4)
                         printf("  movl %s, %s\n", reg(r_in, 4), reg(r, 4));
                     else
-                        printf("  movq %s, %s\n", reg64[r_in], reg64[r]);
+                        cg_mov_rr(8, x86_reg_idx(reg64[r]), x86_reg_idx(reg64[r_in]));
                 }
                 free_reg(r_in);
                 op_regs[i] = r;
@@ -5482,7 +6185,7 @@ static int gen(Node *node) {
             else if (sz <= 4)
                 printf("  movl %s, (%s)\n", reg(op_regs[i], 4), reg64[op_addr[i]]);
             else
-                printf("  movq %s, (%s)\n", reg64[op_regs[i]], reg64[op_addr[i]]);
+                x86_mov_mr(&cg_obj->text, 8, x86_mem(x86_reg_idx(reg64[op_addr[i]]), 0), x86_reg_idx(reg64[op_regs[i]]));
         }
 
         // Free registers
@@ -5502,11 +6205,11 @@ static int gen(Node *node) {
         printf("  str x16, [%s]\n", reg64[r]);
         // __gr_top: end of GP reg save area = saved_sp + 64
         printf("  ldur x16, [%s, #-8]\n", FRAME_PTR);
-        printf("  add x16, x16, #64\n");
+        secbuf_emit32le(&cg_obj->text, arm64_add_imm(1, 16, 16, 64, 0));
         printf("  str x16, [%s, #8]\n", reg64[r]);
         // __vr_top: end of FP reg save area = saved_sp + 192
         printf("  ldur x16, [%s, #-8]\n", FRAME_PTR);
-        printf("  add x16, x16, #192\n");
+        secbuf_emit32le(&cg_obj->text, arm64_add_imm(1, 16, 16, 192, 0));
         printf("  str x16, [%s, #16]\n", reg64[r]);
         // __gr_offs: -(8 - gp_param) * 8
         printf("  mov w16, #%d\n", va_gp_start);
@@ -5541,12 +6244,12 @@ static int gen(Node *node) {
         free_reg(rd);
         free_reg(rs);
 #else
-        printf("  push %s\n", reg64[rd]);
+        cg_push(reg64_idx[rd]);
         free_reg(rd);
         int rs = gen(node->rhs);
         int rpop = alloc_reg();
-        printf("  pop %s\n", reg64[rpop]);
-        printf("  movq %s, %%rcx\n", reg64[rs]);
+        cg_pop(reg64_idx[rpop]);
+        cg_mov_rr(8, X86_RCX, x86_reg_idx(reg64[rs]));
         printf("  movq %%rcx, (%s)\n", reg64[rpop]);
         printf("  movq 8(%s), %%rcx\n", reg64[rs]);
         printf("  movq %%rcx, 8(%s)\n", reg64[rpop]);
@@ -5573,11 +6276,11 @@ static int gen(Node *node) {
         if (is_fp) {
             int fp_size = 16;
             printf("  ldr w16, [%s, #28]\n", reg64[r]); // __vr_offs (negative)
-            printf("  cmp w16, #0\n");
+            cg_emit_arm64_insn(arm64_subs_imm(0, 31, 16, 0, 0));
             printf("  b.ge .L.va_overflow.%d\n", rcc_label_count);
             printf("  ldr x12, [%s, #16]\n", reg64[r]); // __vr_top
-            printf("  sxtw x17, w16\n");
-            printf("  add x12, x12, x17\n");
+            cg_emit_arm64_insn(arm64_sxtw(17, 16));
+            cg_emit_arm64_insn(arm64_add_reg(1, 12, 12, 17, ARM64_LSL, 0));
             printf("  add w16, w16, #%d\n", fp_size);
             printf("  str w16, [%s, #28]\n", reg64[r]);
             printf("  b .L.va_done.%d\n", rcc_label_count);
@@ -5587,13 +6290,13 @@ static int gen(Node *node) {
             // Normal types use 8 bytes (fits in one register).
             int gp_size = 8;
             printf("  ldr w16, [%s, #24]\n", reg64[r]); // __gr_offs (negative)
-            printf("  cmp w16, #0\n");
+            cg_emit_arm64_insn(arm64_subs_imm(0, 31, 16, 0, 0));
             printf("  b.ge .L.va_overflow.%d\n", rcc_label_count);
             printf("  ldr x12, [%s, #8]\n", reg64[r]); // __gr_top
-            printf("  sxtw x17, w16\n");
-            printf("  add x12, x12, x17\n");
+            cg_emit_arm64_insn(arm64_sxtw(17, 16));
+            cg_emit_arm64_insn(arm64_add_reg(1, 12, 12, 17, ARM64_LSL, 0));
             if (is_ptr_val_struct) {
-                printf("  ldr x12, [x12]\n");
+                secbuf_emit32le(&cg_obj->text, arm64_ldr_uoff(3, 12, 12, 0));
             }
             printf("  add w16, w16, #%d\n", gp_size);
             printf("  str w16, [%s, #24]\n", reg64[r]);
@@ -5604,10 +6307,10 @@ static int gen(Node *node) {
         printf("  ldr x12, [%s]\n", reg64[r]); // __stack (overflow_arg_area at [ap+0])
         if (is_ptr_struct || is_ptr_val_struct) {
             // Pointer-passed struct: load pointer from stack, advance by 8
-            printf("  ldr x16, [x12]\n");
-            printf("  add x12, x12, #8\n");
+            secbuf_emit32le(&cg_obj->text, arm64_ldr_uoff(3, 16, 12, 0));
+            secbuf_emit32le(&cg_obj->text, arm64_add_imm(1, 12, 12, 8, 0));
             printf("  str x12, [%s]\n", reg64[r]);
-            printf("  mov x12, x16\n");
+            secbuf_emit32le(&cg_obj->text, arm64_add_reg(1, 12, 31, 16, 0, 0));
         } else {
             int align = ty->align;
             int ovf_size = ty->size <= 8 ? 8 : (ty->size + 7) & ~7;
@@ -5615,7 +6318,7 @@ static int gen(Node *node) {
                 printf("  add x12, x12, #%d\n", align - 1);
                 printf("  and x12, x12, #-%d\n", align);
             }
-            printf("  mov x16, x12\n");
+            secbuf_emit32le(&cg_obj->text, arm64_add_reg(1, 16, 31, 12, 0, 0));
             printf("  add x16, x16, #%d\n", ovf_size);
             printf("  str x16, [%s]\n", reg64[r]);
         }
@@ -5636,7 +6339,7 @@ static int gen(Node *node) {
             printf("  ja .L.va_overflow.%d\n", rcc_label_count);
             printf("  movl (%s), %%ecx\n", reg64[r]);
             printf("  addq 16(%s), %%rcx\n", reg64[r]);
-            printf("  movq (%%rcx), %%rcx\n");
+            x86_mov_rm(&cg_obj->text, 8, X86_RCX, x86_mem(X86_RCX, 0));
             printf("  addl $8, (%s)\n", reg64[r]);
             printf("  jmp .L.va_done.%d\n", rcc_label_count);
         } else {
@@ -5649,10 +6352,10 @@ static int gen(Node *node) {
         }
         printf(".L.va_overflow.%d:\n", rcc_label_count);
         printf("  movq 8(%s), %%rcx\n", reg64[r]);
-        printf("  leaq 8(%%rcx), %%rdx\n");
+        x86_lea(&cg_obj->text, 8, X86_RDX, x86_mem(X86_RCX, 8));
         printf("  movq %%rdx, 8(%s)\n", reg64[r]);
         if (is_ptr_struct)
-            printf("  movq (%%rcx), %%rcx\n");
+            x86_mov_rm(&cg_obj->text, 8, X86_RCX, x86_mem(X86_RCX, 0));
         printf(".L.va_done.%d:\n", rcc_label_count);
         printf("  movq %%rcx, %s\n", reg64[r]);
 #endif
@@ -5689,7 +6392,7 @@ static int gen(Node *node) {
             printf("  movq (%s), %s\n", reg64[r_addr], reg(r, 8));
         }
         if (ord == MEMORDER_SEQ_CST)
-            printf("  mfence\n");
+            x86_mfence(&cg_obj->text);
 #endif
         free_reg(r_addr);
 #ifdef ARCH_ARM64
@@ -5713,11 +6416,11 @@ static int gen(Node *node) {
         else
             emit_store(node->lhs->ty->base ? node->lhs->ty->base : ty_int, r_val, format("[%s]", reg64[r_addr]));
         if (ord == MEMORDER_SEQ_CST)
-            printf("  dmb ish\n");
+            secbuf_emit32le(&cg_obj->text, arm64_dmb(0xb));
 #else
         printf("  mov%c %s, (%s)\n", size_suffix(sz), reg(r_val, sz), reg64[r_addr]);
         if (ord == MEMORDER_SEQ_CST)
-            printf("  mfence\n");
+            x86_mfence(&cg_obj->text);
 #endif
         free_reg(r_val);
         free_reg(r_addr);
@@ -5732,16 +6435,16 @@ static int gen(Node *node) {
         int lbl = rcc_label_count++;
         printf(".L.atom_xchg.%d:\n", lbl);
         if (sz == 1) {
-            printf("  ldxrb %s, [%s]\n", reg32[r_result], reg64[r_addr]);
+            secbuf_emit32le(&cg_obj->text, arm64_ldxrb(arm64_reg_idx(reg32[r_result]), arm64_reg_idx(reg64[r_addr])));
             printf("  stxrb w9, %s, [%s]\n", reg32[r_val], reg64[r_addr]);
         } else if (sz == 2) {
-            printf("  ldxrh %s, [%s]\n", reg32[r_result], reg64[r_addr]);
+            secbuf_emit32le(&cg_obj->text, arm64_ldxrh(arm64_reg_idx(reg32[r_result]), arm64_reg_idx(reg64[r_addr])));
             printf("  stxrh w9, %s, [%s]\n", reg32[r_val], reg64[r_addr]);
         } else if (sz == 4) {
-            printf("  ldxr %s, [%s]\n", reg32[r_result], reg64[r_addr]);
+            secbuf_emit32le(&cg_obj->text, arm64_ldxr(1, arm64_reg_idx(reg32[r_result]), arm64_reg_idx(reg64[r_addr])));
             printf("  stxr w9, %s, [%s]\n", reg32[r_val], reg64[r_addr]);
         } else {
-            printf("  ldxr %s, [%s]\n", reg64[r_result], reg64[r_addr]);
+            secbuf_emit32le(&cg_obj->text, arm64_ldxr(1, arm64_reg_idx(reg64[r_result]), arm64_reg_idx(reg64[r_addr])));
             printf("  stxr w9, %s, [%s]\n", reg32[r_val], reg64[r_addr]);
         }
         printf("  cbnz w9, .L.atom_xchg.%d\n", lbl);
@@ -5779,13 +6482,13 @@ static int gen(Node *node) {
         int lbl = rcc_label_count++;
         printf(".L.atom_cas.%d:\n", lbl);
         if (sz == 1)
-            printf("  ldxrb %s, [%s]\n", reg32[r_old], reg64[r_addr]);
+            secbuf_emit32le(&cg_obj->text, arm64_ldxrb(arm64_reg_idx(reg32[r_old]), arm64_reg_idx(reg64[r_addr])));
         else if (sz == 2)
-            printf("  ldxrh %s, [%s]\n", reg32[r_old], reg64[r_addr]);
+            secbuf_emit32le(&cg_obj->text, arm64_ldxrh(arm64_reg_idx(reg32[r_old]), arm64_reg_idx(reg64[r_addr])));
         else if (sz == 4)
-            printf("  ldxr %s, [%s]\n", reg32[r_old], reg64[r_addr]);
+            secbuf_emit32le(&cg_obj->text, arm64_ldxr(1, arm64_reg_idx(reg32[r_old]), arm64_reg_idx(reg64[r_addr])));
         else
-            printf("  ldxr %s, [%s]\n", reg64[r_old], reg64[r_addr]);
+            secbuf_emit32le(&cg_obj->text, arm64_ldxr(1, arm64_reg_idx(reg64[r_old]), arm64_reg_idx(reg64[r_addr])));
         printf("  cmp %s, %s\n", reg(r_old, sz), reg(r_expected, sz));
         printf("  b.ne .L.atom_cas_fail.%d\n", lbl);
         if (sz == 1)
@@ -5815,12 +6518,12 @@ static int gen(Node *node) {
         else if (sz == 2)
             printf("  movswl (%s), %s\n", reg64[r_expectedaddr], sz == 8 ? "%rax" : "%eax");
         else if (sz == 4)
-            printf("  movl (%s), %s\n", reg64[r_expectedaddr], sz == 8 ? "%rax" : "%eax");
+            x86_mov_rm(&cg_obj->text, 4, x86_reg_idx(sz == 8 ? "%rax" : "%eax"), x86_mem(x86_reg_idx(reg64[r_expectedaddr]), 0));
         else
-            printf("  movq (%s), %s\n", reg64[r_expectedaddr], sz == 8 ? "%rax" : "%eax");
+            x86_mov_rm(&cg_obj->text, 8, x86_reg_idx(sz == 8 ? "%rax" : "%eax"), x86_mem(x86_reg_idx(reg64[r_expectedaddr]), 0));
         printf("  lock cmpxchg%c %s, (%s)\n", size_suffix(sz), reg(r_desired, sz), reg64[r_addr]);
         printf("  sete %s\n", reg8[r_result]);
-        printf("  movzbl %s, %s\n", reg8[r_result], reg32[r_result]);
+        cg_movzx(4, 1, x86_reg_idx(reg32[r_result]), x86_reg_idx(reg8[r_result]));
         printf("  mov%c %s, (%s)\n", size_suffix(sz),
                sz == 1 ? "%al" : sz == 2 ? "%ax"
                    : sz == 4             ? "%eax"
@@ -5838,17 +6541,17 @@ static int gen(Node *node) {
         if (!node->atomic_signal_fence) {
             if (ord == MEMORDER_SEQ_CST || ord == MEMORDER_ACQ_REL) {
 #ifdef ARCH_ARM64
-                printf("  dmb ish\n");
+                secbuf_emit32le(&cg_obj->text, arm64_dmb(0xb));
 #else
-                printf("  mfence\n");
+                x86_mfence(&cg_obj->text);
 #endif
             } else if (ord == MEMORDER_ACQUIRE || ord == MEMORDER_CONSUME) {
 #ifdef ARCH_ARM64
-                printf("  dmb ishld\n");
+                secbuf_emit32le(&cg_obj->text, arm64_dmb(0x9));
 #endif
             } else if (ord == MEMORDER_RELEASE) {
 #ifdef ARCH_ARM64
-                printf("  dmb ishst\n");
+                secbuf_emit32le(&cg_obj->text, arm64_dmb(0xa));
 #endif
             }
         }
@@ -5870,14 +6573,14 @@ static int gen(Node *node) {
         int lbl = rcc_label_count++;
         printf(".L.atom_fop.%d:\n", lbl);
         if (sz == 1)
-            printf("  ldxrb %s, [%s]\n", reg32[r_tmp], reg64[r_addr]);
+            secbuf_emit32le(&cg_obj->text, arm64_ldxrb(arm64_reg_idx(reg32[r_tmp]), arm64_reg_idx(reg64[r_addr])));
         else if (sz == 2)
-            printf("  ldxrh %s, [%s]\n", reg32[r_tmp], reg64[r_addr]);
+            secbuf_emit32le(&cg_obj->text, arm64_ldxrh(arm64_reg_idx(reg32[r_tmp]), arm64_reg_idx(reg64[r_addr])));
         else if (sz == 4)
-            printf("  ldxr %s, [%s]\n", reg32[r_tmp], reg64[r_addr]);
+            secbuf_emit32le(&cg_obj->text, arm64_ldxr(1, arm64_reg_idx(reg32[r_tmp]), arm64_reg_idx(reg64[r_addr])));
         else
-            printf("  ldxr %s, [%s]\n", reg64[r_tmp], reg64[r_addr]);
-        printf("  str %s, [%s, #-%d]\n", reg64[r_tmp], FRAME_PTR, old_slot);
+            secbuf_emit32le(&cg_obj->text, arm64_ldxr(1, arm64_reg_idx(reg64[r_tmp]), arm64_reg_idx(reg64[r_addr])));
+        secbuf_emit32le(&cg_obj->text, arm64_stur(1, arm64_reg_idx(reg64[r_tmp]), arm64_reg_idx(FRAME_PTR), -(old_slot)));
         const char *rv = (sz == 8) ? "x9" : "w9";
         switch (op) {
         case 0: printf("  add %s, %s, %s\n", reg(r_tmp, sz), reg(r_tmp, sz), rv); break;
@@ -5900,9 +6603,9 @@ static int gen(Node *node) {
             printf("  stxr w8, %s, [%s]\n", reg64[r_tmp], reg64[r_addr]);
         printf("  cbnz w8, .L.atom_fop.%d\n", lbl);
         if (node->atomic_ord == MEMORDER_SEQ_CST)
-            printf("  dmb ish\n");
+            secbuf_emit32le(&cg_obj->text, arm64_dmb(0xb));
         if (!is_store)
-            printf("  ldr %s, [%s, #-%d]\n", reg64[r_tmp], FRAME_PTR, old_slot);
+            secbuf_emit32le(&cg_obj->text, arm64_ldur(1, arm64_reg_idx(reg64[r_tmp]), arm64_reg_idx(FRAME_PTR), -(old_slot)));
         free_reg(r_addr);
         if (sz < 8 && !use_unsigned(node->ty))
             sign_extend_to(r_tmp, sz, 8);
@@ -5922,7 +6625,7 @@ static int gen(Node *node) {
             printf("  lock xadd%c %s, (%s)\n", size_suffix(sz), reg(r_old, sz), reg64[r_addr]);
             free_reg(r_addr);
             if (node->atomic_ord == MEMORDER_SEQ_CST)
-                printf("  mfence\n");
+                x86_mfence(&cg_obj->text);
             if (is_store) {
                 // add_fetch/sub_fetch: return new value = old + val
                 printf("  add%c -%d(%%rbp), %s\n", size_suffix(sz), spill_logand, reg(r_old, sz));
@@ -5963,7 +6666,7 @@ static int gen(Node *node) {
             printf("  lock cmpxchg%c %s, (%s)\n", size_suffix(sz), reg(r_new, sz), reg64[r_addr]);
             printf("  jne .L.atom_fop.%d\n", lbl2);
             if (node->atomic_ord == MEMORDER_SEQ_CST)
-                printf("  mfence\n");
+                x86_mfence(&cg_obj->text);
             free_reg(r_addr);
             if (is_store) {
                 free_reg(r_old);
@@ -5996,7 +6699,7 @@ static int gen(Node *node) {
     if (is_flonum(node->ty) && (node->kind == ND_ADD || node->kind == ND_SUB || node->kind == ND_MUL || node->kind == ND_DIV)) {
         int r_rhs = gen(node->rhs);
 #ifdef ARCH_ARM64
-        printf("  fmov d0, %s\n", reg64[r_lhs]);
+        secbuf_emit32le(&cg_obj->text, arm64_fmov_f2i(1, 0, arm64_reg_idx(reg64[r_lhs])));
         printf("  fmov d1, %s\n", reg64[r_rhs]);
         char *inst = "";
         if (node->kind == ND_ADD) inst = "fadd";
@@ -6008,12 +6711,12 @@ static int gen(Node *node) {
             inst = "fdiv";
         printf("  %s d0, d0, d1\n", inst);
         if (node->ty->kind == TY_FLOAT) {
-            printf("  fcvt s0, d0\n");
-            printf("  fcvt d0, s0\n");
+            cg_emit_arm64_insn(arm64_fcvt(1, 0, 0));
+            cg_emit_arm64_insn(arm64_fcvt(0, 0, 0));
         }
-        printf("  fmov %s, d0\n", reg64[r_lhs]);
+        secbuf_emit32le(&cg_obj->text, arm64_fmov_i2f(1, arm64_reg_idx(reg64[r_lhs]), 0));
 #else
-        printf("  movq %s, %%xmm0\n", reg64[r_lhs]);
+        printf("  movq %s, %%xmm0\n", reg64[r_lhs], X86_XMM0);
         printf("  movq %s, %%xmm1\n", reg64[r_rhs]);
         free_reg(r_rhs);
         char *inst = "";
@@ -6026,8 +6729,8 @@ static int gen(Node *node) {
             inst = "divsd";
         printf("  %s %%xmm1, %%xmm0\n", inst);
         if (node->ty->kind == TY_FLOAT) {
-            printf("  cvtsd2ss %%xmm0, %%xmm0\n");
-            printf("  cvtss2sd %%xmm0, %%xmm0\n");
+            x86_cvtsd2ss(&cg_obj->text, X86_XMM0, X86_XMM0);
+            x86_cvtss2sd(&cg_obj->text, X86_XMM0, X86_XMM0);
         }
         printf("  movq %%xmm0, %s\n", reg64[r_lhs]);
 #endif
@@ -6040,9 +6743,9 @@ static int gen(Node *node) {
         node->lhs->ty && node->rhs->ty && (is_flonum(node->lhs->ty) || is_flonum(node->rhs->ty))) {
         int r_rhs = gen(node->rhs);
 #ifdef ARCH_ARM64
-        printf("  fmov d0, %s\n", reg64[r_lhs]);
+        secbuf_emit32le(&cg_obj->text, arm64_fmov_f2i(1, 0, arm64_reg_idx(reg64[r_lhs])));
         printf("  fmov d1, %s\n", reg64[r_rhs]);
-        printf("  fcmp d0, d1\n");
+        cg_emit_arm64_insn(arm64_fcmp(1, 0, 1));
         const char *cset_cond = "eq";
         if (node->kind == ND_EQ) cset_cond = "eq";
         else if (node->kind == ND_NE)
@@ -6053,21 +6756,21 @@ static int gen(Node *node) {
             cset_cond = "ls";
         printf("  cset %s, %s\n", reg(r_lhs, 4), cset_cond);
 #else
-        printf("  movq %s, %%xmm0\n", reg64[r_lhs]);
+        printf("  movq %s, %%xmm0\n", reg64[r_lhs], X86_XMM0);
         printf("  movq %s, %%xmm1\n", reg64[r_rhs]);
-        printf("  ucomisd %%xmm1, %%xmm0\n");
+        x86_ucomisd(&cg_obj->text, X86_XMM0, X86_XMM1);
         if (node->kind == ND_EQ) {
-            printf("  sete %%al\n");
-            printf("  setnp %%cl\n");
-            printf("  andb %%cl, %%al\n");
+            x86_setcc(&cg_obj->text, X86_E, X86_RAX);
+            x86_setcc(&cg_obj->text, X86_NP, X86_RCX);
+            x86_and_rr(&cg_obj->text, 1, X86_RAX, X86_RCX);
         } else if (node->kind == ND_NE) {
-            printf("  setne %%al\n");
-            printf("  setp %%cl\n");
-            printf("  orb %%cl, %%al\n");
+            x86_setcc(&cg_obj->text, X86_NE, X86_RAX);
+            x86_setcc(&cg_obj->text, X86_P, X86_RCX);
+            x86_or_rr(&cg_obj->text, 1, X86_RAX, X86_RCX);
         } else if (node->kind == ND_LT) {
-            printf("  setb %%al\n");
+            x86_setcc(&cg_obj->text, X86_B, X86_RAX);
         } else if (node->kind == ND_LE) {
-            printf("  setbe %%al\n");
+            x86_setcc(&cg_obj->text, X86_BE, X86_RAX);
         }
         printf("  movzbl %%al, %s\n", reg(r_lhs, 4));
 #endif
@@ -6094,13 +6797,13 @@ static int gen(Node *node) {
         printf("  mov %s, %s\n", reg(r_lhs, sz), sz == 8 ? "%rax" : "%eax");
         if (is_unsigned) {
             if (sz == 8)
-                printf("  xorl %%edx, %%edx\n");
+                x86_xor_rr(&cg_obj->text, 4, X86_RDX, X86_RDX);
             else
-                printf("  xorl %%edx, %%edx\n");
+                x86_xor_rr(&cg_obj->text, 4, X86_RDX, X86_RDX);
         } else {
-            if (sz == 8) printf("  cqo\n");
+            if (sz == 8) x86_cqo(&cg_obj->text);
             else
-                printf("  cdq\n");
+                x86_cdq(&cg_obj->text);
         }
         printf("  %s %s\n", is_unsigned ? "div" : "idiv", reg(r_rhs, sz));
         printf("  mov %s, %s\n", node->kind == ND_DIV ? (sz == 8 ? "%rax" : "%eax") : (sz == 8 ? "%rdx" : "%edx"), reg(r_lhs, sz));
@@ -6193,7 +6896,7 @@ static int gen(Node *node) {
                     shift++;
                     tmp >>= 1;
                 }
-                printf("  lsl %s, %s, #%d\n", reg(r_lhs, sz), reg(r_lhs, sz), shift);
+                secbuf_emit32le(&cg_obj->text, arm64_lsl_imm(1, arm64_reg_idx(reg(r_lhs, sz)), arm64_reg_idx(reg(r_lhs, sz)), shift))
             } else if (node->kind == ND_MUL) {
                 // ARM64 mul doesn't take immediates; load into a scratch register
                 int tmp = alloc_reg();
@@ -6228,7 +6931,7 @@ static int gen(Node *node) {
                     shift++;
                     tmp >>= 1;
                 }
-                printf("  shl $%d, %s\n", shift, reg(r_lhs, sz));
+                cg_shl_ri(8, x86_reg_idx(reg(r_lhs, sz)), shift)
             } else {
                 printf("  %s $%d, %s\n", inst, imm, reg(r_lhs, sz));
 #endif
@@ -6239,7 +6942,7 @@ static int gen(Node *node) {
             // Sign-extend rhs to 64 bits when operation is 64-bit but rhs was
             // computed as 32-bit signed. ARM64: use sxtw.
             if (sz == 8 && op_size(node->rhs->ty) == 4 && !use_unsigned(node->rhs->ty))
-                printf("  sxtw %s, %s\n", reg64[r_rhs], reg32[r_rhs]);
+                secbuf_emit32le(&cg_obj->text, arm64_sxtw(arm64_reg_idx(reg64[r_rhs]), arm64_reg_idx(reg32[r_rhs])));
             if (!strcmp(inst, "cmp")) {
                 printf("  cmp %s, %s\n", reg(r_lhs, sz), reg(r_rhs, sz));
             } else {
@@ -6255,7 +6958,7 @@ static int gen(Node *node) {
                             shift++;
                             tmp >>= 1;
                         }
-                        printf("  asr %s, %s, #%d\n", reg(r_lhs, sz), reg(r_lhs, sz), shift);
+                        secbuf_emit32le(&cg_obj->text, arm64_asr_imm(1, arm64_reg_idx(reg(r_lhs, sz)), arm64_reg_idx(reg(r_lhs, sz)), shift))
                     } else {
                         int tmp = alloc_reg();
                         emit_mov_imm64(reg64[tmp], (uint64_t)elem_sz);
@@ -6284,16 +6987,16 @@ static int gen(Node *node) {
                             shift++;
                             tmp >>= 1;
                         }
-                        printf("  sar $%d, %s\n", shift, reg(r_lhs, sz));
+                        cg_sar_ri(8, x86_reg_idx(reg(r_lhs, sz)), shift)
                     } else {
                         // Non-power of 2: use idiv
                         printf("  mov %s, %s\n", reg(r_lhs, sz), sz == 8 ? "%rax" : "%eax");
                         if (sz == 8)
-                            printf("  cqo\n");
+                            x86_cqo(&cg_obj->text);
                         else
-                            printf("  cdq\n");
-                        printf("  mov $%d, %s\n", elem_sz, sz == 8 ? "%r11" : "%r11d");
-                        printf("  idiv %s\n", sz == 8 ? "%r11" : "%r11d");
+                            x86_cdq(&cg_obj->text);
+                        cg_mov_ri(8, x86_reg_idx(sz == 8 ? "%r11" : "%r11d"), elem_sz)
+                            printf("  idiv %s\n", sz == 8 ? "%r11" : "%r11d");
                         printf("  mov %s, %s\n", sz == 8 ? "%rax" : "%eax", reg(r_lhs, sz));
                     }
                 }
@@ -6346,10 +7049,10 @@ static int gen(Node *node) {
                 unsigned long long mask = (1ULL << bw) - 1;
 #ifdef ARCH_ARM64
                 emit_mov_imm64("x16", mask);
-                printf("  and %s, %s, x16\n", reg64[r_lhs], reg64[r_lhs]);
+                secbuf_emit32le(&cg_obj->text, arm64_and_reg(1, arm64_reg_idx(reg64[r_lhs]), arm64_reg_idx(reg64[r_lhs]), 16, 0, 0));
 #else
-                printf("  movabsq $%llu, %%rax\n", mask);
-                printf("  andq %%rax, %s\n", reg64[r_lhs]);
+                cg_mov_ri(8, X86_RAX, (int64_t)mask);
+                x86_and_rr(&cg_obj->text, 8, x86_reg_idx(reg64[r_lhs]), X86_RAX);
 #endif
             }
         }
@@ -6801,98 +7504,6 @@ static int peep_pattern5(char **lines, int li, int lj, int lk, const char *rest)
     return 0;
 }
 
-static void emit_peephole_body(char *body_text) {
-    if (opt_O0) {
-        fputs(body_text, stdout);
-        return;
-    }
-
-    // 3-line sliding window: w[0]=oldest pending, w[2]=newest
-    char *w[3] = {NULL, NULL, NULL};
-    int wn = 0;
-    const char *rest = body_text; // points into body_text after window (newlines intact)
-    char *p = body_text; // scan pointer; \n replaced with \0 as lines are parsed
-
-    for (;;) {
-        char *line = NULL;
-        if (*p) {
-            char *nl = strchr(p, '\n');
-            if (nl) {
-                *nl = '\0';
-                line = p;
-                p = nl + 1;
-            } else {
-                line = p;
-                p += strlen(p);
-            }
-            rest = p;
-        }
-
-        if (!line) {
-            for (int i = 0; i < wn; i++)
-                if (w[i] && w[i][0]) fprintf(stdout, "%s\n", w[i]);
-            break;
-        }
-
-        // Commit oldest when window is full
-        if (wn == 3) {
-            if (w[0] && w[0][0]) fprintf(stdout, "%s\n", w[0]);
-            w[0] = w[1];
-            w[1] = w[2];
-            w[2] = NULL;
-            wn = 2;
-        }
-        w[wn++] = line;
-
-        // Repeatedly try patterns on all adjacent non-empty pairs in the window
-        bool any;
-        do {
-            any = false;
-            for (int ii = 0; ii < wn; ii++) {
-                if (!w[ii] || !w[ii][0]) continue;
-                int jj = ii + 1;
-                while (jj < wn && (!w[jj] || !w[jj][0])) jj++;
-                if (jj >= wn) break;
-                int kk = jj + 1;
-                while (kk < wn && (!w[kk] || !w[kk][0])) kk++;
-
-                // Pattern 1: mov SRC, REG; mov REG, DST -> mov SRC, DST
-                {
-                    char d1[80], s1[80], d2[80], s2[80];
-                    if (peep_mov_reg_reg(w[ii], d1, sizeof(d1), s1, sizeof(s1)) &&
-                        peep_mov_reg_reg(w[jj], d2, sizeof(d2), s2, sizeof(s2)) &&
-                        !strcmp(d2, s1) && strcmp(d1, d2) && is_reg(d1) && is_reg(s1) && is_reg(s2)) {
-                        w[jj] = format("  mov %s, %s", d1, s2);
-                        // Conservative: skip dead-predecessor deletion without full forward scan
-                        any = true;
-                        break;
-                    }
-                }
-                // Pattern 2: store REG, [fp-N]; load REG2, [fp-N] -> mov REG2, REG
-                if (peep_pattern2(w, ii, jj)) {
-                    any = true;
-                    break;
-                }
-                // Pattern 3: jmp/b .LABEL; .LABEL: -> delete branch
-                if (peep_pattern3(w, ii, jj)) {
-                    any = true;
-                    break;
-                }
-                // Pattern 4: mov REG, IMM; OP REG2, REG -> OP REG2, IMM
-                if (peep_pattern4(w, ii, jj)) {
-                    any = true;
-                    break;
-                }
-                // Pattern 5: mov R, [mem]; OP R, IMMx; mov dst, R -> mov dst, [mem]; OP dst, IMMx
-                if (kk < wn && peep_pattern5(w, ii, jj, kk, rest)) {
-                    any = true;
-                    break;
-                }
-            }
-        } while (any);
-    }
-}
-
 static const char *node_kind_name(NodeKind k) {
     switch (k) {
     case ND_ADD: return "ADD";
@@ -6996,8 +7607,11 @@ void dump_ast(Program *prog) {
     fprintf(stderr, "=== end AST dump ===\n");
 }
 
-void codegen(Program *prog) {
-    cg_stream = stdout;
+void codegen(Program *prog, ObjFile *obj) {
+    cg_obj = obj;
+    asm_init(&cg_asm, obj, prog->in_path);
+    cg_clear_prev();
+    cg_clear_pending();
     all_items = prog->items;
     all_strs = prog->strs;
     alloca_needed = false;
@@ -7016,7 +7630,7 @@ void codegen(Program *prog) {
 
     // Emit data section for strings
     if (prog->globals || prog->strs || float_lits) {
-        printf("\n.data\n");
+        cg_set_section(SEC_DATA);
         // Track emitted symbols to avoid duplicates (e.g. __asm__("same_name"))
         char **emitted_syms = NULL;
         int emitted_count = 0;
@@ -7029,14 +7643,14 @@ void codegen(Program *prog) {
             // Handle function aliases (__attribute__((alias)) or __asm__ renaming)
             if (var->is_function && !var->alias_target && var->asm_name) {
                 // __asm__("target") on a function: alias the C name to the asm_name
-                printf(".globl %s\n", asm_sym_name(sym_name(var->name)));
+                printf(".globl asm_sym_name(sym_name(var->name\n")));
                 printf(".set %s, %s\n", asm_sym_name(sym_name(var->name)),
                        asm_sym_name(var->asm_name));
                 continue;
             }
             if (var->alias_target) {
                 if (!var->is_static)
-                    printf(".globl %s\n", asm_sym_name(sym_name(label)));
+                    printf(".globl asm_sym_name(sym_name(label\n")));
                 printf(".set %s, %s\n", asm_sym_name(sym_name(label)),
                        asm_sym_name(sym_name(var->alias_target)));
                 continue;
@@ -7065,7 +7679,7 @@ void codegen(Program *prog) {
                 }
                 if (existing) {
                     // This is an alias via __asm__ — emit .set instead of data
-                    printf(".globl %s\n", asm_sym_name(sym_name(var->name)));
+                    printf(".globl asm_sym_name(sym_name(var->name\n")));
                     printf(".set %s, %s\n", asm_sym_name(sym_name(var->name)), canon);
                     continue;
                 }
@@ -7082,7 +7696,7 @@ void codegen(Program *prog) {
             if (var->ty->align > 1)
                 printf("  .balign %d\n", var->ty->align);
             if (!var->is_static)
-                printf(".globl %s\n", asm_sym_name(sym_name(label)));
+                printf(".globl asm_sym_name(sym_name(label\n")));
             printf("%s:\n", asm_sym_name(sym_name(safe_label)));
             if (reserved)
                 printf(".set %s, %s\n", asm_sym_name(sym_name(label)), asm_sym_name(sym_name(safe_label)));
@@ -7100,14 +7714,14 @@ void codegen(Program *prog) {
                     if (rel->addend)
                         printf("  .quad %s%+d\n", rel->label, rel->addend);
                     else
-                        printf("  .quad %s\n", rel->label);
+                        printf("  .quad rel->label\n");
 #endif
                     pos += 8;
                 }
                 for (; pos < var->init_size; pos++)
                     printf("  .byte %u\n", (unsigned char)var->init_data[pos]);
                 if (var->ty->size > var->init_size)
-                    printf("  .zero %d\n", var->ty->size - var->init_size);
+                    printf("  .zero var->ty->size - var->init_size\n");
             } else if (var->has_init) {
                 if (var->ty->size == 1)
                     printf("  .byte %u\n", (unsigned char)var->init_val);
@@ -7118,7 +7732,7 @@ void codegen(Program *prog) {
                 else
                     printf("  .quad %lld\n", (long long)var->init_val);
             } else if (var->ty->size > 0) {
-                printf("  .zero %d\n", var->ty->size);
+                printf("  .zero var->ty->size\n");
             }
         }
         free(emitted_syms);
@@ -7143,24 +7757,26 @@ void codegen(Program *prog) {
                             printf("  .2byte %u\n", 0xD800 | (sc >> 10));
                             printf("  .2byte %u\n", 0xDC00 | (sc & 0x3FF));
                         } else {
-                            printf("  .2byte %u\n", c);
+                            printf("  .2byte c\n");
                         }
                     } else {
-                        printf("  .4byte %u\n", c);
+                        printf("  .4byte c\n");
                     }
                 }
-                if (s->elem_size == 2)
-                    printf("  .2byte 0\n");
-                else
-                    printf("  .4byte 0\n");
+                if (s->elem_size == 2) {
+                    cg_data_byte(0);
+                    cg_data_byte(0);
+                } else {
+                    secbuf_emit32le(cg_cur_sec == SEC_DATA ? &cg_obj->data : &cg_obj->rodata, 0);
+                }
             } else {
                 for (int i = 0; i < s->len; i++) {
                     printf("  .byte %u\n", (unsigned char)s->str[i]);
                 }
-                printf("  .byte 0\n"); // null terminator
+                cg_data_byte(0); // null terminator
             }
         }
-        printf("\n.text\n");
+        cg_set_section(SEC_TEXT);
     }
 
     for (TLItem *item = prog->items; item; item = item->next) {
@@ -7187,9 +7803,9 @@ void codegen(Program *prog) {
         fn_struct_ret_off = 0;
         fn_struct_ret_total = 0;
 
-        // Pass 1: Generate function body to temp file to discover register usage
-        FILE *body_file = tmpfile();
-        cg_stream = body_file;
+        // Pass 1: Generate function body text to in-memory buffer to discover register usage
+        cg_passthrough = true;
+        cg_body_len = 0;
         used_regs = 0;
         ever_used_regs = 0;
         spilled_regs = 0;
@@ -7246,11 +7862,11 @@ void codegen(Program *prog) {
                     printf("  movq %s, %%r11\n", preg);
                     printf("  movq $%d, %%r10\n", var->ty->size);
                     printf(".L.pcopy.%d:\n", c);
-                    printf("  cmpq $0, %%r10\n");
+                    cg_cmp_ri(8, X86_R10, 0);
                     printf("  je .L.pcopy_end.%d\n", c);
                     printf("  movb -1(%%r11,%%r10), %%al\n");
                     printf("  movb %%al, -%d-1(%%rbp,%%r10)\n", var->offset);
-                    printf("  subq $1, %%r10\n");
+                    cg_sub_ri(8, X86_R10, 1);
                     printf("  jmp .L.pcopy.%d\n", c);
                     printf(".L.pcopy_end.%d:\n", c);
                 } else {
@@ -7308,11 +7924,11 @@ void codegen(Program *prog) {
                     printf("  movq %s, %%r11\n", preg);
                     printf("  movq $%d, %%r10\n", var->ty->size);
                     printf(".L.pcopy.%d:\n", c);
-                    printf("  cmpq $0, %%r10\n");
+                    cg_cmp_ri(8, X86_R10, 0);
                     printf("  je .L.pcopy_end.%d\n", c);
                     printf("  movb -1(%%r11,%%r10), %%al\n");
                     printf("  movb %%al, -%d-1(%%rbp,%%r10)\n", var->offset);
-                    printf("  subq $1, %%r10\n");
+                    cg_sub_ri(8, X86_R10, 1);
                     printf("  jmp .L.pcopy.%d\n", c);
                     printf(".L.pcopy_end.%d:\n", c);
                 } else {
@@ -7324,11 +7940,11 @@ void codegen(Program *prog) {
                     int c = ++rcc_label_count;
                     printf("  movq $%d, %%r10\n", var->ty->size);
                     printf(".L.pcopy.%d:\n", c);
-                    printf("  cmpq $0, %%r10\n");
+                    cg_cmp_ri(8, X86_R10, 0);
                     printf("  je .L.pcopy_end.%d\n", c);
                     printf("  movb %d-1(%%rbp,%%r10), %%al\n", 16 + stack_param_index * 8);
                     printf("  movb %%al, -%d-1(%%rbp,%%r10)\n", var->offset);
-                    printf("  subq $1, %%r10\n");
+                    cg_sub_ri(8, X86_R10, 1);
                     printf("  jmp .L.pcopy.%d\n", c);
                     printf(".L.pcopy_end.%d:\n", c);
                 } else {
@@ -7364,7 +7980,7 @@ void codegen(Program *prog) {
             case 5: printf("  movq %%r9, -%d(%%rbp)\n", va_reg_save_ofs - 40);
             }
             if (va_fp < 8) {
-                printf("  testb %%al, %%al\n");
+                x86_test_rr(&cg_obj->text, 1, X86_RAX, X86_RAX);
                 printf("  je .L.va_no_xmm.%d\n", rcc_label_count);
                 switch (va_fp) {
                 case 0: printf("  movaps %%xmm0, -%d(%%rbp)\n", va_reg_save_ofs - 48); /* fallthrough */
@@ -7414,10 +8030,9 @@ void codegen(Program *prog) {
             int r = gen(n);
             if (r != -1) free_reg(r);
         }
-        fflush(body_file);
+        cg_passthrough = false;
 
-        // Pass 2: Emit optimized prologue, body, epilogue to stdout
-        cg_stream = stdout;
+        // Pass 2: Emit prologue, assembled body, epilogue to ObjFile
 
 #ifdef ARCH_ARM64
         // === ARM64 prologue ===
@@ -7456,38 +8071,37 @@ void codegen(Program *prog) {
         if (fn->is_weak) {
 #ifdef __APPLE__
             printf(".weak_definition %s\n", asm_sym_name(sym_name(fn->name)));
-            printf(".globl %s\n", asm_sym_name(sym_name(fn->name)));
+            printf(".globl asm_sym_name(sym_name(fn->name\n")));
 #else
             printf(".weak %s\n", asm_sym_name(sym_name(fn->name)));
 #endif
         } else if (fn_exported)
-            printf(".globl %s\n", asm_sym_name(sym_name(fn->name)));
+            printf(".globl asm_sym_name(sym_name(fn->name\n")));
         if (fn_label != fn->name)
             printf("%s = %s\n", asm_sym_name(sym_name(fn->name)), asm_sym_name(sym_name(fn_label)));
         else if (fn->asm_name && (fn_exported || fn->is_weak))
             printf("%s = %s\n", asm_sym_name(sym_name(fn->name)), asm_sym_name(fn->asm_name));
 #if defined(__APPLE__)
-        printf("  .p2align 2\n");
+        secbuf_align(&cg_obj->text, 4);
 #endif
         printf("%s:\n", asm_sym_name(sym_name(fn_label)));
 
         // Stack frame: stp fp,lr; mov fp,sp; sub sp,sp,#frame_size
         printf("  stp %s, %s, [%s, #-16]!\n", FRAME_PTR, LINK_REG, STACK_REG);
-        printf("  mov %s, %s\n", FRAME_PTR, STACK_REG);
+        cg_mov_rr_str(STACK_REG, FRAME_PTR);
         if (frame_size <= 4095)
-            printf("  sub %s, %s, #%d\n", STACK_REG, STACK_REG, frame_size);
-        else {
-            int fs = frame_size;
-            printf("  mov x16, #%d\n", fs & 0xffff);
-            fs >>= 16;
-            int s = 16;
-            while (fs) {
-                printf("  movk x16, #%d, lsl #%d\n", fs & 0xffff, s);
-                fs >>= 16;
-                s += 16;
+            secbuf_emit32le(&cg_obj->text, arm64_sub_imm(1, arm64_reg_idx(STACK_REG), arm64_reg_idx(STACK_REG), frame_size, 0)) else {
+                int fs = frame_size;
+                secbuf_emit32le(&cg_obj->text, arm64_movz(1, 16, fs & 0xffff, 0))
+                    fs >>= 16;
+                int s = 16;
+                while (fs) {
+                    secbuf_emit32le(&cg_obj->text, arm64_movk(1, 16, fs & 0xffff, s))
+                        fs >>= 16;
+                    s += 16;
+                }
+                secbuf_emit32le(&cg_obj->text, arm64_sub_reg(1, arm64_reg_idx(STACK_REG), arm64_reg_idx(STACK_REG), 16, 0, 0));
             }
-            printf("  sub %s, %s, x16\n", STACK_REG, STACK_REG);
-        }
 
         // Save variadic argument registers at the bottom of the frame (sp)
         if (fn->is_variadic) {
@@ -7508,7 +8122,7 @@ void codegen(Program *prog) {
         int cs_off = fn->is_variadic ? 192 + 16 : 16;
         for (int j = 0; j < 6; j++) {
             if (callee_mask & (1 << j)) {
-                printf("  str %s, [%s, #%d]\n", reg64[j + 6], STACK_REG, cs_off);
+                secbuf_emit32le(&cg_obj->text, arm64_str_imm(1, arm64_reg_idx(reg64[j + 6]), arm64_reg_idx(STACK_REG), cs_off, false));
                 cs_off += 8;
             }
         }
@@ -7526,16 +8140,16 @@ void codegen(Program *prog) {
                 printf("  str x8, [%s, #-%d]\n", FRAME_PTR, retbuf_offset);
             else {
                 int v = retbuf_offset;
-                printf("  mov x16, #%d\n", v & 0xffff);
-                v >>= 16;
+                secbuf_emit32le(&cg_obj->text, arm64_movz(1, 16, v & 0xffff, 0))
+                    v >>= 16;
                 int s = 16;
                 while (v) {
-                    printf("  movk x16, #%d, lsl #%d\n", v & 0xffff, s);
-                    v >>= 16;
+                    secbuf_emit32le(&cg_obj->text, arm64_movk(1, 16, v & 0xffff, s))
+                        v >>= 16;
                     s += 16;
                 }
                 printf("  sub x16, %s, x16\n", FRAME_PTR);
-                printf("  str x8, [x16]\n");
+                secbuf_emit32le(&cg_obj->text, arm64_str_uoff(3, 8, 16, 0));
             }
         }
 
@@ -7557,12 +8171,12 @@ void codegen(Program *prog) {
                         printf("  sub x16, %s, #%d\n", FRAME_PTR, var->offset);
                     else {
                         int v = var->offset;
-                        printf("  mov x16, #%d\n", v & 0xffff);
-                        v >>= 16;
+                        secbuf_emit32le(&cg_obj->text, arm64_movz(1, 16, v & 0xffff, 0))
+                            v >>= 16;
                         int s = 16;
                         while (v) {
-                            printf("  movk x16, #%d, lsl #%d\n", v & 0xffff, s);
-                            v >>= 16;
+                            secbuf_emit32le(&cg_obj->text, arm64_movk(1, 16, v & 0xffff, s))
+                                v >>= 16;
                             s += 16;
                         }
                         printf("  sub x16, %s, x16\n", FRAME_PTR);
@@ -7607,13 +8221,13 @@ void codegen(Program *prog) {
                             }
                             printf("  sub x13, %s, x13\n", FRAME_PTR);
                         }
-                        printf("  mov x9, #%d\n", var->ty->size);
-                        printf(".L.pcopy.%d:\n", c);
-                        printf("  cmp x9, #0\n");
+                        secbuf_emit32le(&cg_obj->text, arm64_movz(1, 9, var->ty->size, 0))
+                            printf(".L.pcopy.%d:\n", c);
+                        cg_emit_arm64_insn(arm64_subs_imm(1, 31, 9, 0, 0));
                         printf("  b.eq .L.pcopy_end.%d\n", c);
-                        printf("  sub x9, x9, #1\n");
-                        printf("  ldrb w16, [x11, x9]\n");
-                        printf("  strb w16, [x13, x9]\n");
+                        cg_emit_arm64_insn(arm64_sub_imm(1, 9, 9, 1, 0));
+                        secbuf_emit32le(&cg_obj->text, arm64_ldrb_reg(16, 11, 9));
+                        secbuf_emit32le(&cg_obj->text, arm64_strb_reg(16, 13, 9));
                         printf("  b .L.pcopy.%d\n", c);
                         printf(".L.pcopy_end.%d:\n", c);
                     } else {
@@ -7650,26 +8264,13 @@ void codegen(Program *prog) {
         }
 
 
-        // Read body into lines
-        fseek(body_file, 0, SEEK_END);
-        size_t body_len = ftell(body_file);
-        fseek(body_file, 0, SEEK_SET);
-        char *body_text = malloc(body_len + 1);
-        size_t size = fread(body_text, 1, body_len, body_file);
-        if (size != body_len) {
-            fprintf(stderr, "truncated tmpfile for %s when reading it back in\n", prog->in_path);
-        }
-        body_text[body_len] = '\0';
-        fclose(body_file);
-
-        // Emit body with peephole optimization
+        // Assemble body text (from Pass 1 buffer) into ObjFile with inline peephole
         {
             uint64_t _t0 = opt_time ? cg_now_us() : 0;
-            emit_peephole_body(body_text);
+            cg_assemble_body();
             if (opt_time)
                 time_peep_us += cg_now_us() - _t0;
         }
-        free(body_text);
 
         // === ARM64 epilogue ===
         printf(".L.return.%s:\n", fn->name);
@@ -7693,46 +8294,44 @@ void codegen(Program *prog) {
         // before reading callee-saved regs (stored at sp+16..sp+n at frame entry)
         if (fn->dealloc_vla || fn_uses_alloca) {
             if (frame_size <= 4095)
-                printf("  sub %s, %s, #%d\n", STACK_REG, FRAME_PTR, frame_size);
-            else {
-                int fs = frame_size;
-                printf("  mov x16, #%d\n", fs & 0xffff);
-                fs >>= 16;
-                int s = 16;
-                while (fs) {
-                    printf("  movk x16, #%d, lsl #%d\n", fs & 0xffff, s);
-                    fs >>= 16;
-                    s += 16;
+                secbuf_emit32le(&cg_obj->text, arm64_sub_imm(1, arm64_reg_idx(STACK_REG), arm64_reg_idx(FRAME_PTR), frame_size, 0)) else {
+                    int fs = frame_size;
+                    secbuf_emit32le(&cg_obj->text, arm64_movz(1, 16, fs & 0xffff, 0))
+                        fs >>= 16;
+                    int s = 16;
+                    while (fs) {
+                        secbuf_emit32le(&cg_obj->text, arm64_movk(1, 16, fs & 0xffff, s))
+                            fs >>= 16;
+                        s += 16;
+                    }
+                    secbuf_emit32le(&cg_obj->text, arm64_sub_reg(1, arm64_reg_idx(STACK_REG), arm64_reg_idx(FRAME_PTR), 16, 0, 0));
                 }
-                printf("  sub %s, %s, x16\n", STACK_REG, FRAME_PTR);
-            }
         }
 
         // Restore callee-saved
         cs_off = 16;
         for (int j = 0; j < 6; j++) {
             if (callee_mask & (1 << j)) {
-                printf("  ldr %s, [%s, #%d]\n", reg64[j + 6], STACK_REG, cs_off);
+                secbuf_emit32le(&cg_obj->text, arm64_ldr_imm(1, arm64_reg_idx(reg64[j + 6]), arm64_reg_idx(STACK_REG), cs_off, false));
                 cs_off += 8;
             }
         }
 
         if (frame_size <= 4095)
-            printf("  add %s, %s, #%d\n", STACK_REG, STACK_REG, frame_size);
-        else {
-            int fs = frame_size;
-            printf("  mov x16, #%d\n", fs & 0xffff);
-            fs >>= 16;
-            int s = 16;
-            while (fs) {
-                printf("  movk x16, #%d, lsl #%d\n", fs & 0xffff, s);
-                fs >>= 16;
-                s += 16;
+            secbuf_emit32le(&cg_obj->text, arm64_add_imm(1, arm64_reg_idx(STACK_REG), arm64_reg_idx(STACK_REG), frame_size, 0)) else {
+                int fs = frame_size;
+                secbuf_emit32le(&cg_obj->text, arm64_movz(1, 16, fs & 0xffff, 0))
+                    fs >>= 16;
+                int s = 16;
+                while (fs) {
+                    secbuf_emit32le(&cg_obj->text, arm64_movk(1, 16, fs & 0xffff, s))
+                        fs >>= 16;
+                    s += 16;
+                }
+                printf("  add %s, %s, x16\n", STACK_REG, STACK_REG);
             }
-            printf("  add %s, %s, x16\n", STACK_REG, STACK_REG);
-        }
         printf("  ldp %s, %s, [%s], #16\n", FRAME_PTR, LINK_REG, STACK_REG);
-        printf("  ret\n");
+        cg_ret();
 
 #else
         // === x86_64 prologue ===
@@ -7788,12 +8387,12 @@ void codegen(Program *prog) {
         if (fn->is_weak) {
 #ifdef __APPLE__
             printf(".weak_definition %s\n", asm_sym_name(sym_name(fn->name)));
-            printf(".globl %s\n", asm_sym_name(sym_name(fn->name)));
+            printf(".globl asm_sym_name(sym_name(fn->name\n")));
 #else
             printf(".weak %s\n", asm_sym_name(sym_name(fn->name)));
 #endif
         } else if (fn_exported) {
-            printf(".globl %s\n", asm_sym_name(sym_name(fn->name)));
+            printf(".globl asm_sym_name(sym_name(fn->name\n")));
         }
         // When the function name collides with a reserved name (e.g. register),
         // emit an alias from the real name to the safe label so that references
@@ -7803,18 +8402,18 @@ void codegen(Program *prog) {
         else if (fn->asm_name && (fn_exported || fn->is_weak))
             printf("%s = %s\n", asm_sym_name(sym_name(fn->name)), asm_sym_name(sym_name(fn->asm_name)));
 #if defined(__APPLE__)
-        printf("  .p2align 2\n");
+        secbuf_align(&cg_obj->text, 4);
 #endif
         printf("%s:\n", asm_sym_name(sym_name(fn_label)));
-        printf("  pushq %%rbp\n");
-        printf("  movq %%rsp, %%rbp\n");
+        cg_push(X86_RBP);
+        cg_mov_rr(8, X86_RBP, X86_RSP);
 
         // Only push callee-saved registers that were actually used
         for (int j = 0; j < callee_count; j++) {
             if (callee_mask & (1 << j))
                 printf("  push %s\n", reg64[j + 2]);
         }
-        printf("  subq $%d, %%rsp\n", sub_amount);
+        cg_sub_ri(8, X86_RSP, sub_amount);
 
         if (fn->ty->return_ty && (fn->ty->return_ty->kind == TY_STRUCT || fn->ty->return_ty->kind == TY_UNION)) {
             int retbuf_offset = 0;
@@ -7831,29 +8430,16 @@ void codegen(Program *prog) {
                 "%rdi"
 #endif
                 ;
-            printf("  mov %s, -%d(%%rbp)\n", retreg, retbuf_offset);
+            cg_mov_mr(8, retbuf_offset, x86_reg_idx(retreg));
         }
 
-        // Read body into lines, optimize, emit
-        fseek(body_file, 0, SEEK_END);
-        long body_len = ftell(body_file);
-        fseek(body_file, 0, SEEK_SET);
-
-        // Read all body text
-        char *body_text = malloc(body_len + 1);
-        size_t nread = fread(body_text, 1, body_len, body_file);
-        (void)nread;
-        body_text[body_len] = '\0';
-        fclose(body_file);
-
-        // Emit body with peephole optimization
+        // Assemble body text (from Pass 1 buffer) into ObjFile with inline peephole
         {
             uint64_t _t0 = opt_time ? cg_now_us() : 0;
-            emit_peephole_body(body_text);
+            cg_assemble_body();
             if (opt_time)
                 time_peep_us += cg_now_us() - _t0;
         }
-        free(body_text);
 
         // Emit epilogue
         printf(".L.return.%s:\n", fn->name);
@@ -7878,13 +8464,13 @@ void codegen(Program *prog) {
         else if (fn_uses_alloca)
             printf("  leaq -%d(%%rbp), %%rsp\n", n_pushes * 8);
         else
-            printf("  addq $%d, %%rsp\n", sub_amount);
+            cg_add_ri(8, X86_RSP, sub_amount);
         for (int j = callee_count - 1; j >= 0; j--) {
             if (callee_mask & (1 << j))
                 printf("  pop %s\n", reg64[j + 2]);
         }
-        printf("  popq %%rbp\n");
-        printf("  ret\n");
+        cg_pop(X86_RBP);
+        cg_ret();
 #endif
     }
 
@@ -7901,7 +8487,7 @@ void codegen(Program *prog) {
         printf("\n.section .ctors,\"w\"\n");
 #elif defined(__APPLE__)
         printf("\n.section __DATA,__mod_init_func\n");
-        printf("  .balign 8\n");
+        secbuf_align(&cg_obj->text, 8);
 #else
                 printf("\n.section .init_array,\"aw\",@init_array\n");
 #endif
@@ -7915,7 +8501,7 @@ void codegen(Program *prog) {
         printf("\n.section .dtors,\"w\"\n");
 #elif defined(__APPLE__)
         printf("\n.section __DATA,__mod_term_func\n");
-        printf("  .balign 8\n");
+        secbuf_align(&cg_obj->text, 8);
 #else
                 printf("\n.section .fini_array,\"aw\",@fini_array\n");
 #endif
@@ -7935,22 +8521,23 @@ void codegen(Program *prog) {
 #elif defined(__APPLE__)
         printf("\n.section __TEXT,__const\n");
 #else
-                printf("\n.section .rodata\n");
+                cg_set_section(SEC_RODATA);
 #endif
-        printf("  .balign 8\n");
+        secbuf_align(&cg_obj->text, 8);
         for (FloatLit *fl = float_lits; fl; fl = fl->next) {
             printf(".LF%d:\n", fl->id);
             if (fl->size == 4) {
                 float f = (float)fl->val;
                 unsigned int bits;
                 memcpy(&bits, &f, 4);
-                printf("  .long %u\n", bits);
-                printf("  .long 0\n");
+                printf("  .long bits\n");
+                secbuf_emit32le(cg_cur_sec == SEC_DATA ? &cg_obj->data : &cg_obj->rodata, 0);
             } else {
                 unsigned long long bits;
                 memcpy(&bits, &fl->val, 8);
-                printf("  .quad %llu\n", bits);
+                printf("  .quad bits\n");
             }
         }
     }
+    asm_finish(&cg_asm);
 }

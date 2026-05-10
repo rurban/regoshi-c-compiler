@@ -22,6 +22,9 @@
 #include <stdint.h>
 #include <float.h>
 
+// Forward declaration for ObjFile (used by codegen)
+typedef struct ObjFile ObjFile;
+
 #ifndef VERSION
 #define VERSION "v1.2-dev"
 #endif
@@ -456,7 +459,7 @@ Program *parse(Token *tok);
 // CodeGen
 //
 bool va_arg_need_copy(Type *ty);
-void codegen(Program *prog);
+void codegen(Program *prog, ObjFile *obj);
 
 // VLA
 Type *vla_of(Type *base, Node *expr, int64_t arr_len);

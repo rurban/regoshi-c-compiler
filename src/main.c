@@ -2,6 +2,7 @@
 // Derived from chibicc by Rui Ueyama.
 #include "rcc.h"
 #include "asm.h"
+#include "obj.h"
 #ifdef _WIN32
 #include <process.h>
 #else
@@ -263,9 +264,14 @@ int main(int argc, char **argv) {
         } else {
             in_path = argv[i];
 
+            // For -S: codegen produces .o, we run objdump to get .s
+            // For non-S: codegen produces .o, used directly for linking
             char *asm_path = opt_S
                 ? opt_o ? out_path : format("%s.s", path_basename(in_path))
-                : format("rcc_tmp_%d_%d_%s.s", _getpid(), i, path_basename(in_path));
+                : NULL;
+            char *obj_path = opt_S
+                ? format("%s.tmp.o", asm_path)
+                : format("rcc_tmp_%d_%d_%s.o", _getpid(), i, path_basename(in_path));
 
             // Tokenize and Parse
             char *contents = read_file(in_path);
@@ -321,16 +327,13 @@ int main(int argc, char **argv) {
             }
 
             if (!opt_dryrun) {
-                // Redirect stdout to our assembly file (append for multi-file)
-                if (!freopen(asm_path, first_input ? "w" : "a", stdout)) {
-                    fprintf(stderr, "rcc: error: cannot open output file %s\n", asm_path);
-                    return 1;
-                }
                 first_input = false;
-                // Code generation (prints assembly to stdout, which is now asm_path)
+                // Code generation: directly emits assembled bytes to an ObjFile
                 time_peep_us = 0;
                 t0 = opt_time ? now_us() : 0;
-                codegen(prog);
+                ObjFile obj;
+                objfile_init(&obj);
+                codegen(prog, &obj);
                 if (opt_time) {
                     uint64_t cg_total = now_us() - t0;
                     fprintf(stderr, "  codegen     %s: %6lu us\n", in_path,
@@ -339,16 +342,32 @@ int main(int argc, char **argv) {
                         fprintf(stderr, "  peephole    %s: %6lu us\n", in_path,
                                 time_peep_us);
                 }
-                fflush(stdout);
-                // Restore stdout to console if we want to print further, but we are done.
-                fclose(stdout);
+
+                // Write object file
+#ifdef __APPLE__
+                macho_write(&obj, obj_path);
+#else
+                elf_write(&obj, obj_path);
+#endif
+                objfile_free(&obj);
+
+                // For -S: run objdump -d on the .o to produce readable assembly
+                if (opt_S) {
+                    char cmd[1024];
+                    snprintf(cmd, sizeof(cmd), "objdump -d %s > %s", obj_path,
+                             opt_o ? out_path : format("%s.s", path_basename(in_path)));
+                    int rc = system(cmd);
+                    (void)rc;
+                    remove(obj_path);
+                }
             } else {
                 first_input = false;
             }
 
+            // For non -S: track the .o path for linking/assembling
             if (!opt_S && !opt_dryrun) {
                 OutPath *p = arena_alloc(sizeof(OutPath));
-                p->path = asm_path;
+                p->path = obj_path; // now .o file, not .s
                 p->next = out_paths;
                 out_paths = p;
             }
@@ -373,25 +392,27 @@ int main(int argc, char **argv) {
         out_paths = reverse(out_paths);
 
         if (opt_c) {
-            // -c: assemble each .s file to the single output .o using built-in assembler
-            // For multiple inputs we'd need per-file .o names, but rcc currently
-            // concatenates all to one .s, so just assemble that one file.
+            // -c: codegen already produced .o files, just rename the last one to out_path
+            // (For single input: move obj_path to out_path)
             uint64_t t0 = opt_time ? now_us() : 0;
             int status = 0;
             for (OutPath *p = out_paths; p; p = p->next) {
-                if (assemble_file(p->path, out_path) != 0) {
-                    fprintf(stderr, "rcc: error: assembly failed for %s\n", p->path);
-                    status = 1;
+                if (!opt_o || p->next) {
+                    // Multiple inputs: keep temp .o files
+                    (void)out_path;
+                } else {
+                    // Single output: rename to out_path
+                    remove(out_path);
+                    rename(p->path, out_path);
                 }
-                remove(p->path);
             }
             if (opt_time)
-                fprintf(stderr, "  assemble    %s: %6lu us\n", out_path,
+                fprintf(stderr, "  output      %s: %6lu us\n", out_path,
                         (unsigned long)(now_us() - t0));
             return status;
         }
 
-        // Linking: assemble each .s to a temp .o, then call the linker
+        // Linking: codegen already produced .o files, just link them
         char cmd[4096];
         int status = 0;
 
@@ -412,26 +433,19 @@ int main(int argc, char **argv) {
             snprintf(cmd, sizeof(cmd), GCC " -fuse-ld=" LD " -no-pie -o %s", out_path);
 #endif
 
-        // Assemble each .s file to a temp .o and add to linker command
+        // Add each codegen-produced .o file to linker command
         OutPath *obj_paths = NULL;
         uint64_t t_asm = opt_time ? now_us() : 0;
         for (OutPath *p = out_paths; p; p = p->next) {
-            char obj_tmp[256];
-            snprintf(obj_tmp, sizeof(obj_tmp), "%s.tmp.o", p->path);
-            if (assemble_file(p->path, obj_tmp) != 0) {
-                fprintf(stderr, "rcc: error: assembly failed for %s\n", p->path);
-                status = 1;
-                break;
-            }
             OutPath *op = arena_alloc(sizeof(OutPath));
-            op->path = format("%s", obj_tmp);
+            op->path = format("%s", p->path);
             op->next = obj_paths;
             obj_paths = op;
             strncat(cmd, " ", sizeof(cmd) - strlen(cmd) - 1);
-            strncat(cmd, obj_tmp, sizeof(cmd) - strlen(cmd) - 1);
+            strncat(cmd, p->path, sizeof(cmd) - strlen(cmd) - 1);
         }
         if (opt_time)
-            fprintf(stderr, "  assemble    %s: %6lu us\n", out_path,
+            fprintf(stderr, "  link set up %s: %6lu us\n", out_path,
                     (unsigned long)(now_us() - t_asm));
 
 #if defined(_WIN32) || defined(__MINGW32__)

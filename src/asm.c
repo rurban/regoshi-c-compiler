@@ -17,33 +17,8 @@
 #include <assert.h>
 
 // ---------------------------------------------------------------------------
-// State
+// State (defined in asm.h)
 // ---------------------------------------------------------------------------
-typedef struct {
-    ObjFile *obj;
-    int cur_sec; // current section: SEC_TEXT / SEC_DATA / SEC_BSS / SEC_RODATA
-    int lineno;
-    const char *filename;
-
-    // Backpatching: forward label references
-    // (max 512 pending fixups at once; sufficient for compiler output)
-    struct Fixup {
-        size_t patch_off; // byte offset in section buffer
-        int section;
-        char label[128];
-        int kind; // FIXUP_ARM64_B26, FIXUP_ARM64_B19, FIXUP_REL32
-        int64_t addend;
-    } fixups[512];
-    int nfixups;
-
-    // Local label map (for forward references: .Lxxx → offset)
-    struct LocalSym {
-        char name[128];
-        int section;
-        size_t offset;
-    } locals[2048];
-    int nlocals;
-} AsmState;
 
 static void asm_error(AsmState *as, const char *msg) {
     fprintf(stderr, "%s:%d: asm error: %s\n",
@@ -716,7 +691,7 @@ static bool encode_arm64(AsmState *as, const char *mnem, char *ops_str) {
 #define REG(n)  parse_arm64_reg(ops[n], NULL)
 #define REG32(n, w) parse_arm64_reg(ops[n], w)
 #define IMM(n)  parse_imm(ops[n])
-#define SF(r)   ((r) < 32 ? 1 : 0)  // always 1 for x-regs in context
+#define SF(r)   ((r) < 32 ? 1 : 0) // always 1 for x-regs in context
 
     bool is32_0 = false, is32_1 = false;
     int r0 = (nops > 0) ? parse_arm64_reg(ops[0], &is32_0) : -1;
@@ -1908,6 +1883,108 @@ static bool encode_x86(AsmState *as, const char *mnem, char *ops_str) {
 #undef is_mem
 #undef is_sym
     return true;
+}
+
+// ---------------------------------------------------------------------------
+// Line-by-line assembly API (used by codegen.c for direct byte emission)
+// ---------------------------------------------------------------------------
+void asm_init(AsmState *as, ObjFile *obj, const char *filename) {
+    memset(as, 0, sizeof(*as));
+    as->obj = obj;
+    as->cur_sec = SEC_TEXT;
+    as->filename = filename;
+}
+
+int asm_assemble_trimmed_line(AsmState *as, const char *p) {
+    // Strip comments
+    char *cmt = strstr(p, " //");
+    if (!cmt) cmt = strstr(p, " #");
+    size_t len = cmt ? (size_t)(cmt - p) : strlen(p);
+    while (len > 0 && (p[len - 1] == '\n' || p[len - 1] == '\r' || p[len - 1] == ' ' || p[len - 1] == '\t'))
+        len--;
+    char line[1024];
+    if (len >= sizeof(line)) len = sizeof(line) - 1;
+    memcpy(line, p, len);
+    line[len] = '\0';
+    p = line;
+    // skip leading ws
+    while (*p == ' ' || *p == '\t') p++;
+
+    if (!*p || *p == '#' || *p == ';' || (p[0] == '/' && p[1] == '/')) return;
+
+    // Labels
+    char *colon = strchr(p, ':');
+    bool is_label = colon && (colon[1] == '\0' || colon[1] == ' ' || colon[1] == '\t');
+    // Distinguish label from directive: e.g., ".L.return.main:" vs ".text"
+    if (!is_label && *p == '.') {
+        char *dir = p + 1;
+        char *sp = dir;
+        while (*sp && !isspace((unsigned char)*sp)) sp++;
+        char *args = *sp ? sp + 1 : sp;
+        *sp = 0;
+        for (char *d = dir; *d; d++) *d = tolower((unsigned char)*d);
+        handle_directive(as, dir, args);
+        return;
+    }
+    if (is_label) {
+        *colon = 0;
+        char *lbl = p;
+        int idx = objfile_find_sym(as->obj, lbl);
+        bool is_global = (idx >= 0 && as->obj->syms[idx].bind != SB_LOCAL);
+        bool is_weak = (idx >= 0 && as->obj->syms[idx].bind == SB_WEAK);
+        bool is_func = (idx >= 0 && as->obj->syms[idx].type == ST_FUNC);
+        define_label(as, lbl, is_global, is_weak, is_func);
+        p = skip_ws(colon + 1);
+        if (!*p) return;
+    }
+
+    if (as->cur_sec != SEC_TEXT) return;
+
+    // Instruction
+    char insn_buf[512];
+    strncpy(insn_buf, p, 511);
+    insn_buf[511] = 0;
+    char *mnem = insn_buf;
+    char *ops_str = mnem;
+    while (*ops_str && !isspace((unsigned char)*ops_str)) ops_str++;
+    if (*ops_str) {
+        *ops_str++ = 0;
+        ops_str = skip_ws(ops_str);
+    }
+    for (char *m = mnem; *m; m++) *m = tolower((unsigned char)*m);
+    char *mc = strchr(mnem, ':');
+    if (mc) *mc = 0;
+    if (!*mnem) return;
+
+#ifdef ARCH_ARM64
+    encode_arm64(as, mnem, ops_str);
+#else
+    encode_x86(as, mnem, ops_str);
+#endif
+}
+
+int asm_assemble_line(AsmState *as, const char *line) {
+    as->lineno++;
+    char buf[1024];
+    strncpy(buf, line, sizeof(buf) - 1);
+    buf[sizeof(buf) - 1] = '\0';
+    // Trim trailing newlines
+    size_t l = strlen(buf);
+    while (l > 0 && (buf[l - 1] == '\n' || buf[l - 1] == '\r')) buf[--l] = '\0';
+    // Strip leading whitespace including newlines
+    char *p = buf;
+    while (*p == ' ' || *p == '\t' || *p == '\n' || *p == '\r') p++;
+    if (!*p) return 0;
+    asm_assemble_trimmed_line(as, p);
+    return 0;
+}
+
+int asm_finish(AsmState *as) {
+    if (as->nfixups > 0) {
+        fprintf(stderr, "asm: warning: %d unresolved fixups\n", as->nfixups);
+        return -1;
+    }
+    return 0;
 }
 
 // ---------------------------------------------------------------------------
