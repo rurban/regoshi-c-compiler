@@ -306,23 +306,51 @@ static void alu_rm(SecBuf *s, int size, int op, X86Reg dst, X86Mem src) {
     emit_mem(s, src.base, src.index, src.scale, src.disp, (int)dst);
 }
 
+// ALU op r/m, imm  (e.g. addl $1, (%r10))
+static void alu_mi(SecBuf *s, int size, int op, X86Mem dst, int32_t imm) {
+    size16_pfx(s, size);
+    int w = size == 8;
+    emit1(s, rex(w, 0, dst.index > 7, dst.base > 7));
+    if (size != 1 && imm >= -128 && imm <= 127) {
+        emit1(s, 0x83);
+        emit_mem(s, dst.base, dst.index, dst.scale, dst.disp, op);
+        emit1(s, (uint8_t)(int8_t)imm);
+    } else if (size == 1) {
+        emit1(s, 0x80);
+        emit_mem(s, dst.base, dst.index, dst.scale, dst.disp, op);
+        emit1(s, (uint8_t)imm);
+    } else {
+        emit1(s, 0x81);
+        emit_mem(s, dst.base, dst.index, dst.scale, dst.disp, op);
+        if (size == 2) secbuf_emit16le(s, (uint16_t)imm);
+        else
+            emit_imm32(s, imm);
+    }
+}
+
 void x86_add_rr(SecBuf *s, int sz, X86Reg d, X86Reg sr) { alu_rr(s, sz, 0, d, sr); }
 void x86_add_ri(SecBuf *s, int sz, X86Reg d, int32_t i) { alu_ri(s, sz, 0, d, i); }
 void x86_add_rm(SecBuf *s, int sz, X86Reg d, X86Mem m) { alu_rm(s, sz, 0, d, m); }
+void x86_add_mi(SecBuf *s, int sz, X86Mem d, int32_t i) { alu_mi(s, sz, 0, d, i); }
 void x86_sub_rr(SecBuf *s, int sz, X86Reg d, X86Reg sr) { alu_rr(s, sz, 5, d, sr); }
 void x86_sub_ri(SecBuf *s, int sz, X86Reg d, int32_t i) { alu_ri(s, sz, 5, d, i); }
 void x86_sub_rm(SecBuf *s, int sz, X86Reg d, X86Mem m) { alu_rm(s, sz, 5, d, m); }
+void x86_sub_mi(SecBuf *s, int sz, X86Mem d, int32_t i) { alu_mi(s, sz, 5, d, i); }
 void x86_and_rr(SecBuf *s, int sz, X86Reg d, X86Reg sr) { alu_rr(s, sz, 4, d, sr); }
 void x86_and_ri(SecBuf *s, int sz, X86Reg d, int32_t i) { alu_ri(s, sz, 4, d, i); }
 void x86_and_rm(SecBuf *s, int sz, X86Reg d, X86Mem m) { alu_rm(s, sz, 4, d, m); }
+void x86_and_mi(SecBuf *s, int sz, X86Mem d, int32_t i) { alu_mi(s, sz, 4, d, i); }
 void x86_or_rr(SecBuf *s, int sz, X86Reg d, X86Reg sr) { alu_rr(s, sz, 1, d, sr); }
 void x86_or_ri(SecBuf *s, int sz, X86Reg d, int32_t i) { alu_ri(s, sz, 1, d, i); }
+void x86_or_mi(SecBuf *s, int sz, X86Mem d, int32_t i) { alu_mi(s, sz, 1, d, i); }
 void x86_xor_rr(SecBuf *s, int sz, X86Reg d, X86Reg sr) { alu_rr(s, sz, 6, d, sr); }
 void x86_xor_ri(SecBuf *s, int sz, X86Reg d, int32_t i) { alu_ri(s, sz, 6, d, i); }
 void x86_xor_rm(SecBuf *s, int sz, X86Reg d, X86Mem m) { alu_rm(s, sz, 6, d, m); }
+void x86_xor_mi(SecBuf *s, int sz, X86Mem d, int32_t i) { alu_mi(s, sz, 6, d, i); }
 void x86_cmp_rr(SecBuf *s, int sz, X86Reg a, X86Reg b) { alu_rr(s, sz, 7, a, b); }
 void x86_cmp_ri(SecBuf *s, int sz, X86Reg a, int32_t i) { alu_ri(s, sz, 7, a, i); }
 void x86_cmp_rm(SecBuf *s, int sz, X86Reg a, X86Mem b) { alu_rm(s, sz, 7, a, b); }
+void x86_cmp_mi(SecBuf *s, int sz, X86Mem a, int32_t i) { alu_mi(s, sz, 7, a, i); }
 void x86_cmp_mr(SecBuf *s, int sz, X86Mem a, X86Reg b) {
     size16_pfx(s, sz);
     emit1(s, rex(sz == 8, b > 7, a.index > 7, a.base > 7));

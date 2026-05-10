@@ -114,9 +114,11 @@ void x86_lea(SecBuf *s, int size, X86Reg dst, X86Mem src);
 void x86_add_rr(SecBuf *s, int size, X86Reg dst, X86Reg src);
 void x86_add_ri(SecBuf *s, int size, X86Reg dst, int32_t imm);
 void x86_add_rm(SecBuf *s, int size, X86Reg dst, X86Mem src);
+void x86_add_mi(SecBuf *s, int size, X86Mem dst, int32_t imm);
 void x86_sub_rr(SecBuf *s, int size, X86Reg dst, X86Reg src);
 void x86_sub_ri(SecBuf *s, int size, X86Reg dst, int32_t imm);
 void x86_sub_rm(SecBuf *s, int size, X86Reg dst, X86Mem src);
+void x86_sub_mi(SecBuf *s, int size, X86Mem dst, int32_t imm);
 void x86_imul_rr(SecBuf *s, int size, X86Reg dst, X86Reg src);
 void x86_imul_rri(SecBuf *s, int size, X86Reg dst, X86Reg src, int32_t imm);
 void x86_imul_r(SecBuf *s, int size, X86Reg src); // RDX:RAX = RAX*src
@@ -133,11 +135,15 @@ void x86_cqo(SecBuf *s); // sign-extend RAX to RDX:RAX
 void x86_and_rr(SecBuf *s, int size, X86Reg dst, X86Reg src);
 void x86_and_ri(SecBuf *s, int size, X86Reg dst, int32_t imm);
 void x86_and_rm(SecBuf *s, int size, X86Reg dst, X86Mem src);
+void x86_and_mi(SecBuf *s, int size, X86Mem dst, int32_t imm);
 void x86_or_rr(SecBuf *s, int size, X86Reg dst, X86Reg src);
 void x86_or_ri(SecBuf *s, int size, X86Reg dst, int32_t imm);
+void x86_or_mi(SecBuf *s, int size, X86Mem dst, int32_t imm);
 void x86_xor_rr(SecBuf *s, int size, X86Reg dst, X86Reg src);
 void x86_xor_ri(SecBuf *s, int size, X86Reg dst, int32_t imm);
 void x86_xor_rm(SecBuf *s, int size, X86Reg dst, X86Mem src);
+void x86_xor_mi(SecBuf *s, int size, X86Mem dst, int32_t imm);
+void x86_cmp_mi(SecBuf *s, int size, X86Mem a, int32_t imm);
 
 // Shifts
 void x86_shl_ri(SecBuf *s, int size, X86Reg r, uint8_t imm);

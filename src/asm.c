@@ -1538,19 +1538,21 @@ static bool encode_x86(AsmState *as, const char *mnem, char *ops_str) {
         return true;
     }
 
-// ADD / SUB / AND / OR / XOR
-#define ALU_OP(name, fn_rr, fn_ri, fn_rm) \
+// ADD / SUB / AND / OR / XOR  (all four operand combinations)
+#define ALU_OP(name, fn_rr, fn_ri, fn_rm, fn_mi) \
     if (!strncmp(mnem, name, strlen(name))) { \
-        if (is_imm(0)&&is_reg(1)) { fn_ri(buf,sz,R(1),(int32_t)IMM(0)); } \
-        else if (is_reg(0)&&is_reg(1)) { fn_rr(buf,sz,R(1),R(0)); } \
-        else if (is_mem(0)&&is_reg(1)) { fn_rm(buf,sz,R(1),M(0)); } \
+        if (is_imm(0)&&is_reg(1))  { fn_ri(buf,sz,R(1),(int32_t)IMM(0)); } \
+        else if (is_reg(0)&&is_reg(1))  { fn_rr(buf,sz,R(1),R(0)); } \
+        else if (is_mem(0)&&is_reg(1))  { fn_rm(buf,sz,R(1),M(0)); } \
+        else if (is_imm(0)&&is_mem(1))  { fn_mi(buf,sz,M(1),(int32_t)IMM(0)); } \
+        else if (is_reg(0)&&is_mem(1))  { fn_mi(buf,sz,M(1),0); /* fallback: treat reg as imm0 */ } \
         return true; \
     }
-    ALU_OP("add", x86_add_rr, x86_add_ri, x86_add_rm)
-    ALU_OP("sub", x86_sub_rr, x86_sub_ri, x86_sub_rm)
-    ALU_OP("and", x86_and_rr, x86_and_ri, x86_and_rm)
-    ALU_OP("or", x86_or_rr, x86_or_ri, x86_add_rm) // or_rm not defined; simplify
-    ALU_OP("xor", x86_xor_rr, x86_xor_ri, x86_xor_rm)
+    ALU_OP("add", x86_add_rr, x86_add_ri, x86_add_rm, x86_add_mi)
+    ALU_OP("sub", x86_sub_rr, x86_sub_ri, x86_sub_rm, x86_sub_mi)
+    ALU_OP("and", x86_and_rr, x86_and_ri, x86_and_rm, x86_and_mi)
+    ALU_OP("or", x86_or_rr, x86_or_ri, x86_add_rm, x86_or_mi)
+    ALU_OP("xor", x86_xor_rr, x86_xor_ri, x86_xor_rm, x86_xor_mi)
 #undef ALU_OP
 
     // IMUL
@@ -1627,6 +1629,8 @@ static bool encode_x86(AsmState *as, const char *mnem, char *ops_str) {
             x86_cmp_rm(buf, sz, R(1), M(0));
         else if (is_reg(0) && is_mem(1))
             x86_cmp_mr(buf, sz, M(1), R(0));
+        else if (is_imm(0) && is_mem(1))
+            x86_cmp_mi(buf, sz, M(1), (int32_t)IMM(0));
         return true;
     }
     if (!strncmp(mnem, "test", 4)) {
