@@ -102,7 +102,30 @@ src/sysinc_paths.h:
 	fi
 
 src/gcc_predefined.h:
-	$(CC) -dM -E - < /dev/null | awk -f tools/get-gcc-predefined.awk > $@
+	@tmp=$$(mktemp); \
+	$(CC) -dM -E - < /dev/null > $$tmp; \
+	if grep -q '__APPLE__' $$tmp; then \
+		echo '#ifdef __APPLE__' > $@; \
+	elif grep -q '_WIN32' $$tmp; then \
+		echo '#ifdef _WIN32' > $@; \
+	elif grep -q '__linux__' $$tmp; then \
+		echo '#ifdef __linux__' > $@; \
+	elif grep -q '__FreeBSD__' $$tmp; then \
+		echo '#ifdef __FreeBSD__' > $@; \
+	elif grep -q '__OpenBSD__' $$tmp; then \
+		echo '#ifdef __OpenBSD__' > $@; \
+	elif grep -q '__NetBSD__' $$tmp; then \
+		echo '#ifdef __NetBSD__' > $@; \
+	elif grep -q '__DragonFly__' $$tmp; then \
+		echo '#ifdef __DragonFly__' > $@; \
+	else \
+		: > $@; \
+	fi; \
+	awk -f tools/get-gcc-predefined.awk $$tmp >> $@; \
+	if grep -qE '__APPLE__|_WIN32|__linux__|__FreeBSD__|__OpenBSD__|__NetBSD__|__DragonFly__' $$tmp; then \
+		echo '#endif' >> $@; \
+	fi; \
+	rm -f $$tmp
 
 $(DARWIN_O): lib/darwin.c
 	$(CC) $(CFLAGS) -c $< -o $@

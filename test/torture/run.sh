@@ -208,7 +208,7 @@ if [ "$RCC" = "../../arm64-cross.sh" ]; then
 elif [ "$(uname -m)" = "aarch64" ] || [ "$(uname -m)" = "arm64" ]; then
     [ "$PASS" -ge 915 ]
 elif [ "$RCC" = "../../mingw-cross.sh" ]; then
-    [ "$PASS" -ge 894 ]
+    [ "$PASS" -ge 895 ]
 elif [ "$RCC" = "../../darwin-cross.sh" ]; then
     [ "$PASS" -ge 922 ]
 elif [ "$(uname -s | grep -qE 'MSYS|MINGW|CYGWIN')" ]; then
