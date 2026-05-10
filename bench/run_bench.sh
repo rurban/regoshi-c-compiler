@@ -126,6 +126,20 @@ list_c=""
 
 echo ""
 echo "============================================"
+echo "  RCC substep timing  (-time)"
+echo "============================================"
+echo ""
+printf "\n--- RCC ---\n"
+rcc_time=$("$RCC" -time "$SRC" -o "$RCC_EXE" 2>&1 >/dev/null) || true
+printf '%s\n' "$rcc_time"
+rm -f "$RCC_EXE"
+printf "\n--- RCC -O1 ---\n"
+rcc_o1_time=$("$RCC" -time -O1 "$SRC" -o "$RCC_O1_EXE" 2>&1 >/dev/null) || true
+printf '%s\n' "$rcc_o1_time"
+rm -f "$RCC_O1_EXE"
+
+echo ""
+echo "============================================"
 echo "  RCC vs TCC vs others  --  Benchmark Battle"
 echo "============================================"
 
@@ -190,6 +204,13 @@ for _c in $list_c; do
 	printf "| %-12s | %12s | %12s | %10s |\n" "$_c" "$_cm" "$_em" "$_tm"
 done
 IFS="$oldifs"
+printf "\n## RCC Substep Timing\n\n"
+printf '```\n'
+printf "RCC:\n"
+printf '%s\n' "$rcc_time" | sed 's|[^ ]*/||g'
+printf "\nRCC -O1:\n"
+printf '%s\n' "$rcc_o1_time" | sed 's|[^ ]*/||g'
+printf '```\n'
 } > "$REPORT"
 printf "Report: %s\n" "$REPORT"
 

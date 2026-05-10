@@ -199,8 +199,10 @@ extern bool opt_dM;
 extern bool opt_g;
 extern bool opt_pie;
 extern bool opt_pic;
+extern bool opt_time;
 extern int pack_align;
 extern bool sse42_available;
+extern uint64_t time_peep_us;
 
 bool is_integer(Type *ty);
 bool is_flonum(Type *ty);

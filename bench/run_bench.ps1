@@ -33,6 +33,31 @@ $CLANG_O2   = Join-Path $ScriptDir "bench_clang_o2.exe"
 
 Write-Host ""
 Write-Host "=============================================" -ForegroundColor Cyan
+Write-Host "  RCC substep timing  (-time)"                 -ForegroundColor Cyan
+Write-Host "=============================================" -ForegroundColor Cyan
+Write-Host ""
+
+function Run-Time {
+    param($Label, [string]$ArgStr)
+    Write-Host "--- $Label ---" -ForegroundColor DarkCyan
+    $stderrFile = [System.IO.Path]::GetTempFileName()
+    $argList = $ArgStr -split '\s+'
+    Start-Process -FilePath $RCC -ArgumentList $argList -NoNewWindow -Wait `
+        -RedirectStandardError $stderrFile -ErrorAction SilentlyContinue | Out-Null
+    if (Test-Path $stderrFile) {
+        $timing = Get-Content $stderrFile -Raw
+        if ($timing) { Write-Host $timing.TrimEnd() -ForegroundColor DarkCyan }
+        Remove-Item $stderrFile -Force -ErrorAction SilentlyContinue
+    }
+    Remove-Item $RCC_EXE    -Force -ErrorAction SilentlyContinue
+    Remove-Item $RCC_O1_EXE -Force -ErrorAction SilentlyContinue
+}
+
+Run-Time "RCC"     "-time $SRC -o $RCC_EXE"
+Run-Time "RCC -O1" "-time -O1 $SRC -o $RCC_O1_EXE"
+
+Write-Host ""
+Write-Host "=============================================" -ForegroundColor Cyan
 Write-Host "  RCC vs TCC vs GCC  --  Benchmark Battle"     -ForegroundColor Cyan
 Write-Host "=============================================" -ForegroundColor Cyan
 Write-Host ""

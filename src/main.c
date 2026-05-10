@@ -8,6 +8,13 @@
 #define _getpid getpid
 #endif
 #include <sys/stat.h>
+#include <time.h>
+
+static uint64_t now_us(void) {
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (uint64_t)ts.tv_sec * 1000000 + (uint64_t)ts.tv_nsec / 1000;
+}
 #ifndef GCC
 #define GCC "gcc"
 #endif
@@ -89,6 +96,7 @@ void help(void) {
            "-mno-ms-bitfields   use GCC bitfield layout by default\n"
            "-pie|-fPIE|-fpie    generate position-independent executable\n"
            "-fPIC|-fpic         generate position-independent code\n"
+           "-time               print timing for each compilation substep\n"
            "-###                dry-run (print commands, don't execute)\n"
            "-dM                 dump all macro definitions (use with -E)\n"
            "-fdump-ast          dump AST for debugging\n"
@@ -106,6 +114,7 @@ bool opt_fdump_ast = false;
 bool opt_g = false;
 bool opt_pie = false;
 bool opt_pic = false;
+bool opt_time = false;
 bool opt_ms_bitfields =
 #ifdef _WIN32
     true;
@@ -195,6 +204,8 @@ int main(int argc, char **argv) {
             opt_pie = true;
         } else if (!strcmp(argv[i], "-fPIC") || !strcmp(argv[i], "-fpic")) {
             opt_pic = true;
+        } else if (!strcmp(argv[i], "-time")) {
+            opt_time = true;
         } else if (!strcmp(argv[i], "-o")) {
             if (++i >= argc) {
                 fprintf(stderr, "error: missing argument for -o\n");
@@ -256,21 +267,35 @@ int main(int argc, char **argv) {
             char *contents = read_file(in_path);
 
             // Always preprocess - opt_E just outputs preprocessed result
+            uint64_t t0 = opt_time ? now_us() : 0;
             char *preprocessed = preprocess(in_path, contents);
+            if (opt_time)
+                fprintf(stderr, "  preprocess  %s: %6lu us\n", in_path,
+                        now_us() - t0);
 
             if (opt_E) {
                 printf("%s", preprocessed);
                 continue;
             }
 
+            t0 = opt_time ? now_us() : 0;
             Token *tok = tokenize(in_path, preprocessed);
+            if (opt_time)
+                fprintf(stderr, "  lex         %s: %6lu us\n", in_path,
+                        now_us() - t0);
+
+            t0 = opt_time ? now_us() : 0;
             Program *prog = parse(tok);
             prog->in_path = in_path;
+            if (opt_time)
+                fprintf(stderr, "  parse       %s: %6lu us\n", in_path,
+                        now_us() - t0);
 
             if (opt_fdump_ast)
                 dump_ast(prog);
 
             // Type system / Semantic checks
+            t0 = opt_time ? now_us() : 0;
             for (TLItem *item = prog->items; item; item = item->next) {
                 if (item->kind != TL_FUNC)
                     continue;
@@ -278,10 +303,18 @@ int main(int argc, char **argv) {
                     add_type(n);
                 }
             }
+            if (opt_time)
+                fprintf(stderr, "  typecheck   %s: %6lu us\n", in_path,
+                        now_us() - t0);
 
             // CTFE runs only with -O1; peephole skipped with -O0.
-            if (opt_O1)
+            if (opt_O1) {
+                t0 = opt_time ? now_us() : 0;
                 optimize(prog);
+                if (opt_time)
+                    fprintf(stderr, "  opt(CTFE)   %s: %6lu us\n", in_path,
+                            now_us() - t0);
+            }
 
             if (!opt_dryrun) {
                 // Redirect stdout to our assembly file (append for multi-file)
@@ -291,7 +324,17 @@ int main(int argc, char **argv) {
                 }
                 first_input = false;
                 // Code generation (prints assembly to stdout, which is now asm_path)
+                time_peep_us = 0;
+                t0 = opt_time ? now_us() : 0;
                 codegen(prog);
+                if (opt_time) {
+                    uint64_t cg_total = now_us() - t0;
+                    fprintf(stderr, "  codegen     %s: %6lu us\n", in_path,
+                            cg_total - time_peep_us);
+                    if (!opt_O0)
+                        fprintf(stderr, "  peephole    %s: %6lu us\n", in_path,
+                                time_peep_us);
+                }
                 fflush(stdout);
                 // Restore stdout to console if we want to print further, but we are done.
                 fclose(stdout);
@@ -378,7 +421,11 @@ int main(int argc, char **argv) {
             return 0;
         }
 
+        uint64_t t_link = opt_time ? now_us() : 0;
         int status = system(cmd);
+        if (opt_time)
+            fprintf(stderr, "  link        %s: %6lu us\n", out_path,
+                    (unsigned long)(now_us() - t_link));
         if (status != 0) {
             fprintf(stderr, "rcc: error: backend %s failed with code %d\n", cmd, status);
         }

@@ -33,7 +33,7 @@ Linux:
 
 - RCC vs TCC vs GCC -O2 execution: same speed on windows, competitive on linux.
 - All outputs verified correct against TCC, GCC -O2 and CLANG -O2 references.
-- **Compile-time performance**: RCC emits assembly to stdout then invokes GCC (`system()`) to assemble and link, which is ~2× slower than TCC's native internal assembler/linker. The peephole optimizer also reparses assembly lines as text strings (4 passes over emitted asm), while TCC works on an internal abstract representation. Together these account for the compile-time gap. Generated code quality is on par with TCC.
+- **Compile-time performance**: RCC emits assembly to stdout then invokes GCC (`system()`) to assemble and link, which is ~2× slower than TCC's native internal assembler/linker. The peephole optimizer uses a 3-line sliding window (single pass over emitted asm), while TCC works on an internal abstract representation. Together these account for the compile-time gap. Generated code quality is on par with TCC.
 
 ## Key Features
 
@@ -115,6 +115,7 @@ make bench
     -mno-ms-bitfields  use GCC bitfields (default on non-Windows)
     -pie|-fPIE|-fpie   generate position-independent executable
     -fPIC|-fpic        generate position-independent code
+    -time              print timing for each compilation substep
     -###               dry-run (print commands, don't execute)
     -dM                dump all macro definitions (use with -E)
     -fdump-ast         dump AST to stderr for debugging

@@ -3,8 +3,16 @@
 #include "rcc.h"
 #include <stdarg.h>
 #include <ctype.h>
+#include <time.h>
 
 static FILE *cg_stream;
+uint64_t time_peep_us = 0;
+
+static uint64_t cg_now_us(void) {
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (uint64_t)ts.tv_sec * 1000000 + (uint64_t)ts.tv_nsec / 1000;
+}
 static Function *current_fn_def;
 static TLItem *all_items;
 static StrLit *all_strs;
@@ -7617,7 +7625,12 @@ void codegen(Program *prog) {
         fclose(body_file);
 
         // Emit body with peephole optimization
-        emit_peephole_body(body_text);
+        {
+            uint64_t _t0 = opt_time ? cg_now_us() : 0;
+            emit_peephole_body(body_text);
+            if (opt_time)
+                time_peep_us += cg_now_us() - _t0;
+        }
         free(body_text);
 
         // === ARM64 epilogue ===
@@ -7796,7 +7809,12 @@ void codegen(Program *prog) {
         fclose(body_file);
 
         // Emit body with peephole optimization
-        emit_peephole_body(body_text);
+        {
+            uint64_t _t0 = opt_time ? cg_now_us() : 0;
+            emit_peephole_body(body_text);
+            if (opt_time)
+                time_peep_us += cg_now_us() - _t0;
+        }
         free(body_text);
 
         // Emit epilogue
