@@ -1466,8 +1466,10 @@ static bool encode_x86(AsmState *as, const char *mnem, char *ops_str) {
         return true;
     }
 
-    // MOV variants
-    if (!strncmp(mnem, "mov", 3)) {
+    // MOV variants (skip pure string-move instructions; those are handled below)
+    if (!strncmp(mnem, "mov", 3) &&
+        strcmp(mnem, "movsb") != 0 && strcmp(mnem, "movsw") != 0 &&
+        strcmp(mnem, "movsl") != 0 && strcmp(mnem, "movsq") != 0) {
         // AT&T: src, dst
         bool is_movabs = strstr(mnem, "abs") != NULL;
         bool is_movsx = strstr(mnem, "sx") != NULL || strstr(mnem, "sl") != NULL;
@@ -1829,16 +1831,107 @@ static bool encode_x86(AsmState *as, const char *mnem, char *ops_str) {
         x86_lock_prefix(buf);
         return true;
     }
-    if (!strcmp(mnem, "rep")) {
-        x86_rep_prefix(buf);
+    // rep/repe/repne may have the string instruction on the same line:
+    // "repne scasb", "rep stosb", "repe cmpsb"
+    if (!strcmp(mnem, "rep") || !strcmp(mnem, "repe") || !strcmp(mnem, "repne")) {
+        if (!strcmp(mnem, "repne")) x86_repne_prefix(buf);
+        else
+            x86_rep_prefix(buf);
+        // Encode the string instruction that follows on the same line
+        if (ops_str && *ops_str) {
+            char str_mnem[16];
+            strncpy(str_mnem, ops_str, 15);
+            str_mnem[15] = 0;
+            char *sp = str_mnem;
+            while (*sp && !isspace((unsigned char)*sp))
+                sp++;
+            *sp = 0;
+            for (char *m = str_mnem; *m; m++)
+                *m = tolower((unsigned char)*m);
+            encode_x86(as, str_mnem, (char *)"");
+        }
         return true;
     }
-    if (!strcmp(mnem, "repe")) {
-        x86_rep_prefix(buf);
+
+    // x86 string instructions (used by rcc inline libc)
+    // scasb/scasw/scasl/scasq — scan string (AL/AX/EAX/RAX vs *RDI)
+    if (!strncmp(mnem, "scas", 4)) {
+        char suf = mnem[4] ? mnem[4] : 'b';
+        if (suf == 'q') {
+            secbuf_emit8(buf, 0x48);
+            secbuf_emit8(buf, 0xaf);
+        } else if (suf == 'l') {
+            secbuf_emit8(buf, 0xaf);
+        } else if (suf == 'w') {
+            secbuf_emit8(buf, 0x66);
+            secbuf_emit8(buf, 0xaf);
+        } else {
+            secbuf_emit8(buf, 0xae);
+        } // scasb
         return true;
     }
-    if (!strcmp(mnem, "repne")) {
-        x86_repne_prefix(buf);
+    // stosb/stosw/stosl/stosq — store string (AL/AX/EAX/RAX → *RDI)
+    if (!strncmp(mnem, "stos", 4)) {
+        char suf = mnem[4] ? mnem[4] : 'b';
+        if (suf == 'q') {
+            secbuf_emit8(buf, 0x48);
+            secbuf_emit8(buf, 0xab);
+        } else if (suf == 'l') {
+            secbuf_emit8(buf, 0xab);
+        } else if (suf == 'w') {
+            secbuf_emit8(buf, 0x66);
+            secbuf_emit8(buf, 0xab);
+        } else {
+            secbuf_emit8(buf, 0xaa);
+        } // stosb
+        return true;
+    }
+    // movsb/movsw/movsl/movsq — move string (*RSI → *RDI)
+    if (!strncmp(mnem, "movs", 4) && mnem[4] && mnem[4] != 'd') { // not movsd
+        char suf = mnem[4];
+        if (suf == 'q') {
+            secbuf_emit8(buf, 0x48);
+            secbuf_emit8(buf, 0xa5);
+        } else if (suf == 'l') {
+            secbuf_emit8(buf, 0xa5);
+        } else if (suf == 'w') {
+            secbuf_emit8(buf, 0x66);
+            secbuf_emit8(buf, 0xa5);
+        } else {
+            secbuf_emit8(buf, 0xa4);
+        } // movsb
+        return true;
+    }
+    // cmpsb/cmpsw/cmpsl/cmpsq — compare string (*RSI vs *RDI)
+    if (!strncmp(mnem, "cmps", 4)) {
+        char suf = mnem[4] ? mnem[4] : 'b';
+        if (suf == 'q') {
+            secbuf_emit8(buf, 0x48);
+            secbuf_emit8(buf, 0xa7);
+        } else if (suf == 'l') {
+            secbuf_emit8(buf, 0xa7);
+        } else if (suf == 'w') {
+            secbuf_emit8(buf, 0x66);
+            secbuf_emit8(buf, 0xa7);
+        } else {
+            secbuf_emit8(buf, 0xa6);
+        } // cmpsb
+        return true;
+    }
+    // lodsb/lodsw/lodsl/lodsq — load string (*RSI → AL/AX/EAX/RAX)
+    if (!strncmp(mnem, "lods", 4)) {
+        char suf = mnem[4] ? mnem[4] : 'b';
+        if (suf == 'q') {
+            secbuf_emit8(buf, 0x48);
+            secbuf_emit8(buf, 0xad);
+        } else if (suf == 'l') {
+            secbuf_emit8(buf, 0xad);
+        } else if (suf == 'w') {
+            secbuf_emit8(buf, 0x66);
+            secbuf_emit8(buf, 0xad);
+        } else {
+            secbuf_emit8(buf, 0xac);
+        } // lodsb
         return true;
     }
 
