@@ -130,7 +130,7 @@ Generated: May 2026
 | 125_atomic_misc             | PASS         | Output matches                |
 | 126_bound_global            | SKIP         | Skipped                       |
 | 127_asm_goto                | SKIP         | Skipped                       |
-| 128_run_atexit              | MISMATCH     | Output does not match .expect |
+| 128_run_atexit              | EXEC_FAIL    | non-zero exit                 |
 | 129_scopes                  | PASS         | Output matches                |
 | 130_large_argument          | PASS         | Output matches                |
 | 131_return_struct_in_reg    | PASS         | Output matches                |

@@ -369,7 +369,7 @@ $summaryFile = Join-Path $ScriptDir "test-tcc-mingw.summary"
 Write-Host "`nTest complete. Summary: $Passed Passed, $Failed Failed." -ForegroundColor Cyan
 Write-Host "Full report saved to $ReportFile"
 
-if ($Passed -ge 112) {
+if ($Passed -ge 113) {
     exit 0
 } else {
     exit 1

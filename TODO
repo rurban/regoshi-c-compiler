@@ -1,11 +1,10 @@
 - tcc fails:
-  - mingw_cross: 129_scopes
-  - mingw: 129_scopes 101_cleanup 119_random_stuff
-  - darwin: 106_versym 108_constructor 119_random_stuff 120_alias
+  - mingw: 101_cleanup 119_random_stuff 129_scopes
+  - darwin: 73_arm64 106_versym 108_constructor 119_random_stuff 120_alias
             124_atomic_counter 128_run_atexit 140_arm64_extasm
 - torture fails:
-  - mingw_cross: 20030613-1 20080222-1 built-in-setjmp conversion fprintf-chk-1
-  - darwin: 20000731-1 20011217-1 20040313-1 20080222-1 930513-1
+  - darwin: 20000731-1 20011217-1 20040313-1 930513-1 fprintf-2
+            fprintf-chk-1 loop-2f loop-2g
     fprintf-2 fprintf-chk-1 loop-2f loop-2g
 - run the peephole checks directly in the codegen pass.
   it only needs to checks against the previously emitted line.

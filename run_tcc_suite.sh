@@ -790,7 +790,7 @@ if [ -n "$ONLY_TEST" ]; then
     [ "$failed" -eq 0 ]
 # arm64-darwin native
 elif [ "$REPORT_FILE" = "$REPORT_DIR/tcc_test_arm64.md" ]; then
-    [ "$passed" -ge 145 ]
+    [ "$passed" -ge 147 ]
 elif [ "$RCC" = "$SCRIPT_DIR/darwin-cross.sh" ]; then
     [ "$passed" -ge 155 ]
 elif [ "$RCC" = "$SCRIPT_DIR/arm64-cross.sh" ]; then

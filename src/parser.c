@@ -5383,6 +5383,9 @@ Program *parse(Token *tok) {
                            "  int __gr_offs;"
                            "  int __vr_offs;"
                            "} __builtin_va_list[1];"
+#elif defined(_WIN32)
+                           // Windows x64: va_list is just a char pointer (msvcrt ABI)
+                           "typedef char *__builtin_va_list;"
 #else
                            // x86-64 System V ABI va_list: 24 bytes
                            "typedef struct {"

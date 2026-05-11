@@ -1875,10 +1875,7 @@ char *preprocess(char *filename, char *p) {
         define_pre("__builtin_strdup", "strdup");
         define_pre("__builtin_alloca", "alloca");
         define_pre("__builtin_exit", "exit");
-#ifndef ARCH_ARM64
-        define_pre("__builtin_setjmp", "setjmp");
-        define_pre("__builtin_longjmp", "longjmp");
-#endif
+        // __builtin_setjmp/__builtin_longjmp are handled inline in codegen
         define_pre("__builtin_printf", "printf");
         define_pre("__builtin_puts", "puts");
         define_pre("__builtin_sprintf", "sprintf");

@@ -579,10 +579,8 @@ static int gen_funcall(Node *node, int hidden_ret_reg) {
         bool is_prefetch = strcmp(call_target, "__builtin_prefetch") == 0;
         bool is_frame_addr = strcmp(call_target, "__builtin_frame_address") == 0;
         bool is_ret_addr = strcmp(call_target, "__builtin_return_address") == 0;
-#ifdef ARCH_ARM64
         bool is_setjmp = strcmp(call_target, "__builtin_setjmp") == 0;
         bool is_longjmp = strcmp(call_target, "__builtin_longjmp") == 0;
-#endif
         bool is_signbit = strcmp(call_target, "__builtin_signbit") == 0 ||
             strcmp(call_target, "__builtin_signbitf") == 0 ||
             strcmp(call_target, "__builtin_signbitl") == 0;
@@ -904,12 +902,12 @@ static int gen_funcall(Node *node, int hidden_ret_reg) {
 #endif
             return r;
         }
-#ifdef ARCH_ARM64
         if (is_setjmp) {
             // Inline __builtin_setjmp: save fp, resume_addr, sp to buf; return 0 or 1 (longjmp)
             int rbuf = gen(node->args);
             int c = ++rcc_label_count;
             int r = alloc_reg();
+#ifdef ARCH_ARM64
             printf("  str %s, [%s]\n", FRAME_PTR, reg64[rbuf]); // buf[0] = fp
             printf("  adr x16, .L.sjr.%d\n", c); // x16 = resume addr
             printf("  str x16, [%s, #8]\n", reg64[rbuf]); // buf[1] = resume addr
@@ -920,6 +918,19 @@ static int gen_funcall(Node *node, int hidden_ret_reg) {
             printf(".L.sjr.%d:\n", c); // longjmp lands here
             printf(".L.sja.%d:\n", c); // normal path joins here
             printf("  mov %s, x0\n", reg64[r]); // result from x0
+#else
+            // x86_64: buf[0]=rbp, buf[1]=resume addr, buf[2]=rsp
+            printf("  movq %%rbp, (%s)\n", reg64[rbuf]);
+            printf("  leaq .L.sjr.%d(%%rip), %s\n", c, reg64[r]);
+            printf("  movq %s, 8(%s)\n", reg64[r], reg64[rbuf]);
+            printf("  movq %%rsp, 16(%s)\n", reg64[rbuf]);
+            printf("  xorl %%eax, %%eax\n");
+            printf("  jmp .L.sja.%d\n", c);
+            printf(".L.sjr.%d:\n", c);
+            // longjmp lands here — %%rax already holds val from longjmp
+            printf(".L.sja.%d:\n", c);
+            printf("  movq %%rax, %s\n", reg64[r]);
+#endif
             free_reg(rbuf);
             return r;
         }
@@ -927,16 +938,28 @@ static int gen_funcall(Node *node, int hidden_ret_reg) {
             // Inline __builtin_longjmp: restore fp, sp from buf; jump to resume addr with val
             int rbuf = gen(node->args);
             int rval = gen(node->args->next);
+#ifdef ARCH_ARM64
             printf("  ldr %s, [%s]\n", FRAME_PTR, reg64[rbuf]); // restore fp
             printf("  ldr x16, [%s, #16]\n", reg64[rbuf]); // x16 = saved sp
             printf("  mov sp, x16\n"); // restore sp
             printf("  ldr x16, [%s, #8]\n", reg64[rbuf]); // x16 = resume addr
             printf("  mov x0, %s\n", reg64[rval]); // x0 = val
             printf("  br x16\n"); // jump to resume
+#else
+            // x86_64: restore rbp, load rax (val) and resume addr, then restore rsp, jmp
+            int rtmp = alloc_reg();
+            printf("  movq (%s), %%rbp\n", reg64[rbuf]);
+            printf("  movq 8(%s), %s\n", reg64[rbuf], reg64[rtmp]);
+            printf("  movq %s, %%rax\n", reg64[rval]);
+            printf("  movq 16(%s), %%rsp\n", reg64[rbuf]);
+            printf("  jmp *%s\n", reg64[rtmp]);
+            free_reg(rtmp);
+#endif
             free_reg(rbuf);
             free_reg(rval);
             return -1;
         }
+#ifdef ARCH_ARM64
         if (is_add_overflow || is_sub_overflow || is_mul_overflow || is_mul_overflow_p) {
             Node *arga = node->args;
             Node *argb = arga ? arga->next : NULL;
@@ -1273,7 +1296,7 @@ static int gen_funcall(Node *node, int hidden_ret_reg) {
     int fixed_reg_args = nargs + (has_hidden_retbuf ? 1 : 0);
     int stack_args = fixed_reg_args > max_gp_args ? fixed_reg_args - max_gp_args : 0;
     int stack_pad = (stack_args & 1) ? 8 : 0;
-    int stack_reserve = stack_args > 0 ? shadow_space + stack_args * 8 + stack_pad : 0;
+    int stack_reserve = shadow_space + stack_args * 8 + stack_pad;
 #elif defined(ARCH_ARM64)
     // AAPCS64: 8 GP + 8 FP arg registers
     // Linux: variadic floats go in both FP and GP regs
@@ -1411,7 +1434,7 @@ static int gen_funcall(Node *node, int hidden_ret_reg) {
     }
 
     int stack_pad = (stack_args & 1) ? 8 : 0;
-    int stack_reserve = stack_args > 0 ? shadow_space + stack_args * 8 + stack_pad : 0;
+    int stack_reserve = shadow_space + stack_args * 8 + stack_pad;
 #endif
 
 #ifdef ARCH_ARM64
@@ -1719,7 +1742,7 @@ static int gen_funcall(Node *node, int hidden_ret_reg) {
         arg_is_float[i] = is_flonum(argv[i]->ty);
     }
 
-    if (stack_reserve > 0)
+    if (stack_reserve > 0 && (!call_target || strcmp(call_target, "alloca") != 0))
         printf("  subq $%d, %%rsp\n", stack_reserve);
 
     for (int i = nargs - 1; i >= reg_nargs; i--) {
@@ -1772,7 +1795,7 @@ static int gen_funcall(Node *node, int hidden_ret_reg) {
         if (arg_regs[i] >= 0 && arg_stack_idx[i] < 0)
             reg_arg_mask |= (1 << arg_regs[i]);
 
-    if (stack_reserve > 0)
+    if (stack_reserve > 0 && (!call_target || strcmp(call_target, "alloca") != 0))
         printf("  subq $%d, %%rsp\n", stack_reserve);
 
     for (int i = nargs - 1; i >= 0; i--) {
@@ -1832,6 +1855,9 @@ static int gen_funcall(Node *node, int hidden_ret_reg) {
             hidden_ret_reg = temp_ret_reg;
         }
         printf("  mov %s, %s\n", reg64[hidden_ret_reg], argreg64[0]);
+#ifdef _WIN32
+        printf("  movq %s, 0(%%rsp)\n", argreg64[0]);
+#endif
     }
 
 #ifdef _WIN32
@@ -1858,6 +1884,9 @@ static int gen_funcall(Node *node, int hidden_ret_reg) {
         } else {
             printf("  mov %s, %s\n", reg(arg_regs[i], 8), argreg64[argi]);
         }
+        // Also store to shadow space so variadic callees can find args via va_list
+        if (!call_target || strcmp(call_target, "alloca") != 0)
+            printf("  movq %s, %d(%%rsp)\n", argreg64[argi], argi * 8);
         free_reg(arg_regs[i]);
     }
 #else
@@ -1910,7 +1939,7 @@ static int gen_funcall(Node *node, int hidden_ret_reg) {
         free_reg(callee_reg);
     }
 
-    if (stack_reserve > 0)
+    if (stack_reserve > 0 && (!call_target || strcmp(call_target, "alloca") != 0))
         printf("  addq $%d, %%rsp\n", stack_reserve);
 
     if ((saved_scratch & 2) && hidden_ret_reg != 1) {
@@ -5516,7 +5545,11 @@ static int gen(Node *node) {
 #endif
     }
     case ND_VA_START: {
-        int r = gen(node->lhs);
+#ifdef _WIN32
+        int r = gen_addr(node->lhs); // va_list is char *, need its address to write
+#else
+        int r = gen(node->lhs); // va_list is array-of-struct, decays to pointer
+#endif
 #ifdef ARCH_ARM64
         // AArch64 ABI va_list: [__stack(8), __gr_top(8), __vr_top(8), __gr_offs(4), __vr_offs(4)]
         // __stack: pointer to first stack overflow argument
@@ -5537,12 +5570,19 @@ static int gen(Node *node) {
         printf("  mov w16, #%d\n", va_fp_start);
         printf("  str w16, [%s, #28]\n", reg64[r]);
 #else
+#ifdef _WIN32
+        // Windows x64: va_list is char *. Point to first variadic arg in
+        // caller's shadow space (rbp+16 = return addr + saved rbp; 8-byte slots).
+        printf("  leaq %d(%%rbp), %%rdx\n", 16 + va_gp_start);
+        printf("  movq %%rdx, (%s)\n", reg64[r]);
+#else
         printf("  movl $%d, (%s)\n", va_gp_start, reg64[r]);
         printf("  movl $%d, 4(%s)\n", va_fp_start, reg64[r]);
         printf("  leaq %d(%%rbp), %%rdx\n", va_st_start);
         printf("  movq %%rdx, 8(%s)\n", reg64[r]);
         printf("  leaq -%d(%%rbp), %%rdx\n", va_reg_save_ofs);
         printf("  movq %%rdx, 16(%s)\n", reg64[r]);
+#endif
 #endif
         free_reg(r);
         return -1;
@@ -5580,7 +5620,11 @@ static int gen(Node *node) {
         return -1;
     }
     case ND_VA_ARG: {
-        int r = gen(node->lhs);
+#ifdef _WIN32
+        int r = gen_addr(node->lhs); // va_list is char *, need its address to advance
+#else
+        int r = gen(node->lhs); // va_list is array-of-struct, decays to pointer
+#endif
         Type *ty = node->ty->base;
 #ifndef _WIN32
         bool is_fp = is_flonum(ty);
@@ -5649,33 +5693,20 @@ static int gen(Node *node) {
 #else
         bool is_ptr_struct = (ty->kind == TY_STRUCT || ty->kind == TY_UNION) && ty->size > 8;
 #ifdef _WIN32
-        // Windows x64: all varargs (incl. float/double) read from GP reg save area.
-        // The caller duplicates FP args into both GP and XMM registers.
-        // gp_offset limit is 32 (4 GP regs * 8 bytes each).
+        // Windows x64: va_list is char *. Read arg from current ap,
+        // advance ap by 8, return pointer-to-arg (or struct ptr value).
         if (is_ptr_struct) {
-            printf("  cmpl $24, (%s)\n", reg64[r]);
-            printf("  ja .L.va_overflow.%d\n", rcc_label_count);
-            printf("  movl (%s), %%ecx\n", reg64[r]);
-            printf("  addq 16(%s), %%rcx\n", reg64[r]);
-            printf("  movq (%%rcx), %%rcx\n");
-            printf("  addl $8, (%s)\n", reg64[r]);
-            printf("  jmp .L.va_done.%d\n", rcc_label_count);
+            // Struct >8 bytes passed by pointer: slot holds struct pointer
+            printf("  movq (%s), %%rcx\n", reg64[r]); // rcx = ap
+            printf("  movq (%%rcx), %%rcx\n"); // rcx = *rcx = struct ptr
+            printf("  addq $8, (%s)\n", reg64[r]); // ap += 8
+            printf("  movq %%rcx, %s\n", reg64[r]); // result = struct ptr
         } else {
-            printf("  cmpl $24, (%s)\n", reg64[r]);
-            printf("  ja .L.va_overflow.%d\n", rcc_label_count);
-            printf("  movl (%s), %%ecx\n", reg64[r]);
-            printf("  addq 16(%s), %%rcx\n", reg64[r]);
-            printf("  addl $8, (%s)\n", reg64[r]);
-            printf("  jmp .L.va_done.%d\n", rcc_label_count);
+            // Return old ap (address of arg slot), then advance
+            printf("  movq (%s), %%rcx\n", reg64[r]); // rcx = ap
+            printf("  addq $8, (%s)\n", reg64[r]); // ap += 8
+            printf("  movq %%rcx, %s\n", reg64[r]); // result = old ap (slot addr)
         }
-        printf(".L.va_overflow.%d:\n", rcc_label_count);
-        printf("  movq 8(%s), %%rcx\n", reg64[r]);
-        printf("  leaq 8(%%rcx), %%rdx\n");
-        printf("  movq %%rdx, 8(%s)\n", reg64[r]);
-        if (is_ptr_struct)
-            printf("  movq (%%rcx), %%rcx\n");
-        printf(".L.va_done.%d:\n", rcc_label_count);
-        printf("  movq %%rcx, %s\n", reg64[r]);
 #else
         if (is_fp) {
             printf("  cmpl $160, 4(%s)\n", reg64[r]);
@@ -6518,7 +6549,7 @@ static int peep_jmp(char *line, char *lbl, int lbl_sz) {
     memcpy(lbl, p, len + 1);
     return 1;
 }
-static int peep_mov_reg_imm(char *line, char *reg, int reg_sz, int *imm) {
+static int peep_mov_reg_imm(char *line, char *reg, int reg_sz, long long *imm) {
     // AT&T: mov[lq]? $imm, %reg
     if (strncmp(line, "  mov", 5) != 0) return 0;
     char *p = line + 5;
@@ -6528,9 +6559,9 @@ static int peep_mov_reg_imm(char *line, char *reg, int reg_sz, int *imm) {
     if (*p != '$') return 0;
     p++;
     char *endp;
-    long v = strtol(p, &endp, 0);
+    long long v = strtoll(p, &endp, 0);
     if (endp == p) return 0;
-    *imm = (int)v;
+    *imm = v;
     if (*endp != ',') return 0;
     p = endp + 1;
     while (*p == ' ' || *p == '\t') p++;
@@ -6716,17 +6747,17 @@ static int peep_pattern3(char **lines, int li, int lj) {
 // Pattern 4: mov REG, #IMM; OP REG2, REG → OP REG2, #IMM
 static int peep_pattern4(char **lines, int li, int lj) {
     char rd[32];
-    int imm_val;
+    long long imm_val;
 #ifdef ARCH_ARM64
     (void)li;
     (void)lj;
-    if (sscanf(lines[li], " mov %31s, #%d", rd, &imm_val) != 2) return 0;
+    if (sscanf(lines[li], " mov %31s, #%lld", rd, &imm_val) != 2) return 0;
     // We'd need peep_op to match arm64 3-op; skip for now
     return 0;
 #else
     if (!peep_mov_reg_imm(lines[li], rd, sizeof(rd), &imm_val) || !is_reg(rd))
         return 0;
-    long v_check = strtol(strchr(lines[li], '$') + 1, NULL, 0);
+    long long v_check = strtoll(strchr(lines[li], '$') + 1, NULL, 0);
     if (v_check != (int)v_check) return 0;
     char op[16], od[64], os[32];
     if (!peep_op_reg_reg(lines[lj], op, sizeof(op), od, sizeof(od), os, sizeof(os)) ||
@@ -6746,7 +6777,7 @@ static int peep_pattern4(char **lines, int li, int lj) {
             (!strcmp(opname, "imul") && imm_val == 1)) {
             lines[lj][0] = '\0';
         } else {
-            lines[lj] = format("  %s $%d, %s", op, imm_val, os);
+            lines[lj] = format("  %s $%lld, %s", op, imm_val, os);
         }
         // Conservative: skip dead-predecessor deletion without forward scan
         return 1;

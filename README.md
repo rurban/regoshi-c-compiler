@@ -33,7 +33,18 @@ Linux:
 
 - RCC vs TCC vs GCC -O2 execution: same speed on windows, competitive on linux.
 - All outputs verified correct against TCC, GCC -O2 and CLANG -O2 references.
-- **Compile-time performance**: RCC emits assembly to stdout then invokes GCC (`system()`) to assemble and link, which is ~2× slower than TCC's native internal assembler/linker. The peephole optimizer uses a 3-line sliding window (single pass over emitted asm), while TCC works on an internal abstract representation. Together these account for the compile-time gap. Generated code quality is on par with TCC.
+- **Compile-time performance**: RCC emits assembly to stdout then invokes GCC (`system()`) to assemble and link, which is ~2× slower than TCC's native internal assembler/linker. The peephole optimizer uses a 3-line sliding window (single pass over emitted asm), while TCC works on an internal abstract representation. Together these account for the compile-time gap. Generated code quality is on par with TCC. A refactor to emit native assembly by ourself is in work, because that's 92% of the time spent.
+
+rcc -O1 -time:
+
+    preprocess  bench.c:   1239 us
+    lex         bench.c:    299 us
+    parse       bench.c:    648 us
+    typecheck   bench.c:     25 us
+    opt(CTFE)   bench.c:     61 us
+    codegen     bench.c:   1559 us
+    peephole    bench.c:    848 us
+    asm+link    bench_o1: 53930 us
 
 ## Key Features
 
@@ -67,7 +78,7 @@ finstrument, vector_size.
 
 Top-level `__asm__("...")` statements in AT&T, Intel or ARM syntax are supported and emitted in source order. Unlike GCC (which hoists all file-scope `asm` blocks to the top of the output at `-O2`/`-O3` unless `-fno-toplevel-reorder` is used), rcc always preserves their original position relative to functions.
 
-The test suites suite has all tests passed on linux, mingw-cross, arm64-cross,
+The test suites has all tests passed on linux, mingw-cross, arm64-cross,
 darwin-cross, windows native and arm64-darwin native.
 
 Three tcc core and test bugs have been detected so far. Fixes in the work.
@@ -147,14 +158,14 @@ The original windows repo is now at https://github.com/DocDamage/realtime-c-comp
 
 This fork passes now:
 
-- [152/152 tests](test_report_linux.md) on linux (x86-64)
-- [151/152 tests](test_report_mingw_cross.md) on mingw-cross (x86-64)
-- [155/155 tests](test_report_arm64_cross.md) on arm64-cross (ELF)
-- [155/155 tests](test_report_darwin_cross.md) on darwin-cross (Mach-O, compile+link only)
-- [147/155 tests](test_report_arm64.md) on arm64-darwin native
-- [111/117 tests](test_report_mingw.md) on windows native via powershell testing
+- [152/152 tcc tests](test_report_linux.md) on linux (x86-64)
+- [152/152 tcc tests](test_report_mingw_cross.md) on mingw-cross (x86-64)
+- [155/155 tcc tests](test_report_arm64_cross.md) on arm64-cross (ELF)
+- [155/155 tcc tests](test_report_darwin_cross.md) on darwin-cross (Mach-O, compile+link only)
+- [147/155 tcc tests](test_report_arm64.md) on arm64-darwin native
+- [111/117 tcc tests](test_report_mingw.md) on windows native via powershell testing. (ps1 test artefacts)
 - The c-testsuite pass 220/220 tests on all platforms.
-- The gcc-torture tests pass 924/924 on linux and arm64_cross.
+- The gcc-torture tests pass all on linux, mingw-cross and arm64-cross.
 - The ncc/compliance tests pass 15/15 tests on all platforms.
 
 ## Old Known Limitations
