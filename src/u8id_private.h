@@ -2,44 +2,38 @@
 #define _U8ID_PRIVATE_H
 
 #ifdef HAVE_CONFIG_H
-#include "config.h"
+#  include "config.h"
 #endif
 #include <stddef.h>
 #include <stdint.h>
 #include <inttypes.h>
 
 #if defined _WIN32 || defined __CYGWIN__
-#define EXTERN __declspec(dllexport)
-#define LOCAL
+#  define EXTERN __declspec(dllexport)
+#  define LOCAL
 #elif __GNUC__ >= 4
-#define EXTERN __attribute__((visibility("default")))
-#define LOCAL __attribute__((visibility("hidden")))
+#  define EXTERN __attribute__((visibility("default")))
+#  define LOCAL __attribute__((visibility("hidden")))
 #else
-#define EXTERN
-#define LOCAL
+#  define EXTERN
+#  define LOCAL
 #endif
 
-#ifndef PERF_TEST
 // they are all too slow
-#undef USE_ALLOWED_CROAR
-#undef USE_MARK_CROAR
-#undef USE_NORM_CROAR
-#else
-#define USE_ALLOWED_CROAR
-#define USE_MARK_CROAR
-#define USE_NORM_CROAR
-#endif
+#  undef USE_ALLOWED_CROAR
+#  undef USE_MARK_CROAR
+#  undef USE_NORM_CROAR
 
 #if __GNUC__ >= 3
-#define _expect(expr, value) __builtin_expect((expr), (value))
-#define INLINE static inline
+#  define _expect(expr, value) __builtin_expect((expr), (value))
+#  define INLINE static inline
 #else
-#define _expect(expr, value) (expr)
-#define INLINE static
+#  define _expect(expr, value) (expr)
+#  define INLINE static
 #endif
 #ifndef likely
-#define likely(expr) _expect((long)((expr) != 0), 1)
-#define unlikely(expr) _expect((long)((expr) != 0), 0)
+#  define likely(expr) _expect((long)((expr) != 0), 1)
+#  define unlikely(expr) _expect((long)((expr) != 0), 0)
 #endif
 
 #define ARRAY_SIZE(x) sizeof(x) / sizeof(*x)
@@ -54,18 +48,21 @@
 #define FCC 5
 #define C11_6 7
 #define TR39_4 8
+#define U8ID_NORM NFC
+#define U8ID_PROFILE TR39_4
+#define U8ID_PROFILE_DEFAULT TR39_4
 
 // allowed set of identifiers. TR31 --xid tokenizer options
 // we need XID, the default, as first for uninitialized options.
 enum xid_e {
-    XID, // ID minus NFKC quirks, labelled stable, the default.
-    ID, // all letters, plus numbers, punctuation and marks. With exotic scripts.
-    ALLOWED, // TR39 ID with only recommended scripts. Allowed IdentifierStatus.
-    TR39, // practical XID with TR39 security measures, see P2528R1.
-    C23, // XID with NFC requirement from C23 (P1949, N2828).
-    C11, // the stable insecure AltId ranges from the C11 standard, Annex D.
-    ALLUTF8, // all > 128, e.g. D, php, nim, crystal.
-    ASCII, // only ASCII letters.
+  XID, // ID minus NFKC quirks, labelled stable, the default.
+  ID,  // all letters, plus numbers, punctuation and marks. With exotic scripts.
+  ALLOWED, // TR39 ID with only recommended scripts. Allowed IdentifierStatus.
+  TR39,    // practical XID with TR39 security measures, see P2528R1.
+  C23,     // XID with NFC requirement from C23 (P1949, N2828).
+  C11,     // the stable insecure AltId ranges from the C11 standard, Annex D.
+  ALLUTF8, // all > 128, e.g. D, php, nim, crystal.
+  ASCII,   // only ASCII letters.
 };
 #define XID 0
 #define ID 1
@@ -85,121 +82,34 @@ enum xid_e {
 #define PASTE(a, b) CAT(a, b)
 #define JOIN(prefix, name) PASTE(prefix, PASTE(_, name))
 
-#ifdef U8ID_NORM
-#if U8ID_NORM == NFC
 #define U8ID_NORM_DEFAULT U8ID_NFC
-#elif U8ID_NORM == NFD
-#define U8ID_NORM_DEFAULT U8ID_NFD
-#elif U8ID_NORM == NFKD
-#define U8ID_NORM_DEFAULT U8ID_NFKD
-#elif U8ID_NORM == NFKC
-#define U8ID_NORM_DEFAULT U8ID_NFKC
-#elif U8ID_NORM == FCC
-#define U8ID_NORM_DEFAULT U8ID_FCC
-#elif U8ID_NORM == FCD
-#define U8ID_NORM_DEFAULT U8ID_FCD
-#else
-#error "Invalid U8ID_NORM "_XSTR(U8ID_NORM)
-#endif
-#else
-#define U8ID_NORM_DEFAULT U8ID_NFC
-#endif
-
-#ifdef U8ID_PROFILE
-#if U8ID_PROFILE == 1
-#define U8ID_PROFILE_DEFAULT U8ID_PROFILE_1
-#elif U8ID_PROFILE == 2
-#define U8ID_PROFILE_DEFAULT U8ID_PROFILE_2
-#elif U8ID_PROFILE == 3
-#define U8ID_PROFILE_DEFAULT U8ID_PROFILE_3
-#elif U8ID_PROFILE == 4
-#define U8ID_PROFILE_DEFAULT U8ID_PROFILE_4
-#elif U8ID_PROFILE == 5
-#define U8ID_PROFILE_DEFAULT U8ID_PROFILE_5
-#elif U8ID_PROFILE == 6
-#define U8ID_PROFILE_DEFAULT U8ID_PROFILE_6
-#elif U8ID_PROFILE == TR39_4
-#define U8ID_PROFILE_DEFAULT U8ID_PROFILE_TR39_4
 #define U8ID_PROFILE_TR39
-#elif U8ID_PROFILE == C11_6
-#define U8ID_PROFILE_DEFAULT U8ID_PROFILE_C11_6
-#define U8ID_PROFILE_C11STD
-#else
-#error "Invalid U8ID_PROFILE "_XSTR(U8ID_PROFILE)
-#endif
-#elif defined U8ID_PROFILE_TR39
-#define U8ID_PROFILE_DEFAULT U8ID_PROFILE_TR39_4
-#define U8ID_PROFILE TR39_4
-#elif defined U8ID_PROFILE_C11STD
-#define U8ID_PROFILE_DEFAULT U8ID_PROFILE_C11_6
-#define U8ID_PROFILE C11_6
-#else
-// Moderately Restrictive
-#define U8ID_PROFILE_DEFAULT U8ID_PROFILE_4
-#endif
+#define U8ID_TR31 TR39
 
-#ifdef DISABLE_U8ID_TR31
-#define DISABLE_CHECK_XID
-#define U8ID_TR31_DEFAULT 0
-#undef U8ID_TR31
-#undef ENABLE_CHECK_XID
-#endif
-#ifdef U8ID_TR31
 // #  pragma message("U8ID_TR31=" _XSTR(U8ID_TR31))
-#if U8ID_TR31 == NONE
-#define DISABLE_CHECK_XID
-#define U8ID_TR31_DEFAULT 0
-#else
-#define ENABLE_CHECK_XID
-#if U8ID_TR31 == ALLOWED
-#define U8ID_TR31_DEFAULT U8ID_TR31_ALLOWED
-#elif U8ID_TR31 == ASCII
-#define U8ID_TR31_DEFAULT U8ID_TR31_ASCII
-#elif U8ID_TR31 == TR39
 #define U8ID_TR31_DEFAULT U8ID_TR31_TR39
-#elif U8ID_TR31 == ID
-#define U8ID_TR31_DEFAULT U8ID_TR31_ID
-#elif U8ID_TR31 == XID
-#define U8ID_TR31_DEFAULT U8ID_TR31_XID
-#elif U8ID_TR31 == C11
-#define U8ID_TR31_DEFAULT U8ID_TR31_C11
-#elif U8ID_TR31 == C23
-#define U8ID_TR31_DEFAULT U8ID_TR31_C23
-#elif U8ID_TR31 == ALLUTF8
-#define U8ID_TR31_DEFAULT U8ID_TR31_ALLUTF8
-#endif
-#endif
-#else
-#define U8ID_TR31_DEFAULT U8ID_TR31_XID
-#endif
-
-#if defined U8ID_NORM && (U8ID_NORM != NFC)
-#if (U8ID_TR31 == TR39) || (U8ID_TR31 == C23)
-#error "Invalid U8ID_NORM with U8ID_TR31"
-#endif
-#endif
 
 #include "htable.h"
 
 #define U8ID_CTX_TRESH 5
 #define U8ID_SCR_TRESH 8
 struct ctx_t {
-    uint8_t count;
-    uint8_t has_han : 1;
-    uint8_t is_japanese : 1;
-    uint8_t is_chinese : 1;
-    uint8_t is_korean : 1;
-    uint8_t is_rtl : 1; // Hebrew or Arabic
-    uint32_t last_cp; // only set on errors
-    union {
-        uint64_t scr64; // room for 8 scripts
-        uint8_t scr8[U8ID_SCR_TRESH];
-        // we need more than 8 only with insecure
-        // profiles, or when we manually add extra scripts.
-        uint8_t *u8p; // or if count > 8
-    };
-    struct htable *htab;
-    struct htable *htab1;
+  uint8_t count;
+  uint8_t has_han : 1;
+  uint8_t is_japanese : 1;
+  uint8_t is_chinese : 1;
+  uint8_t is_korean : 1;
+  uint8_t is_rtl : 1; // Hebrew or Arabic
+  uint32_t last_cp;   // only set on errors
+  union {
+    uint64_t scr64; // room for 8 scripts
+    uint8_t scr8[U8ID_SCR_TRESH];
+    // we need more than 8 only with insecure
+    // profiles, or when we manually add extra scripts.
+    uint8_t *u8p; // or if count > 8
+  };
+  struct htable *htab;
+  struct htable *htab1;
 };
 
 // clang-format off

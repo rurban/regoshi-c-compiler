@@ -131,6 +131,11 @@ static void ensure_u8ident_init(void) {
 
 void u8ident_allow_script(const char *name) {
     ensure_u8ident_init();
+    if (!strcmp(name, "reset")) {
+        u8ident_free_ctx(0);
+        u8ident_new_ctx();
+        return;
+    }
     // Map common script names to IDs (from scripts.h ordering)
     // 0=Common, 1=Inherited, 2=Latin, 3=Arabic, 4=Armenian, 5=Bengali, 6=Bopomofo,
     // 7=Cyrillic, 8=Devanagari, 9=Ethiopic, 10=Georgian, 11=Greek, 12=Gujarati,

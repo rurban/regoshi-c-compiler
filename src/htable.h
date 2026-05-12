@@ -11,10 +11,10 @@
 #include <stddef.h>
 
 struct htable {
-    unsigned size;
-    unsigned cap;
-    char **keys;
-    char **values;
+  unsigned size;
+  unsigned cap;
+  char **keys;
+  char **values;
 };
 
 struct htable *new_htab(unsigned cap);

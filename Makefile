@@ -27,7 +27,7 @@ CFLAGS += -flto=thin
 #endif
 endif
 
-SRCS = src/main.c src/lexer.c src/preprocess.c src/parser.c src/type.c src/codegen.c src/opt.c src/alloc.c src/unicode.c src/u8ident-tr39.c src/u8idnorm-tr39.c src/u8idscr-tr39.c
+SRCS = src/main.c src/lexer.c src/preprocess.c src/parser.c src/type.c src/codegen.c src/opt.c src/alloc.c src/unicode.c src/htable.c src/u8ident-tr39.c src/u8idnorm-tr39.c src/u8idscr-tr39.c
 OBJS = $(SRCS:.c=$(OBJ_EXT))
 
 PREFIX ?= /usr/local
