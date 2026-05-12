@@ -115,6 +115,7 @@ bool opt_g = false;
 bool opt_pie = false;
 bool opt_pic = false;
 bool opt_time = false;
+bool opt_v = false;
 bool opt_ms_bitfields =
 #ifdef _WIN32
     true;
@@ -206,6 +207,8 @@ int main(int argc, char **argv) {
             opt_pic = true;
         } else if (!strcmp(argv[i], "-time")) {
             opt_time = true;
+        } else if (!strcmp(argv[i], "-v")) {
+            opt_v = true;
         } else if (!strcmp(argv[i], "-o")) {
             if (++i >= argc) {
                 fprintf(stderr, "error: missing argument for -o\n");
@@ -296,29 +299,65 @@ int main(int argc, char **argv) {
 
             // Type system / Semantic checks
             t0 = opt_time ? now_us() : 0;
+#ifdef DEBUG
+            TLItem *tfast = prog->items;
+#endif
             for (TLItem *item = prog->items; item; item = item->next) {
+#ifdef DEBUG
+                if (tfast) {
+                    tfast = tfast->next;
+                    if (tfast) tfast = tfast->next;
+                }
+                if (tfast && item == tfast) {
+                    fprintf(stderr, "  typecheck   %s: CYCLE in prog->items chain!\n", in_path);
+                    break;
+                }
+#endif
                 if (item->kind != TL_FUNC)
                     continue;
-                if (opt_time)
-                    fprintf(stderr, "  typecheck   %s: %-20s entering\n", in_path,
-                            item->fn->name);
+                Node *n = item->fn->body;
+                // try to find a cycle in the linked list. switch case_next looped
+#ifdef DEBUG
                 uint64_t f0 = opt_time ? now_us() : 0;
                 uint64_t ncount = 0;
-                for (Node *n = item->fn->body; n; n = n->next) {
-                    check_type(n);
-                    ncount++;
-                    if (opt_time && (ncount % 10) == 0)
+                Node *fast = n;
+#endif
+                while (n) {
+#ifdef DEBUG
+                    if (opt_time && opt_v && (ncount % 10) == 0) {
                         fprintf(stderr, "  typecheck   %s: %-20s %5lu nodes...\n", in_path,
                                 item->fn->name, (unsigned long)ncount);
+                        fflush(stderr);
+                    }
+#endif
+                    check_type(n);
+                    n = n->next;
+#ifdef DEBUG
+                    ncount++;
+                    if (fast) {
+                        fast = fast->next;
+                        if (fast) fast = fast->next;
+                    }
+                    if (fast && n && n == fast) {
+                        fprintf(stderr, "  typecheck   %s: CYCLE in %s body next chain!\n",
+                                in_path, item->fn->name);
+                        break;
+                    }
+#endif
                 }
-                if (opt_time)
+#ifdef DEBUG
+                fflush(stderr);
+                if (opt_time && opt_v)
                     fprintf(stderr, "  typecheck   %s: %-20s %5lu nodes %6lu us\n", in_path,
                             item->fn->name, (unsigned long)ncount,
                             (unsigned long)(now_us() - f0));
+#endif
             }
+            //fflush(stderr);
             if (opt_time)
-                fprintf(stderr, "  typecheck   %s: %6lu us total\n", in_path,
+                fprintf(stderr, "  typecheck   %s: %6lu us\n", in_path,
                         (unsigned long)(now_us() - t0));
+            fflush(stderr);
 
             // CTFE runs only with -O1; peephole skipped with -O0.
             if (opt_O1) {
