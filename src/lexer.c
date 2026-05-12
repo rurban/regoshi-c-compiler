@@ -328,6 +328,25 @@ Token *tokenize(char *filename, char *p) {
                 while (*r == ' ' || *r == '\t') r++;
                 if (startswith(r, "pack"))
                     is_pack_pragma = true;
+                else if (startswith(r, "unicode")) {
+                    // #pragma unicode ScriptName
+                    r += 7;
+                    while (*r == ' ' || *r == '\t') r++;
+                    char *sname = r;
+                    while (*r && *r != '\n' && !isspace((unsigned char)*r)) r++;
+                    int slen = r - sname;
+                    if (slen > 0) {
+                        char *name = arena_alloc(slen + 1);
+                        memcpy(name, sname, slen);
+                        name[slen] = 0;
+                        u8ident_allow_script(name);
+                    }
+                    // Skip rest of line
+                    while (*r && *r != '\n') r++;
+                    p = r;
+                    if (*p == '\n') p++;
+                    continue;
+                }
             }
             if (!is_pack_pragma) {
                 while (*p && *p != '\n')
@@ -453,6 +472,11 @@ Token *tokenize(char *filename, char *p) {
             if (pos != p) {
                 cur = cur->next = new_token(TK_IDENT, start, p);
                 cur->name = str_intern(start, p - start);
+                if (!opt_Wno_homoglyph) {
+                    const char *w = u8ident_check_ident(cur->name, p - start);
+                    if (w)
+                        warn_tok(cur, "%s", w);
+                }
             }
             continue;
         }
@@ -470,6 +494,11 @@ Token *tokenize(char *filename, char *p) {
                 } while (is_ident2(*p) || (is32_ident2(c) && pos != p));
                 cur = cur->next = new_token(TK_IDENT, start, p);
                 cur->name = str_intern(start, p - start);
+                if (!opt_Wno_homoglyph) {
+                    const char *w = u8ident_check_ident(cur->name, p - start);
+                    if (w)
+                        warn_tok(cur, "%s", w);
+                }
                 continue;
             }
         }

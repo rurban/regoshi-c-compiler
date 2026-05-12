@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: LGPL-2.1-or-later
 CC     := gcc
-CFLAGS = -std=c11 -Wall -Wextra -O3 -g
+CFLAGS = -std=c11 -Wall -Wextra -O3 -g -Isrc
 TARGET = rcc
 MINGW_O =
 OBJ_EXT = .o
@@ -27,7 +27,7 @@ CFLAGS += -flto=thin
 #endif
 endif
 
-SRCS = src/main.c src/lexer.c src/preprocess.c src/parser.c src/type.c src/codegen.c src/opt.c src/alloc.c src/unicode.c
+SRCS = src/main.c src/lexer.c src/preprocess.c src/parser.c src/type.c src/codegen.c src/opt.c src/alloc.c src/unicode.c src/u8ident-tr39.c src/u8idnorm-tr39.c src/u8idscr-tr39.c
 OBJS = $(SRCS:.c=$(OBJ_EXT))
 
 PREFIX ?= /usr/local

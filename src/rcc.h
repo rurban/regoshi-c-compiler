@@ -194,6 +194,7 @@ extern Type *ty_ldouble;
 
 extern bool opt_O0;
 extern bool opt_W;
+extern bool opt_Wno_homoglyph;
 extern bool opt_ms_bitfields;
 extern bool opt_dM;
 extern bool opt_g;
@@ -469,5 +470,7 @@ uint32_t decode_utf8(char **new_pos, char *p);
 bool is32_ident1(uint32_t c);
 bool is32_ident2(uint32_t c);
 int utf8_len(char *str);
+const char *u8ident_check_ident(const char *name, int len);
+void u8ident_allow_script(const char *name);
 
 #endif // RCC_H

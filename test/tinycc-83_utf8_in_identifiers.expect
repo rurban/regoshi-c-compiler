@@ -1,0 +1,4 @@
+83_utf8_in_identifiers.c:2: warning: disallowed script Cyrillic (U+043F) in identifier
+83_utf8_in_identifiers.c:5: warning: disallowed script Cyrillic (U+043F) in identifier
+привет=0.1
+Lefèvre=2

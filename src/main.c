@@ -86,6 +86,7 @@ void help(void) {
            "-O1                 enable peephole + CTFE optimizations\n"
            "-g                  emit DWARF line-number debug info\n"
            "-W                  enable more compiler warnings\n"
+           "-Wno-homoglyph      disable Unicode homoglyph/confusable warnings\n"
            "-Lpath              add linker path\n"
            "-lname              add lib\n"
            "-pthread            link with pthreads library\n"
@@ -108,6 +109,7 @@ void help(void) {
 bool opt_O0 = false;
 bool opt_O1 = false;
 bool opt_W = false;
+bool opt_Wno_homoglyph = false;
 bool opt_dryrun = false;
 bool opt_dM = false;
 bool opt_fdump_ast = false;
@@ -185,6 +187,8 @@ int main(int argc, char **argv) {
             opt_O1 = true;
         } else if (!strcmp(argv[i], "-W")) {
             opt_W = true;
+        } else if (!strcmp(argv[i], "-Wno-homoglyph")) {
+            opt_Wno_homoglyph = true;
         } else if (!strcmp(argv[i], "-###")) {
             opt_dryrun = true;
         } else if (!strcmp(argv[i], "-dM")) {
