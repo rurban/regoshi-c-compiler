@@ -27,7 +27,7 @@ CFLAGS += -flto=thin
 #endif
 endif
 
-SRCS = src/main.c src/lexer.c src/preprocess.c src/parser.c src/type.c src/codegen.c src/opt.c src/alloc.c src/unicode.c src/u8ident-tr39.c src/u8idnorm-tr39.c src/u8idscr-tr39.c
+SRCS = src/main.c src/lexer.c src/preprocess.c src/parser.c src/type.c src/codegen.c src/opt.c src/alloc.c src/unicode.c
 OBJS = $(SRCS:.c=$(OBJ_EXT))
 
 PREFIX ?= /usr/local
@@ -35,12 +35,13 @@ BINDIR = $(PREFIX)/bin
 INCDIR = $(PREFIX)/include/rcc
 LIBDIR = $(PREFIX)/lib/rcc
 DOCDIR = $(PREFIX)/share/doc/rcc
+TARGET_DEPS = $(OBJS) src/rcc.h
 
 ifneq ($(findstring apple,$(MACHINE)),)
 DARWIN_O = lib/darwin.o
-TARGET_DEPS = $(OBJS) $(DARWIN_O)
+TARGET_DEPS += $(DARWIN_O)
 else
-TARGET_DEPS = $(OBJS) $(MINGW_O)
+TARGET_DEPS += $(MINGW_O)
 endif
 
 # Build-time include directory: absolute path to the source include/ dir.
@@ -137,6 +138,8 @@ src/main$(OBJ_EXT): src/main.c src/sysinc_paths.h
 	$(CC) $(CFLAGS) -c $< -o $@ -DGCC=\"$(CC)\" $(DEF_INCDIR) -DVERSION=\"$(VERSION)\" -DMACHINE=\"$(MACHINE)\"
 src/preprocess$(OBJ_EXT): src/preprocess.c src/sysinc_paths.h src/gcc_predefined.h
 	$(CC) $(CFLAGS) -c $< -o $@ $(DEF_INCDIR)
+src/unicode$(OBJ_EXT): src/unicode.c src/unicode.h
+	$(CC) $(CFLAGS) -c $< -o $@
 %$(OBJ_EXT): %.c
 	$(CC) $(CFLAGS) -c $< -o $@
 
