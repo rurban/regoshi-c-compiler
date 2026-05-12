@@ -4,8 +4,8 @@ Generated: May 2026
 
 ## Summary
 
-- **Total**: 155
-- **Passed**: 147
+- **Total**: 156
+- **Passed**: 148
 - **Failed**: 8
 - **Pass Rate**: 94%
 
@@ -182,4 +182,5 @@ Generated: May 2026
 | test_simple2                | PASS         | exit=1                        |
 | test_str                    | PASS         | exit=0                        |
 | test_struct                 | PASS         | exit=0                        |
+| test_unicode                | PASS         | exit=0                        |
 | test_with_comment           | PASS         | exit=0                        |

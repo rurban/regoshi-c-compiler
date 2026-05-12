@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LGPL-2.1-or-later
 /*
-  Derived from slimcc by fuhsnn.
+  Minor parts derived from slimcc by fuhsnn.
   Optimized by Reini Urban 2026
   Integrated libu8ident TR39 for secure identifier checking.
 */
@@ -13,12 +13,7 @@
 #include "unicode.h"
 
 // ===== Global state =====
-
-unsigned s_u8id_options = U8ID_TR31_DEFAULT;
-//enum u8id_norm s_u8id_norm = U8ID_NORM_NFC;
-//enum u8id_profile s_u8id_profile = U8ID_PROFILE_DEFAULT;
 unsigned s_maxlen = 1024;
-
 struct ctx_t ctx[U8ID_CTX_TRESH] = {0}; // pre-allocate 5 contexts
 static u8id_ctx_t i_ctx = 0;
 struct ctx_t *ctxp = NULL; // if more than 5 contexts
@@ -41,15 +36,6 @@ u8id_ctx_t u8ident_new_ctx(void) {
 }
 
 /* Changes to the context previously generated with `u8ident_new_ctx`. */
-int u8ident_set_ctx(u8id_ctx_t i) {
-    if (i <= i_ctx) {
-        i_ctx = i;
-        return 0;
-    } else
-        return -1;
-}
-
-/* Changes to the context previously generated with `u8ident_new_ctx`. */
 struct ctx_t *u8ident_ctx(void) {
     return (i_ctx < U8ID_CTX_TRESH) ? &ctx[i_ctx] : &ctxp[i_ctx];
 }
@@ -64,10 +50,6 @@ bool u8ident_has_script_ctx(const uint8_t scr, const struct ctx_t *c) {
             return true;
     }
     return false;
-}
-
-bool u8ident_has_script(const uint8_t scr) {
-    return u8ident_has_script_ctx(scr, u8ident_ctx());
 }
 
 int u8ident_add_script_ctx(const uint8_t scr, struct ctx_t *c) {
@@ -124,15 +106,13 @@ static inline bool linear_search(const uint32_t cp,
     return false;
 }
 
-static inline struct sc *binary_search(const uint32_t cp, const char *list,
-                                       const size_t len, const size_t size) {
+static inline void *binary_search(const uint32_t cp, const char *list,
+                                  const size_t len, const size_t size) {
     int n = (int)len;
     const char *p = list;
-    struct sc *pos;
     while (n > 0) {
-        pos = (struct sc *)(p + size * (n / 2));
+        struct range_bool *pos = (struct range_bool *)(p + size * (n / 2));
         // hack: with unsigned wrapping max-cp is always higher, so false
-        // was: (cp >= pos->from && cp <= pos->to)
         if ((cp - pos->from) <= (pos->to - pos->from))
             return pos;
         else if (cp < pos->from)
@@ -145,26 +125,6 @@ static inline struct sc *binary_search(const uint32_t cp, const char *list,
     return NULL;
 }
 
-// hybrid search: linear or binary
-static inline uint8_t sc_search(const uint32_t cp, const struct sc *sc_list,
-                                const size_t len) {
-    if (cp < 255) { // 14 ranges a 9 byte (126 byte, i.e cache loads)
-        struct sc *s = (struct sc *)sc_list;
-        for (size_t i = 0; i < len; i++) {
-            if ((cp - s->from) <= (s->to - s->from)) // faster in-between trick
-                return s->scr;
-            if (cp <= s->to) // s is sorted. not found
-                return 255;
-            s++;
-        }
-        return 255;
-    } else {
-        const struct sc *sc =
-            (struct sc *)binary_search(cp, (char *)sc_list, len, sizeof(*sc_list));
-        return sc ? sc->scr : 255;
-    }
-}
-
 static inline bool range_bool_search(const uint32_t cp,
                                      const struct range_bool *list,
                                      const size_t len) {
@@ -173,19 +133,15 @@ static inline bool range_bool_search(const uint32_t cp,
 
 
 // ===== Script and search functions =====
-
-uint8_t u8ident_get_script(const uint32_t cp) {
-    // faster check, as we have no NON-xid's
-    return sc_search(cp, nonxid_script_list, ARRAY_SIZE(nonxid_script_list));
-}
-
 /* Search for list of script indices */
-const struct scx *u8ident_get_scx(const uint32_t cp) {
-    return (const struct scx *)binary_search(
-        cp, (char *)scx_list, ARRAY_SIZE(scx_list), sizeof(*scx_list));
-}
+// REMOVE
+//static const struct scx *u8ident_get_scx(const uint32_t cp) {
+//    return (const struct scx *)binary_search(
+//        cp, (char *)scx_list, ARRAY_SIZE(scx_list), sizeof(*scx_list));
+//}
+
 /* Search for TR39 XID entry, in start or cont lists */
-const struct sc_tr39 *u8ident_get_tr39(const uint32_t cp) {
+static const struct sc_tr39 *u8ident_get_tr39(const uint32_t cp) {
     const struct sc_tr39 *sc = (const struct sc_tr39 *)binary_search(
         cp, (char *)tr39_start_list, ARRAY_SIZE(tr39_start_list),
         sizeof(*tr39_start_list));
@@ -196,48 +152,34 @@ const struct sc_tr39 *u8ident_get_tr39(const uint32_t cp) {
                                                      ARRAY_SIZE(tr39_cont_list),
                                                      sizeof(*tr39_cont_list));
 }
+
+static uint8_t u8ident_get_script(const uint32_t cp) {
+    // Search TR39 lists. Characters here already passed XID checks,
+    // so they must be in one of these lists.
+    const struct sc_tr39 *sc = u8ident_get_tr39(cp);
+    if (sc)
+        return sc->sc;
+    return SC_Unknown;
+}
+
 bool u8ident_is_MARK(uint32_t cp) {
     return range_bool_search(cp, mark_list, ARRAY_SIZE(mark_list));
 }
-bool u8ident_is_MEDIAL(uint32_t cp) {
-    return range_bool_search(cp, medial_list, ARRAY_SIZE(medial_list));
+bool u8ident_is_tr39_MEDIAL(uint32_t cp) {
+    return range_bool_search(cp, tr39_medial_list, ARRAY_SIZE(tr39_medial_list));
 }
 bool u8ident_is_bidi(const uint32_t cp) {
     return linear_search(cp, bidi_list, ARRAY_SIZE(bidi_list));
 }
-bool isTR39_start(const uint32_t cp) {
-    return binary_search(cp, (char *)tr39_start_list, ARRAY_SIZE(tr39_start_list),
-                         sizeof(*tr39_start_list))
-        ? true
-        : false;
+const struct sc_tr39 *isTR39_start(const uint32_t cp) {
+    return (const struct sc_tr39 *)binary_search(
+        cp, (char *)tr39_start_list, ARRAY_SIZE(tr39_start_list),
+        sizeof(*tr39_start_list));
 }
-bool isTR39_cont(const uint32_t cp) {
-    return binary_search(cp, (char *)tr39_cont_list, ARRAY_SIZE(tr39_cont_list),
-                         sizeof(*tr39_cont_list))
-        ? true
-        : false;
-}
-
-enum u8id_gc u8ident_get_gc(const uint32_t cp) {
-    const struct gc *gc = (const struct gc *)binary_search(
-        cp, (char *)gc_list, ARRAY_SIZE(gc_list), sizeof(*gc_list));
-    if (gc)
-        return gc->gc;
-    else
-        return GC_INVALID;
-}
-const char *u8ident_gc_name(const enum u8id_gc gc) {
-    if (gc >= GC_INVALID)
-        return NULL;
-    assert(gc < GC_INVALID);
-    return u8id_gc_names[gc];
-}
-
-// bitmask of u8id_idtypes
-uint16_t u8ident_get_idtypes(const uint32_t cp) {
-    const struct range_short *id = (struct range_short *)binary_search(
-        cp, (char *)idtype_list, ARRAY_SIZE(idtype_list), sizeof(*idtype_list));
-    return id ? id->types : 0;
+const struct sc_tr39 *isTR39_cont(const uint32_t cp) {
+    return (const struct sc_tr39 *)binary_search(
+        cp, (char *)tr39_cont_list, ARRAY_SIZE(tr39_cont_list),
+        sizeof(*tr39_cont_list));
 }
 
 static inline int compar32(const void *a, const void *b) {
@@ -307,38 +249,6 @@ void u8ident_free(void) {
         free(ctxp);
     }
 }
-const char *u8ident_existing_scripts(const u8id_ctx_t i) {
-    if (unlikely(i > i_ctx))
-        return NULL;
-    const struct ctx_t *c = (i_ctx < U8ID_CTX_TRESH) ? &ctx[i] : &ctxp[i];
-    const uint8_t *u8p = (c->count > 8) ? c->u8p : c->scr8;
-    size_t len = c->count * 12;
-    char *res = malloc(len);
-    *res = 0;
-    for (int j = 0; j < c->count; j++) {
-        const char *str = u8ident_script_name(u8p[j]);
-        if (!str) {
-            free(res);
-            return NULL;
-        }
-        const size_t l = strlen(str);
-        if (*res) {
-            if (l + 3 > len) {
-                len = l + 3;
-                res = realloc(res, len);
-            }
-            strcat(res, ", ");
-        } else { // first name
-            if (l + 1 > len) {
-                len = l + 1;
-                res = realloc(res, len);
-            }
-        }
-        strcat(res, str);
-    }
-    return res;
-}
-
 bool u8ident_maybe_normalized(const uint32_t cp) {
     if (range_bool_search(cp, NFC_N_list, ARRAY_SIZE(NFC_N_list)))
         return true;
@@ -348,33 +258,8 @@ bool u8ident_maybe_normalized(const uint32_t cp) {
 
 // ===== Core identifier checking API =====
 
-const char *u8ident_errstr(int errcode) {
-    static const char *const _str[] = {
-        "ERR_CONFUS", // -6
-        "ERR_COMBINE", // -5
-        "ERR_ENCODING", // -4
-        "ERR_SCRIPTS", //-3
-        "ERR_SCRIPT", //-2
-        "ERR_XID", // -1
-        "EOK", // 0
-        "EOK_NORM", // 1
-        "EOK_WARN_CONFUS", // 2
-        "EOK_NORM_WARN_CONFUS", // 3
-    };
-    assert(errcode >= -6 && errcode <= 3);
-    return _str[errcode + 6];
-}
-
-int u8ident_init(unsigned options) {
-    //const enum u8id_profile profile = U8ID_PROFILE_TR39_4;
-    //const enum u8id_norm norm = U8ID_NORM_NFC;
+int u8ident_init(void) {
     u8ident_free(); // clear and reset the ctx
-    if (options > 1023)
-        return -1;
-    // only one is allowed, else fail
-    // s_u8id_norm = norm;
-    // s_u8id_profile = U8ID_PROFILE_TR39_4;
-    s_u8id_options = (options & ~U8ID_TR31_MASK) | U8ID_TR31_DEFAULT;
     return 0;
 }
 
@@ -423,24 +308,21 @@ enum u8id_errors u8ident_check_buf(const char *buf, const int bufsz,
     struct ctx_t *ctx = u8ident_ctx();
     enum u8id_sc scr;
     enum u8id_sc basesc = SC_Unknown;
-    // const unsigned xid_mask = s_u8id_options & U8ID_TR31_MASK;
-    // default to XID (0)
-    //const enum xid_e xid = TR39;
     char *scx = NULL;
-    //assert(xid >= 0 && xid <= LAST_XID_E);
     uint32_t prev_cp = 0, base_cp = 0;
     int seq_mn = 0;
     uint32_t cp = dec_utf8(&s);
 
     // hardcoded TR31 funcs via static functions (inlinable)
-    if (unlikely(!isTR39_start(cp))) {
+    const struct sc_tr39 *tr39 = isTR39_start(cp);
+    if (unlikely(!tr39)) {
         ctx->last_cp = cp;
         return U8ID_ERR_XID;
     }
     bool has_latin = u8ident_has_script_ctx(SC_Latin, ctx);
 
     do {
-        scr = (enum u8id_sc)u8ident_get_script(cp);
+        scr = tr39->sc;
         // disallow Limited Use scripts
         if (unlikely(scr >= FIRST_LIMITED_USE_SCRIPT)) {
             ctx->last_cp = cp;
@@ -459,9 +341,9 @@ enum u8id_errors u8ident_check_buf(const char *buf, const int bufsz,
         // check scx on Common or Inherited.
         // TODO Keep list of possible scripts and reduce them.
         if (scr == SC_Common || scr == SC_Inherited) {
-            // Almost everybody may mix with latin
-            const struct scx *this_scx = u8ident_get_scx(cp);
-            if (this_scx) {
+            // Almost everybody may mix with latin. This search is mostly false
+            const struct sc_tr39 *this_scx = u8ident_get_tr39(cp);
+            if (unlikely(this_scx && this_scx->scx)) {
                 scx = (char *)this_scx->scx;
                 const enum u8id_gc gc = (const enum u8id_gc)this_scx->gc;
                 int n = 0;
@@ -615,7 +497,7 @@ enum u8id_errors u8ident_check_buf(const char *buf, const int bufsz,
         } else {
             // Check illegal runs.
             // is_MARK(cp) is too slow, and we need the full GC for all cases
-            const enum u8id_gc gc = u8ident_get_gc(cp);
+            const enum u8id_gc gc = tr39->gc;
             if (gc == GC_Mn || gc == GC_Me) {
                 if (cp == prev_cp) {
                     // TR39#5.4 "Forbid sequences of the same nonspacing mark"
@@ -647,12 +529,14 @@ enum u8id_errors u8ident_check_buf(const char *buf, const int bufsz,
         prev_cp = cp;
         cp = dec_utf8(&s);
         if (likely(s <= e && cp != 0)) {
-            // hardcode cont also? not yet
-            if (unlikely(!isTR39_cont(cp) && !isTR39_start(cp))) {
+            tr39 = isTR39_cont(cp);
+            if (unlikely(!tr39))
+                tr39 = isTR39_start(cp);
+            if (unlikely(!tr39)) {
                 ctx->last_cp = cp;
                 return U8ID_ERR_XID;
             }
-            if (s == e && u8ident_is_MEDIAL(cp)) {
+            if (s == e && u8ident_is_tr39_MEDIAL(cp)) {
                 ctx->last_cp = cp;
                 return U8ID_ERR_XID;
             }
@@ -671,9 +555,6 @@ enum u8id_errors u8ident_check_buf(const char *buf, const int bufsz,
             free(norm);
     }
     return ret;
-}
-enum u8id_errors u8ident_check(const uint8_t *string, char **outnorm) {
-    return u8ident_check_buf((char *)string, strlen((char *)string), outnorm);
 }
 
 // ===== UTF-8 normalization =====
@@ -801,27 +682,13 @@ char *enc_utf8(char *dest, size_t *lenp, const uint32_t cp) {
 #define ERR_INVAL -1
 #define EOK 0
 
-#if !defined U8ID_NORM || U8ID_NORM == NFKC || U8ID_NORM == NFKD
-
-static inline int _bsearch_exc(const void *ptr1, const void *ptr2) {
-    UN8IF_compat_exc_t *e1 = (UN8IF_compat_exc_t *)ptr1;
-    UN8IF_compat_exc_t *e2 = (UN8IF_compat_exc_t *)ptr2;
-    return e1->cp > e2->cp ? 1 : e1->cp == e2->cp ? 0
-                                                  : -1;
-}
-#elif !defined U8ID_NORM || U8ID_NORM == NFC || U8ID_NORM == NFD || \
-    U8ID_NORM == FCC || U8ID_NORM == FCD
-
 static inline int _bsearch_exc(const void *ptr1, const void *ptr2) {
     UN8IF_canon_exc_t *e1 = (UN8IF_canon_exc_t *)ptr1;
     UN8IF_canon_exc_t *e2 = (UN8IF_canon_exc_t *)ptr2;
     return e1->cp > e2->cp ? 1 : e1->cp == e2->cp ? 0
                                                   : -1;
 }
-#endif
 
-#if !defined U8ID_NORM || U8ID_NORM == NFC || U8ID_NORM == NFD || \
-    U8ID_NORM == FCC || U8ID_NORM == FCD
 /* Note that we can generate two versions of the tables.  The old format as
  * used in Unicode::Normalize, and the new 3x smaller NORMALIZE_IND_TBL cperl
  * variant, as used here and in cperl core since 5.27.2.
@@ -893,60 +760,6 @@ static int _decomp_canonical_s(char *dest, size_t dmax, uint32_t cp) {
         return EOK;
     }
 }
-#endif // NFC, NFD, FCC, FCD
-
-#if !defined U8ID_NORM || U8ID_NORM == NFKC || U8ID_NORM == NFKD
-static int _decomp_compat_s(char *dest, size_t dmax, uint32_t cp) {
-    /* the new format generated with cperl Unicode-Normalize/mkheader -uni -ind
-   * -std
-   */
-    const UN8IF_compat_PLANE_T **plane, *row;
-    plane = UN8IF_compat[cp >> 16];
-    if (!plane) { /* Only the first 3 of 16 are filled */
-        return EOK;
-    }
-    row = plane[(cp >> 8) & 0xff];
-    if (row) { /* the first row is pretty filled, the rest very sparse */
-        const UN8IF_compat_PLANE_T vi = row[cp & 0xff];
-        if (!vi)
-            return EOK;
-#if UN8IF_compat_exc_size > 0
-        else if (unlikely(vi ==
-                          (uint16_t)-1)) { /* overlong: search in extra list */
-            UN8IF_compat_exc_t *e;
-            assert(UN8IF_compat_exc_size);
-            e = (UN8IF_compat_exc_t *)bsearch(
-                &cp, &UN8IF_compat_exc, UN8IF_compat_exc_size,
-                sizeof(UN8IF_compat_exc[0]), _bsearch_exc);
-            if (e) {
-                size_t l = strlen(e->v);
-                if (l + 1 > dmax) {
-                    *dest = 0;
-                    return ERR_NOSPACE;
-                }
-                memcpy(dest, e->v, l + 1); /* incl \0 */
-                return (int)l;
-            }
-            return EOK;
-#endif
-        } else {
-            /* value => length and index */
-            const int l = UN8IF_compat_LEN(vi);
-            const int i = UN8IF_compat_IDX(vi);
-            const char *tbl = (const char *)UN8IF_compat_tbl[l - 1];
-            if (unlikely(dmax < (size_t)l)) {
-                *dest = 0;
-                return ERR_NOSPACE;
-            }
-            memcpy(dest, &tbl[i * l], l);
-            dest[l] = L'\0';
-            return l;
-        }
-    } else {
-        return EOK;
-    }
-}
-#endif // NFKC or NFKD
 
 static int _decomp_hangul_s(char *dest, size_t dmax, uint32_t cp) {
     uint32_t sindex = cp - Hangul_SBase;
@@ -981,18 +794,9 @@ static int _decomp_s(char *restrict dest, size_t dmax, const uint32_t cp,
     if (Hangul_IsS(cp)) {
         return _decomp_hangul_s(dest, dmax, cp);
     } else {
-#if defined U8ID_NORM && (U8ID_NORM == NFC || U8ID_NORM == NFD || U8ID_NORM == FCC || U8ID_NORM == FCD)
         (void)iscompat;
         assert(!iscompat);
         return _decomp_canonical_s(dest, dmax, cp);
-#elif defined U8ID_NORM && (U8ID_NORM == NFKC || U8ID_NORM == NFKD)
-        (void)iscompat;
-        assert(iscompat);
-        return _decomp_compat_s(dest, dmax, cp);
-#else
-        return iscompat ? _decomp_compat_s(dest, dmax, cp)
-                        : _decomp_canonical_s(dest, dmax, cp);
-#endif
     }
 }
 
@@ -1602,7 +1406,7 @@ static bool u8ident_initialized = false;
 
 static void ensure_u8ident_init(void) {
     if (!u8ident_initialized) {
-        u8ident_init(0);
+        u8ident_init();
         u8ident_initialized = true;
     }
 }

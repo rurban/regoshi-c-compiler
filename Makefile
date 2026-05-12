@@ -36,12 +36,15 @@ INCDIR = $(PREFIX)/include/rcc
 LIBDIR = $(PREFIX)/lib/rcc
 DOCDIR = $(PREFIX)/share/doc/rcc
 TARGET_DEPS = $(OBJS) src/rcc.h
+TARGET_EXT = $(OBJS)
 
 ifneq ($(findstring apple,$(MACHINE)),)
 DARWIN_O = lib/darwin.o
 TARGET_DEPS += $(DARWIN_O)
+TARGET_EXT += $(DARWIN_O)
 else
 TARGET_DEPS += $(MINGW_O)
+TARGET_EXT += $(MINGW_O)
 endif
 
 # Build-time include directory: absolute path to the source include/ dir.
@@ -51,7 +54,7 @@ RCC_INCDIR ?= $(CURDIR)/include
 ifeq ($(OS),Windows_NT)
 TARGET = rcc.exe
 MINGW_O = lib/mingw$(OBJ_EXT)
-TARGET_DEPS += -lpthread
+TARGET_EXT += -lpthread
 OBJ_EXT = .obj
 PREFIX ?= C:/Program Files/rcc
 BINDIR = $(PREFIX)
@@ -63,7 +66,7 @@ else
 ifeq ($(CC),x86_64-w64-mingw32-gcc)
 TARGET = rcc.exe
 MINGW_O = lib/mingw$(OBJ_EXT)
-TARGET_DEPS += -lpthread
+TARGET_EXT += -lpthread
 OBJ_EXT = .obj
 OBJS = $(SRCS:.c=$(OBJ_EXT))
 endif
@@ -94,7 +97,7 @@ VERSION ?= $(shell git describe --long --tags --always 2>/dev/null || echo "v1.2
 MACHINE ?= $(shell $(CC) -dumpmachine 2>/dev/null || echo "unknown")
 
 $(TARGET): $(TARGET_DEPS)
-	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $(TARGET_DEPS)
+	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $(TARGET_EXT)
 
 src/sysinc_paths.h:
 	RCC_CC="$(CC)"; \
