@@ -29,6 +29,7 @@ struct OutPath {
     char *path;
 };
 static OutPath *out_paths;
+static OutPath *obj_paths;
 
 OutPath *reverse(OutPath *head) {
     OutPath *prev = NULL;
@@ -227,6 +228,15 @@ int main(int argc, char **argv) {
             int n = snprintf(libs + libs_len, sizeof(libs) - libs_len, " %s", argv[i]);
             if (n > 0 && libs_len + n < (int)sizeof(libs))
                 libs_len += n;
+        } else if (!strcmp(argv[i], "-soname")) {
+            if (++i >= argc) {
+                fprintf(stderr, "error: missing argument for -soname\n");
+                return 1;
+            }
+            int n = snprintf(libs + libs_len, sizeof(libs) - libs_len,
+                             " -Wl,-soname,%s", argv[i]);
+            if (n > 0 && libs_len + n < (int)sizeof(libs))
+                libs_len += n;
         } else if (!strncmp(argv[i], "-D", 2)) {
             char *def = argv[i] + 2;
             if (*def == '\0') {
@@ -261,6 +271,20 @@ int main(int argc, char **argv) {
             fprintf(stderr, "rcc: warning: ignored unknown option %s\n", argv[i]);
         } else {
             in_path = argv[i];
+
+            // Object files skip compilation and go directly to linker input
+            size_t in_len = strlen(in_path);
+            if ((in_len >= 2 && !strcmp(in_path + in_len - 2, ".o"))
+#ifdef _WIN32
+                || (in_len >= 4 && !strcmp(in_path + in_len - 4, ".obj"))
+#endif
+            ) {
+                OutPath *p = arena_alloc(sizeof(OutPath));
+                p->path = in_path;
+                p->next = obj_paths;
+                obj_paths = p;
+                continue;
+            }
 
             char *asm_path = opt_S
                 ? opt_o ? out_path : format("%s.s", path_basename(in_path))
@@ -421,6 +445,8 @@ int main(int argc, char **argv) {
                 snprintf(cmd, sizeof(cmd), GCC " -o %s", out_path);
             } else if (opt_pie) {
                 snprintf(cmd, sizeof(cmd), GCC " -pie -o %s", out_path);
+            } else if (strstr(libs, "-shared")) {
+                snprintf(cmd, sizeof(cmd), GCC " -o %s", out_path);
             } else {
                 snprintf(cmd, sizeof(cmd), GCC " -no-pie -o %s", out_path);
             }
@@ -433,7 +459,13 @@ int main(int argc, char **argv) {
                 strncat(cmd, p->path, sizeof(cmd) - strlen(cmd) - 1);
             }
         }
-
+        if (obj_paths) {
+            obj_paths = reverse(obj_paths);
+            for (OutPath *p = obj_paths; p; p = p->next) {
+                strncat(cmd, " ", sizeof(cmd) - strlen(cmd) - 1);
+                strncat(cmd, p->path, sizeof(cmd) - strlen(cmd) - 1);
+            }
+        }
 
 #if defined(_WIN32) || defined(__MINGW32__) || defined(__APPLE__)
         struct stat libst;
