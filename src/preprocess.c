@@ -1259,7 +1259,6 @@ static char *preprocess_file(char *filename, char *input, int *line_counts) {
     StrBuf acc;
     sb_init(&acc, 4096);
     unsigned acc_line_no = 0;
-    int acc_line_count = 0;
     int acc_phys_count = 0;
 
     for (char *p = input; *p;) {
@@ -1282,7 +1281,6 @@ static char *preprocess_file(char *filename, char *input, int *line_counts) {
                     sb_putc(&out, '\n');
                 acc.len = 0;
                 acc.buf[0] = '\0';
-                acc_line_count = 0;
                 acc_phys_count = 0;
             }
             s++;
@@ -1622,7 +1620,6 @@ static char *preprocess_file(char *filename, char *input, int *line_counts) {
                 memcpy(acc.buf + acc.len, line, end - line);
                 acc.len += end - line;
                 acc.buf[acc.len] = '\0';
-                acc_line_count++;
                 acc_phys_count += line_counts ? line_counts[line_idx] : 1;
                 if (count_unmatched_parens(acc.buf, acc.buf + acc.len) <= 0) {
                     char *expanded = strip_bluepaint(expand_text(acc.buf, filename, acc_line_no, 0));
@@ -1631,7 +1628,6 @@ static char *preprocess_file(char *filename, char *input, int *line_counts) {
                         sb_putc(&out, '\n');
                     acc.len = 0;
                     acc.buf[0] = '\0';
-                    acc_line_count = 0;
                     acc_phys_count = 0;
                 }
             } else {
@@ -1652,7 +1648,6 @@ static char *preprocess_file(char *filename, char *input, int *line_counts) {
                     sb_putc(&out, '\n');
                 acc.len = 0;
                 acc.buf[0] = '\0';
-                acc_line_count = 0;
                 acc_phys_count = 0;
             }
             {
