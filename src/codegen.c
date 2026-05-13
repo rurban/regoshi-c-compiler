@@ -3,14 +3,6 @@
 // Binary codegen: asm_* wrappers emit bytes via secbuf_emit*() to ObjFile.
 #include "rcc.h"
 
-// Label tracking (used by codegen_asm.h for branch fixups)
-#define CG_MAX_LABELS 4096
-struct {
-    const char *name;
-    size_t offset;
-} cg_label_tab[CG_MAX_LABELS];
-int cg_label_count = 0;
-
 #include "codegen_asm.h"
 #include <stdarg.h>
 #include <ctype.h>
@@ -34,51 +26,22 @@ static void cg_set_section(int sec) {
 static void cg_def_label(const char *name) {
     if (cg_dry_run) return;
     objfile_add_sym(cg_obj, name, SEC_TEXT, cg_sec->len, 0, SB_LOCAL, ST_FUNC);
-    for (int i = 0; i < cg_label_count; i++)
-        if (cg_label_tab[i].name && strcmp(cg_label_tab[i].name, name) == 0) {
-            cg_label_tab[i].offset = cg_sec->len;
-            asm_fixup_resolve(cg_sec, name, cg_sec->len);
-            return;
-        }
-    if (cg_label_count < CG_MAX_LABELS) {
-        cg_label_tab[cg_label_count].name = name;
-        cg_label_tab[cg_label_count].offset = cg_sec->len;
-        cg_label_count++;
-    }
+    cg_label_ht_add(name, cg_sec->len);
     asm_fixup_resolve(cg_sec, name, cg_sec->len);
 }
 
 static void cg_def_label_sec(const char *name, int sec) {
     if (cg_dry_run) return;
     objfile_add_sym(cg_obj, name, sec, cg_sec->len, 0, SB_LOCAL, ST_OBJECT);
-    for (int i = 0; i < cg_label_count; i++)
-        if (cg_label_tab[i].name && strcmp(cg_label_tab[i].name, name) == 0) {
-            cg_label_tab[i].offset = cg_sec->len;
-            asm_fixup_resolve(cg_sec, name, cg_sec->len);
-            return;
-        }
-    if (cg_label_count < CG_MAX_LABELS) {
-        cg_label_tab[cg_label_count].name = name;
-        cg_label_tab[cg_label_count].offset = cg_sec->len;
-        cg_label_count++;
-    }
+    cg_label_ht_add(name, cg_sec->len);
     asm_fixup_resolve(cg_sec, name, cg_sec->len);
 }
 
 static void cg_global_label(const char *name) {
     if (cg_dry_run) return;
     objfile_add_sym(cg_obj, name, SEC_TEXT, cg_sec->len, 0, SB_GLOBAL, ST_FUNC);
-    for (int i = 0; i < cg_label_count; i++)
-        if (cg_label_tab[i].name && name && strcmp(cg_label_tab[i].name, name) == 0) {
-            cg_label_tab[i].offset = cg_sec->len;
-            asm_fixup_resolve(cg_sec, name, cg_sec->len);
-            return;
-        }
-    if (cg_label_count < CG_MAX_LABELS) {
-        cg_label_tab[cg_label_count].name = name;
-        cg_label_tab[cg_label_count].offset = cg_sec->len;
-        cg_label_count++;
-    }
+    cg_label_ht_add(name, cg_sec->len);
+    asm_fixup_resolve(cg_sec, name, cg_sec->len);
 }
 
 static void cg_weak_label(const char *name) {
@@ -7185,6 +7148,10 @@ void dump_ast(Program *prog) {
 }
 
 struct ObjFile *codegen(Program *prog) {
+    // Reset label and fixup hashtables for new compilation unit
+    cg_label_ht_reset();
+    asm_fixup_ht_reset();
+
     // Initialize binary ObjFile for asm_* emission
     static ObjFile _obj;
     cg_obj = &_obj;

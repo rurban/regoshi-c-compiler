@@ -46,55 +46,121 @@ static const int cg_x86_reg[8] = {X86_R10, X86_R11, X86_RBX, X86_R12,
 #define EMIT_GUARD if (!s || !s->data) return 0;
 
 // ============================================================================
-// Branch fixup tracking — resolve forward branches when labels are defined
+// Label + branch fixup hashtables (chaining, FNV-1a hash)
 // ============================================================================
 
-#define MAX_FIXUPS 4096
-typedef struct {
-    size_t instr_off; // start of branch instruction in SecBuf
-    const char *label; // target label (pointer compared)
-    int type; // 0=jmp rel32, 1=jcc rel32
-} BranchFixup;
+#define CG_HT_SIZE 4096 // power of 2
 
-static BranchFixup asm_fixups[MAX_FIXUPS];
-static int asm_fixup_count = 0;
+static uint32_t cg_ht_hash(const char *name) {
+    uint32_t h = 2166136261u;
+    for (; *name; name++) {
+        h ^= (uint8_t)*name;
+        h *= 16777619;
+    }
+    return h & (CG_HT_SIZE - 1);
+}
 
-// Record a pending branch fixup (forward reference)
-static void asm_fixup_add(SecBuf *s, size_t instr_off, const char *label, int type) {
-    // cg_dry_run is in codegen.c — skip fixups during pass 1
-    extern bool cg_dry_run;
-    if (cg_dry_run) return;
-    // cg_label_tab and cg_label_count are defined in codegen.c
-    for (int i = 0; i < cg_label_count; i++) {
-        if (cg_label_tab[i].name && label && strcmp(cg_label_tab[i].name, label) == 0) {
-            size_t target = cg_label_tab[i].offset;
-            int32_t disp;
-            if (type == 0) // jmp rel32: disp at offset+1, instr size=5
-                disp = (int32_t)(target - (instr_off + 5));
-            else // jcc rel32: disp at offset+2, instr size=6
-                disp = (int32_t)(target - (instr_off + 6));
-            secbuf_patch32le(s, type == 0 ? instr_off + 1 : instr_off + 2, (uint32_t)disp);
+// Label hashtable: name -> offset
+typedef struct CgLabelNode {
+    const char *name;
+    size_t offset;
+    struct CgLabelNode *next;
+} CgLabelNode;
+
+static CgLabelNode *cg_label_htab[CG_HT_SIZE];
+static int cg_label_count = 0;
+
+static void cg_label_ht_reset(void) {
+    memset(cg_label_htab, 0, sizeof(cg_label_htab));
+    cg_label_count = 0;
+}
+
+static void cg_label_ht_add(const char *name, size_t offset) {
+    uint32_t h = cg_ht_hash(name);
+    for (CgLabelNode *n = cg_label_htab[h]; n; n = n->next) {
+        if (strcmp(n->name, name) == 0) {
+            n->offset = offset;
             return;
         }
     }
-    if (asm_fixup_count >= MAX_FIXUPS) return;
-    asm_fixups[asm_fixup_count].instr_off = instr_off;
-    asm_fixups[asm_fixup_count].label = label;
-    asm_fixups[asm_fixup_count].type = type;
+    CgLabelNode *n = arena_alloc(sizeof(CgLabelNode));
+    n->name = name;
+    n->offset = offset;
+    n->next = cg_label_htab[h];
+    cg_label_htab[h] = n;
+    cg_label_count++;
+}
+
+static size_t cg_label_ht_get(const char *name) {
+    if (!name) return (size_t)-1;
+    uint32_t h = cg_ht_hash(name);
+    for (CgLabelNode *n = cg_label_htab[h]; n; n = n->next)
+        if (strcmp(n->name, name) == 0)
+            return n->offset;
+    return (size_t)-1;
+}
+
+// Fixup hashtable: bucketed by label hash
+typedef struct AsmFixupNode {
+    size_t instr_off;
+    const char *label;
+    int type; // 0=jmp rel32, 1=jcc rel32
+    struct AsmFixupNode *next;
+} AsmFixupNode;
+
+static AsmFixupNode *asm_fixup_htab[CG_HT_SIZE];
+static int asm_fixup_count = 0;
+
+static void asm_fixup_ht_reset(void) {
+    memset(asm_fixup_htab, 0, sizeof(asm_fixup_htab));
+    asm_fixup_count = 0;
+}
+
+static void asm_fixup_ht_add(size_t instr_off, const char *label, int type) {
+    uint32_t h = cg_ht_hash(label);
+    AsmFixupNode *n = arena_alloc(sizeof(AsmFixupNode));
+    n->instr_off = instr_off;
+    n->label = label;
+    n->type = type;
+    n->next = asm_fixup_htab[h];
+    asm_fixup_htab[h] = n;
     asm_fixup_count++;
+}
+
+// Record a pending branch fixup (forward reference)
+static void asm_fixup_add(SecBuf *s, size_t instr_off, const char *label, int type) {
+    extern bool cg_dry_run;
+    if (cg_dry_run) return;
+    size_t target = cg_label_ht_get(label);
+    if (target != (size_t)-1) {
+        int32_t disp;
+        if (type == 0)
+            disp = (int32_t)(target - (instr_off + 5));
+        else
+            disp = (int32_t)(target - (instr_off + 6));
+        secbuf_patch32le(s, type == 0 ? instr_off + 1 : instr_off + 2, (uint32_t)disp);
+        return;
+    }
+    asm_fixup_ht_add(instr_off, label, type);
 }
 
 // Resolve pending fixups when a label is defined
 static void asm_fixup_resolve(SecBuf *s, const char *label, size_t target_off) {
-    for (int i = 0; i < asm_fixup_count; i++) {
-        if (asm_fixups[i].label && label && strcmp(asm_fixups[i].label, label) == 0) {
-            size_t off = asm_fixups[i].instr_off;
+    uint32_t h = cg_ht_hash(label);
+    AsmFixupNode **pp = &asm_fixup_htab[h];
+    while (*pp) {
+        AsmFixupNode *n = *pp;
+        if (strcmp(n->label, label) == 0) {
             int32_t disp;
-            if (asm_fixups[i].type == 0)
-                disp = (int32_t)(target_off - (off + 5));
+            if (n->type == 0)
+                disp = (int32_t)(target_off - (n->instr_off + 5));
             else
-                disp = (int32_t)(target_off - (off + 6));
-            secbuf_patch32le(s, asm_fixups[i].type == 0 ? off + 1 : off + 2, (uint32_t)disp);
+                disp = (int32_t)(target_off - (n->instr_off + 6));
+            secbuf_patch32le(s, n->type == 0 ? n->instr_off + 1 : n->instr_off + 2, (uint32_t)disp);
+            *pp = n->next;
+            asm_fixup_count--;
+        } else {
+            pp = &n->next;
         }
     }
 }
