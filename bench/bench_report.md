@@ -1,39 +1,39 @@
 # Linux RCC Benchmark Results
 
-_Generated: May 2026_
+_Generated: Mai 2026_
 
 | Compiler  | Compile (ms) | Execute (ms) | Total (ms) |
 | :-------- | -----------: | -----------: | ---------: |
-| RCC       |           44 |          601 |        645 |
-| RCC -O1   |           50 |          606 |        656 |
-| TCC       |           13 |          557 |        570 |
-| SLIMCC    |           51 |          616 |        667 |
-| KEFIR     |          196 |          657 |        853 |
-| KEFIR -O1 |          177 |          485 |        662 |
-| GCC -O0   |           68 |          561 |        629 |
-| GCC -O2   |          171 |          211 |        382 |
-| Clang -O0 |          109 |          621 |        730 |
-| Clang -O2 |          133 |          230 |        363 |
+| RCC       |           58 |          764 |        822 |
+| RCC -O1   |           51 |          778 |        829 |
+| TCC       |            6 |          641 |        647 |
+| SLIMCC    |           48 |          631 |        679 |
+| KEFIR     |          243 |          753 |        996 |
+| KEFIR -O1 |          255 |          408 |        663 |
+| GCC -O0   |           75 |          627 |        702 |
+| GCC -O2   |          174 |          226 |        400 |
+| Clang -O0 |          115 |          588 |        703 |
+| Clang -O2 |          173 |          235 |        408 |
 
 ## RCC Substep Timing
 
 ```
 RCC:
-  preprocess  bench.c:    372 us
-  lex         bench.c:    238 us
-  parse       bench.c:    251 us
-  typecheck   bench.c:     10 us
-  codegen     bench.c:    944 us
-  peephole    bench.c:    537 us
-  link        bench_rcc:  39162 us
+  preprocess  bench.c:    427 us
+  lex         bench.c:    246 us
+  parse       bench.c:    257 us
+  typecheck   bench.c:      8 us
+  codegen     bench.c:   1337 us
+  peephole    bench.c:    919 us
+  link        bench_rcc:  45952 us
 
 RCC -O1:
-  preprocess  bench.c:    475 us
-  lex         bench.c:    324 us
-  parse       bench.c:    351 us
-  typecheck   bench.c:     10 us
-  opt(CTFE)   bench.c:     35 us
-  codegen     bench.c:   1185 us
-  peephole    bench.c:    774 us
-  link        bench_rcc_o1:  37531 us
+  preprocess  bench.c:    588 us
+  lex         bench.c:    313 us
+  parse       bench.c:    340 us
+  typecheck   bench.c:      8 us
+  opt(CTFE)   bench.c:     45 us
+  codegen     bench.c:   1120 us
+  peephole    bench.c:    472 us
+  link        bench_rcc_o1:  58118 us
 ```

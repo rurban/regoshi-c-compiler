@@ -139,8 +139,8 @@ enum u8id_errors {
     * -6  - invalid because confusable
     outnorm is set to a fresh normalized string if valid.
 
-  Note that in the check we explicitly allow the Latin confusables: 0 1 I `
-  i.e. U+30, U+31, U+49, U+60
+   Note that in the check we explicitly allow the Latin confusables: 0 1 I `
+   i.e. U+30, U+31, U+49, U+60
 */
 enum u8id_errors u8ident_check_buf(const char *buf, const int len,
                                    char **outnorm);

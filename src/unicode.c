@@ -27,7 +27,8 @@ u8id_ctx_t u8ident_new_ctx(void) {
     if (i == U8ID_CTX_TRESH) {
         ctxp = (struct ctx_t *)calloc(U8ID_CTX_TRESH, sizeof(struct ctx_t));
     } else if (i > U8ID_CTX_TRESH) {
-        ctxp = (struct ctx_t *)realloc(ctxp, i * sizeof(struct ctx_t));
+        struct ctx_t *tmp = (struct ctx_t *)realloc(ctxp, i * sizeof(struct ctx_t));
+        if (tmp) ctxp = tmp;
     } else {
         ctxp = &ctx[i];
     }
@@ -992,7 +993,8 @@ static int u8id_reorder_s(unsigned char *restrict dest, long dmax,
                     seq_ext = (UN8IF_cc *)malloc(seq_max * sizeof(UN8IF_cc));
                     memcpy(seq_ext, seq_ary, cc_pos * sizeof(UN8IF_cc));
                 } else {
-                    seq_ext = (UN8IF_cc *)realloc(seq_ext, seq_max * sizeof(UN8IF_cc));
+                    UN8IF_cc *tmp = (UN8IF_cc *)realloc(seq_ext, seq_max * sizeof(UN8IF_cc));
+                    if (tmp) seq_ext = tmp;
                 }
                 seq_ptr = seq_ext; /* use seq_ext from now */
             }
@@ -1186,8 +1188,8 @@ static int u8id_compose_s(char *restrict dest, long dmax,
                             seq_ext = (uint32_t *)malloc(seq_max * sizeof(uint32_t));
                             memcpy(seq_ext, seq_ary, cc_pos * sizeof(uint32_t));
                         } else {
-                            seq_ext =
-                                (uint32_t *)realloc(seq_ext, seq_max * sizeof(uint32_t));
+                            uint32_t *tmp = (uint32_t *)realloc(seq_ext, seq_max * sizeof(uint32_t));
+                            if (tmp) seq_ext = tmp;
                         }
                         seq_ptr = seq_ext; /* use seq_ext from now */
                     }
@@ -1251,7 +1253,12 @@ char *u8ident_normalize(const char *src, int srcsz) {
 
     do {
         dmax *= 2;
-        dest = realloc(dest, dmax);
+        char *tmp = realloc(dest, dmax);
+        if (!tmp) {
+            free(dest);
+            return NULL;
+        }
+        dest = tmp;
         memset(dest, 0, dmax); // not really needed.
         err = u8id_decompose_s(dest, dmax, (char *)src, &destlen, iscompat);
     } while (err == ERR_NOSPACE);
