@@ -332,17 +332,31 @@ int main(int argc, char **argv) {
                                 time_peep_us);
                 }
                 // Write binary .o file
+                char *tmp_obj_path = asm_path;
+                if (opt_S) {
+                    tmp_obj_path = format("%s.tmp.o", asm_path);
+                }
                 int wr;
 #ifdef __APPLE__
-                wr = macho_write(obj, asm_path);
+                wr = macho_write(obj, tmp_obj_path);
 #else
-                wr = elf_write(obj, asm_path);
+                wr = elf_write(obj, tmp_obj_path);
 #endif
                 if (wr != 0) {
-                    fprintf(stderr, "rcc: error: cannot write object file %s\n", asm_path);
+                    fprintf(stderr, "rcc: error: cannot write object file %s\n", tmp_obj_path);
                     return 1;
                 }
                 objfile_free(obj);
+                if (opt_S) {
+                    char cmd[2048];
+                    snprintf(cmd, sizeof(cmd), "objdump -d -r -s --no-show-raw-insn '%s' > '%s' && rm -f '%s'",
+                             tmp_obj_path, asm_path, tmp_obj_path);
+                    int status = system(cmd);
+                    if (status != 0) {
+                        fprintf(stderr, "rcc: error: objdump failed for -S output\n");
+                        return 1;
+                    }
+                }
             } else {
             }
 

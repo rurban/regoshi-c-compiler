@@ -69,8 +69,14 @@ static int disp_mod(int64_t d, X86Reg base) {
 // Emit a memory operand [base + index*scale + disp] after opcode byte
 // reg_field is the /r field of ModRM
 static void emit_mem(SecBuf *s, X86Reg base, X86Reg idx, int scale, int64_t disp, int reg_f) {
+    if (base == X86_RIP) {
+        // RIP-relative: use ModRM with mod=00, rm=101 (disp32)
+        emit1(s, modrm(0, reg_f, 5));
+        emit_imm32(s, (int32_t)disp);
+        return;
+    }
     if (base == X86_NOREG) {
-        // RIP-relative or absolute: use ModRM with mod=00, rm=101 (disp32)
+        // Absolute: use ModRM with mod=00, rm=101 (disp32)
         emit1(s, modrm(0, reg_f, 5));
         emit_imm32(s, (int32_t)disp);
         return;
@@ -317,6 +323,7 @@ void x86_and_ri(SecBuf *s, int sz, X86Reg d, int32_t i) { alu_ri(s, sz, 4, d, i)
 void x86_and_rm(SecBuf *s, int sz, X86Reg d, X86Mem m) { alu_rm(s, sz, 4, d, m); }
 void x86_or_rr(SecBuf *s, int sz, X86Reg d, X86Reg sr) { alu_rr(s, sz, 1, d, sr); }
 void x86_or_ri(SecBuf *s, int sz, X86Reg d, int32_t i) { alu_ri(s, sz, 1, d, i); }
+void x86_or_rm(SecBuf *s, int sz, X86Reg d, X86Mem m) { alu_rm(s, sz, 1, d, m); }
 void x86_xor_rr(SecBuf *s, int sz, X86Reg d, X86Reg sr) { alu_rr(s, sz, 6, d, sr); }
 void x86_xor_ri(SecBuf *s, int sz, X86Reg d, int32_t i) { alu_ri(s, sz, 6, d, i); }
 void x86_xor_rm(SecBuf *s, int sz, X86Reg d, X86Mem m) { alu_rm(s, sz, 6, d, m); }
@@ -605,6 +612,7 @@ void x86_xorpd(SecBuf *s, X86XmmReg d, X86XmmReg sr) {
 }
 void x86_xorps(SecBuf *s, X86XmmReg d, X86XmmReg sr) { sse_rr(s, 0x0f, 0x57, d, sr); }
 void x86_movaps(SecBuf *s, X86XmmReg d, X86XmmReg sr) { sse_rr(s, 0x0f, 0x28, d, sr); }
+void x86_movaps_mr(SecBuf *s, X86Mem m, X86XmmReg sr) { sse_mr(s, 0x0f, 0x29, m, sr); }
 void x86_pxor(SecBuf *s, X86XmmReg d, X86XmmReg sr) {
     emit1(s, 0x66);
     sse_rr(s, 0x0f, 0xef, d, sr);

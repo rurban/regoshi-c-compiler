@@ -998,6 +998,68 @@ static size_t asm_xor_imm(SecBuf *s, int r, int size, int32_t imm) {
     x86_xor_ri(s, size, CG_X86_REG(r), imm);
     return s->len - off;
 }
+
+// movzx/movsx from memory addressed by a virtual register
+static size_t asm_movzx_mem_reg(SecBuf *s, int dst, int src_addr, int dst_sz, int src_sz) {
+    size_t off = s->len;
+    x86_movzx_rm(s, dst_sz, src_sz, CG_X86_REG(dst), x86_mem(CG_X86_REG(src_addr), 0));
+    asm_record(ASM_MOVZX, off, s->len - off, dst, src_addr, -1, dst_sz, 0, 0, NULL, 0, -1, false);
+    return s->len - off;
+}
+static size_t asm_movsx_mem_reg(SecBuf *s, int dst, int src_addr, int dst_sz, int src_sz) {
+    size_t off = s->len;
+    x86_movsx_rm(s, dst_sz, src_sz, CG_X86_REG(dst), x86_mem(CG_X86_REG(src_addr), 0));
+    asm_record(ASM_MOVSX, off, s->len - off, dst, src_addr, -1, dst_sz, 0, 0, NULL, 0, -1, false);
+    return s->len - off;
+}
+
+// mov from [virtual_reg] to virtual_reg
+static size_t asm_mov_mem_reg(SecBuf *s, int dst, int src_addr, int sz) {
+    size_t off = s->len;
+    x86_mov_rm(s, sz, CG_X86_REG(dst), x86_mem(CG_X86_REG(src_addr), 0));
+    asm_record(ASM_MOV_RR, off, s->len - off, dst, src_addr, -1, sz, 0, 0, NULL, 0, -1, false);
+    return s->len - off;
+}
+
+// mov from virtual_reg to [virtual_reg]
+static size_t asm_mov_reg_mem(SecBuf *s, int src, int dst_addr, int sz) {
+    size_t off = s->len;
+    x86_mov_mr(s, sz, x86_mem(CG_X86_REG(dst_addr), 0), CG_X86_REG(src));
+    asm_record(ASM_MOV_RR, off, s->len - off, src, dst_addr, -1, sz, 0, 0, NULL, 0, -1, false);
+    return s->len - off;
+}
+
+// movaps from xmm to [rbp - offset]
+static size_t asm_movaps_rbp_xmm(SecBuf *s, int xmm_idx, int offset) {
+    size_t off = s->len;
+    X86Mem m = {CG_X86_FP, X86_NOREG, 1, -offset};
+    x86_movaps_mr(s, m, (X86XmmReg)xmm_idx);
+    asm_record(ASM_MOV_RBPR, off, s->len - off, xmm_idx, -1, -1, 16, 0, offset, NULL, 0, -1, true);
+    return s->len - off;
+}
+
+// ALU ops with rbp-relative memory operand
+static size_t asm_and_rbp_reg(SecBuf *s, int r, int size, int offset) {
+    size_t off = s->len;
+    X86Mem m = {CG_X86_FP, X86_NOREG, 1, -offset};
+    x86_and_rm(s, size, CG_X86_REG(r), m);
+    asm_record(ASM_AND_RR, off, s->len - off, r, -1, -1, size, 0, offset, NULL, 0, -1, false);
+    return s->len - off;
+}
+static size_t asm_or_rbp_reg(SecBuf *s, int r, int size, int offset) {
+    size_t off = s->len;
+    X86Mem m = {CG_X86_FP, X86_NOREG, 1, -offset};
+    x86_or_rm(s, size, CG_X86_REG(r), m);
+    asm_record(ASM_OR_RR, off, s->len - off, r, -1, -1, size, 0, offset, NULL, 0, -1, false);
+    return s->len - off;
+}
+static size_t asm_xor_rbp_reg(SecBuf *s, int r, int size, int offset) {
+    size_t off = s->len;
+    X86Mem m = {CG_X86_FP, X86_NOREG, 1, -offset};
+    x86_xor_rm(s, size, CG_X86_REG(r), m);
+    asm_record(ASM_XOR_RR, off, s->len - off, r, -1, -1, size, 0, offset, NULL, 0, -1, false);
+    return s->len - off;
+}
 #endif
 
 #ifdef __GNUC__

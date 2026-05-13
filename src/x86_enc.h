@@ -27,6 +27,7 @@ typedef enum {
     X86_R13 = 13,
     X86_R14 = 14,
     X86_R15 = 15,
+    X86_RIP = 16,
     X86_NOREG = -1,
 } X86Reg;
 
@@ -135,6 +136,7 @@ void x86_and_ri(SecBuf *s, int size, X86Reg dst, int32_t imm);
 void x86_and_rm(SecBuf *s, int size, X86Reg dst, X86Mem src);
 void x86_or_rr(SecBuf *s, int size, X86Reg dst, X86Reg src);
 void x86_or_ri(SecBuf *s, int size, X86Reg dst, int32_t imm);
+void x86_or_rm(SecBuf *s, int size, X86Reg dst, X86Mem src);
 void x86_xor_rr(SecBuf *s, int size, X86Reg dst, X86Reg src);
 void x86_xor_ri(SecBuf *s, int size, X86Reg dst, int32_t imm);
 void x86_xor_rm(SecBuf *s, int size, X86Reg dst, X86Mem src);
@@ -222,6 +224,7 @@ void x86_cvtss2sd(SecBuf *s, X86XmmReg dst, X86XmmReg src);
 void x86_xorpd(SecBuf *s, X86XmmReg dst, X86XmmReg src);
 void x86_xorps(SecBuf *s, X86XmmReg dst, X86XmmReg src);
 void x86_movaps(SecBuf *s, X86XmmReg dst, X86XmmReg src);
+void x86_movaps_mr(SecBuf *s, X86Mem dst, X86XmmReg src);
 void x86_pxor(SecBuf *s, X86XmmReg dst, X86XmmReg src);
 
 // x87 (legacy, for long double)
