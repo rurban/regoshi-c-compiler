@@ -6308,7 +6308,8 @@ static int gen(Node *node) {
             x86_xor_rr(cg_sec, 4, X86_RDX, X86_RDX);
         } else {
             if (sz == 8) x86_cqo(cg_sec);
-            else x86_cdq(cg_sec);
+            else
+                x86_cdq(cg_sec);
         }
         if (is_unsigned)
             x86_div_r(cg_sec, sz, CG_X86_REG(r_rhs));
@@ -6572,16 +6573,16 @@ static int gen(Node *node) {
             cset_cond = use_unsigned_cmp(node) ? "ls" : "le";
         (void)0 /* FIXME: cset with var cond */;
 #else
-        X86Cond cond = X86_E;
-        if (node->kind == ND_EQ) cond = X86_E;
-        else if (node->kind == ND_NE)
-            cond = X86_NE;
-        else if (node->kind == ND_LT)
-            cond = use_unsigned_cmp(node) ? X86_B : X86_L;
-        else if (node->kind == ND_LE)
-            cond = use_unsigned_cmp(node) ? X86_BE : X86_LE;
-        asm_setcc(cg_sec, r_lhs, cond);
-        asm_movzx(cg_sec, r_lhs, r_lhs, 4, 1);
+            X86Cond cond = X86_E;
+            if (node->kind == ND_EQ) cond = X86_E;
+            else if (node->kind == ND_NE)
+                cond = X86_NE;
+            else if (node->kind == ND_LT)
+                cond = use_unsigned_cmp(node) ? X86_B : X86_L;
+            else if (node->kind == ND_LE)
+                cond = use_unsigned_cmp(node) ? X86_BE : X86_LE;
+            asm_setcc(cg_sec, r_lhs, cond);
+            asm_movzx(cg_sec, r_lhs, r_lhs, 4, 1);
 #endif
     }
     // Extended bitfield arithmetic masking (GCC extension for unsigned long long : N).

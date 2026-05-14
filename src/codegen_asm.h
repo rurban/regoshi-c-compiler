@@ -677,6 +677,74 @@ static size_t asm_shl_cl(SecBuf *s, int r, int size) {
 #endif
 }
 
+static size_t asm_shr_cl(SecBuf *s, int r, int size) {
+    size_t off = s->len;
+#ifdef ARCH_ARM64
+    int sf = (size == 8) ? 1 : 0;
+    secbuf_emit32le(s, arm64_lsr_reg(sf, CG_ARM_REG(r), CG_ARM_REG(r), CG_ARM_REG(r)));
+    return 4;
+#else
+    x86_shr_rcl(s, size, CG_X86_REG(r));
+    size_t count = s->len - off;
+    asm_record(ASM_SHR_CL, off, count, r, -1, -1, size, 0, 0, NULL, 0, -1, false);
+    return count;
+#endif
+}
+
+static size_t asm_sar_cl(SecBuf *s, int r, int size) {
+    size_t off = s->len;
+#ifdef ARCH_ARM64
+    int sf = (size == 8) ? 1 : 0;
+    secbuf_emit32le(s, arm64_asr_reg(sf, CG_ARM_REG(r), CG_ARM_REG(r), CG_ARM_REG(r)));
+    return 4;
+#else
+    x86_sar_rcl(s, size, CG_X86_REG(r));
+    size_t count = s->len - off;
+    asm_record(ASM_SAR_CL, off, count, r, -1, -1, size, 0, 0, NULL, 0, -1, false);
+    return count;
+#endif
+}
+
+static size_t asm_cqo(SecBuf *s) {
+    size_t off = s->len;
+#ifdef ARCH_ARM64
+    // ARM64: sxtw x0, w0 for 32-bit, already sign-extended for 64-bit
+#else
+    x86_cqo(s);
+#endif
+    return s->len - off;
+}
+
+static size_t asm_cdq(SecBuf *s) {
+    size_t off = s->len;
+#ifdef ARCH_ARM64
+    // ARM64: sxtw x0, w0
+#else
+    x86_cdq(s);
+#endif
+    return s->len - off;
+}
+
+static size_t asm_idiv(SecBuf *s, int r, int size) {
+    size_t off = s->len;
+#ifdef ARCH_ARM64
+    // ARM64 division
+#else
+    x86_idiv_r(s, size, CG_X86_REG(r));
+#endif
+    return s->len - off;
+}
+
+static size_t asm_div(SecBuf *s, int r, int size) {
+    size_t off = s->len;
+#ifdef ARCH_ARM64
+    // ARM64 unsigned division
+#else
+    x86_div_r(s, size, CG_X86_REG(r));
+#endif
+    return s->len - off;
+}
+
 // ============================================================================
 // Compare / Test
 // ============================================================================
