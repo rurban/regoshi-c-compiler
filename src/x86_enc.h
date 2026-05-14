@@ -103,6 +103,7 @@ void x86_mov_ri(SecBuf *s, int size, X86Reg dst, int64_t imm);
 void x86_mov_rm(SecBuf *s, int size, X86Reg dst, X86Mem src);
 void x86_mov_mr(SecBuf *s, int size, X86Mem dst, X86Reg src);
 void x86_mov_mi(SecBuf *s, int size, X86Mem dst, int32_t imm);
+void x86_or_mi(SecBuf *s, int size, X86Mem dst, int32_t imm);
 void x86_movabs(SecBuf *s, X86Reg dst, uint64_t imm64); // 64-bit immediate
 void x86_movsx(SecBuf *s, int dst_sz, int src_sz, X86Reg dst, X86Reg src);
 void x86_movzx(SecBuf *s, int dst_sz, int src_sz, X86Reg dst, X86Reg src);
@@ -212,6 +213,8 @@ void x86_addss(SecBuf *s, X86XmmReg dst, X86XmmReg src);
 void x86_subss(SecBuf *s, X86XmmReg dst, X86XmmReg src);
 void x86_mulss(SecBuf *s, X86XmmReg dst, X86XmmReg src);
 void x86_divss(SecBuf *s, X86XmmReg dst, X86XmmReg src);
+void x86_movq_r_xmm(SecBuf *s, X86XmmReg d, X86Reg src);
+void x86_movq_xmm_r(SecBuf *s, X86Reg d, X86XmmReg src);
 void x86_ucomisd(SecBuf *s, X86XmmReg a, X86XmmReg b);
 void x86_ucomiss(SecBuf *s, X86XmmReg a, X86XmmReg b);
 void x86_comisd(SecBuf *s, X86XmmReg a, X86XmmReg b);

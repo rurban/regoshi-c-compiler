@@ -198,6 +198,15 @@ void x86_mov_mi(SecBuf *s, int size, X86Mem dst, int32_t imm) {
         emit_imm32(s, imm);
 }
 
+void x86_or_mi(SecBuf *s, int size, X86Mem dst, int32_t imm) {
+    int needrex = (size == 8) || dst.base > 7 || (dst.index != X86_NOREG && dst.index > 7);
+    if (needrex) emit1(s, rex(size == 8, 0, dst.index > 7, dst.base > 7));
+    emit1(s, opsize(0x80, size));
+    emit_mem(s, dst.base, dst.index, dst.scale, dst.disp, 1);
+    if (size == 1) emit1(s, (uint8_t)imm);
+    else if (size == 2) secbuf_emit16le(s, (uint16_t)imm);
+    else emit_imm32(s, imm);
+}
 void x86_movsx(SecBuf *s, int dst_sz, int src_sz, X86Reg dst, X86Reg src) {
     if (dst_sz == 4 && src_sz == 1) {
         maybe_rex(s, 0, (int)dst, 0, (int)src);
@@ -574,6 +583,16 @@ void x86_addss(SecBuf *s, X86XmmReg d, X86XmmReg sr) { sse_rr(s, 0xf3, 0x58, d, 
 void x86_subss(SecBuf *s, X86XmmReg d, X86XmmReg sr) { sse_rr(s, 0xf3, 0x5c, d, sr); }
 void x86_mulss(SecBuf *s, X86XmmReg d, X86XmmReg sr) { sse_rr(s, 0xf3, 0x59, d, sr); }
 void x86_divss(SecBuf *s, X86XmmReg d, X86XmmReg sr) { sse_rr(s, 0xf3, 0x5e, d, sr); }
+void x86_movq_r_xmm(SecBuf *s, X86XmmReg d, X86Reg sr) {
+    // movq %r64, %xmm: REX.W 0F 6E /r (reg=d, rm=sr)
+    emit1(s, rex(1, (int)d > 7, 0, (int)sr > 7));
+    emit3(s, 0x0f, 0x6e, modrm(3, (int)d, (int)sr));
+}
+void x86_movq_xmm_r(SecBuf *s, X86Reg d, X86XmmReg sr) {
+    // movq %xmm, %r64: REX.W 0F 7E /r (reg=sr, rm=d)
+    emit1(s, rex(1, (int)sr > 7, 0, (int)d > 7));
+    emit3(s, 0x0f, 0x7e, modrm(3, (int)sr, (int)d));
+}
 void x86_ucomisd(SecBuf *s, X86XmmReg a, X86XmmReg b) {
     emit1(s, 0x66);
     maybe_rex(s, 0, (int)a, 0, (int)b);
