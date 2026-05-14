@@ -855,9 +855,14 @@ static int parse_macro_args(char *p, char **args, int max_args, char **end_out) 
         if (*p == ')') {
             depth--;
             if (depth == 0) {
+                // M() has zero args; M( ) or M(x) has one or more
+                if (arg_start == p) {
+                    *end_out = p + 1;
+                    return 0;
+                }
                 args[argc++] = trim_copy(arg_start, p - arg_start);
                 *end_out = p + 1;
-                return argc == 1 && args[0][0] == '\0' ? 0 : argc;
+                return argc;
             }
             p++;
             continue;
@@ -989,8 +994,9 @@ static char *expand_text(char *text, char *filename, unsigned line_no, int depth
             char *args[32];
             char *end = NULL;
             int argc = parse_macro_args(q + 1, args, 32, &end);
-            // Validate argument count: for non-variadic macros, argc must match param_len
-            if (!m->is_variadic && argc != m->param_len) {
+            // Validate argument count: for non-variadic macros, argc must match param_len.
+            // Lenient: empty arguments are acceptable (e.g., STR() where STR(x) expects 1 arg)
+            if (!m->is_variadic && argc > m->param_len) {
                 sb_puts(&sb, name);
                 sb_putc(&sb, '(');
                 for (int i = 0; i < argc; i++) {
@@ -1005,6 +1011,12 @@ static char *expand_text(char *text, char *filename, unsigned line_no, int depth
             // Keep raw (unexpanded) args for # stringification.
             char *raw_args[32];
             for (int i = 0; i < argc; i++) raw_args[i] = args[i];
+            // Pad missing args with empty strings (STR() -> one empty arg)
+            while (argc < m->param_len) {
+                args[argc] = pp_strndup("", 0);
+                raw_args[argc] = pp_strndup("", 0);
+                argc++;
+            }
             for (int i = 0; i < argc; i++)
                 args[i] = expand_text(args[i], filename, line_no, depth + 1);
             push_disabled(m);

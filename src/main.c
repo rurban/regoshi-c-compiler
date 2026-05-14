@@ -480,7 +480,10 @@ int main(int argc, char **argv) {
     if (!opt_S && !opt_E) {
         char cmd[1024];
         if (opt_c) {
-            snprintf(cmd, sizeof(cmd), GCC " -c -o %s", out_path);
+            if (opt_pic)
+                snprintf(cmd, sizeof(cmd), GCC " -c -fPIC -o %s", out_path);
+            else
+                snprintf(cmd, sizeof(cmd), GCC " -c -o %s", out_path);
         } else {
 #ifdef __APPLE__
             snprintf(cmd, sizeof(cmd), "cc -o %s -arch arm64 -isysroot /Library/Developer/CommandLineTools/SDKs/MacOSX.sdk -Wl,-undefined,dynamic_lookup", out_path);
