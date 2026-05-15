@@ -8076,10 +8076,16 @@ struct ObjFile *codegen(Program *prog) {
 
         // Save incoming params from ABI regs to stack slots
         {
+#ifdef _WIN32
+            X86Reg greg[] = {X86_RCX, X86_RDX, X86_R8, X86_R9};
+            int max_gp = 4;
+#else
             X86Reg greg[] = {X86_RDI, X86_RSI, X86_RDX, X86_RCX, X86_R8, X86_R9};
+            int max_gp = 6;
+#endif
             int gp = fn->ty->return_ty && (fn->ty->return_ty->kind == TY_STRUCT || fn->ty->return_ty->kind == TY_UNION) ? 1 : 0;
             for (LVar *var = fn->params; var; var = var->param_next) {
-                if (!is_flonum(var->ty) && gp < 6 && !((var->ty->kind == TY_STRUCT || var->ty->kind == TY_UNION) && var->ty->size > 8)) {
+                if (!is_flonum(var->ty) && gp < max_gp && !((var->ty->kind == TY_STRUCT || var->ty->kind == TY_UNION) && var->ty->size > 8)) {
                     int sz = var->ty->size <= 4 ? 4 : 8;
                     x86_mov_mr(cg_sec, sz, x86_mem(X86_RBP, -var->offset), greg[gp]); // %s:
                     gp++;
