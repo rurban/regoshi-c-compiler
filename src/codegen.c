@@ -2433,14 +2433,14 @@ static void emit_load(Type *ty, int r, int base, int off) {
         X86Reg xbp = CG_X86_FP;
         if (ty->size == 1) {
             if (ty->is_unsigned)
-                x86_movzx_rm(cg_sec, 4, 1, CG_X86_REG(r), x86_mem(xbp, off));
+                x86_movzx_rm(cg_sec, 4, 1, CG_X86_REG(r), x86_mem(xbp, -off));
             else
-                x86_movsx_rm(cg_sec, 4, 1, CG_X86_REG(r), x86_mem(xbp, off));
+                x86_movsx_rm(cg_sec, 4, 1, CG_X86_REG(r), x86_mem(xbp, -off));
         } else if (ty->size == 2) {
             if (ty->is_unsigned)
-                x86_movzx_rm(cg_sec, 4, 2, CG_X86_REG(r), x86_mem(xbp, off)); // ldr %s, %s
+                x86_movzx_rm(cg_sec, 4, 2, CG_X86_REG(r), x86_mem(xbp, -off));
             else
-                x86_movsx_rm(cg_sec, 4, 2, CG_X86_REG(r), x86_mem(xbp, off)); // ldr %s, %s
+                x86_movsx_rm(cg_sec, 4, 2, CG_X86_REG(r), x86_mem(xbp, -off));
         } else {
             asm_mov_rbp_reg(cg_sec, r, sz, off); // mov [rbp-sz], rr
         }
@@ -3021,7 +3021,7 @@ static void gen_cond_branch_inv(Node *cond, char *label) {
 #ifdef ARCH_ARM64
             asm_cmp_reg_reg(cg_sec, r_lhs, r_rhs, 8); // cmp rr_rhs, rr_lhs
 #else
-            asm_cmp_reg_reg(cg_sec, r_rhs, r_lhs, 8); // cmp rr_lhs, rr_rhs
+            asm_cmp_reg_reg(cg_sec, r_lhs, r_rhs, 8); // cmp rr_rhs, rr_lhs
 #endif
             free_reg(r_rhs);
         }
@@ -4403,7 +4403,9 @@ static int gen(Node *node) {
         } else if (to->size == 4 && from->size == 8) {
             asm_mov_reg_reg(cg_sec, r, r, 4); // cvtss2sd %%xmm0, %%xmm0
         } else if (to->size == 8 && from->size < 8) {
-            if (from->is_unsigned)
+            if (from->kind == TY_ARRAY || from->kind == TY_VLA) {
+                // Array/VLA decayed to pointer; already 8-byte address in reg
+            } else if (from->is_unsigned)
                 zero_extend_to(r, from->size, 8);
             else
                 sign_extend_to(r, from->size, 8);
