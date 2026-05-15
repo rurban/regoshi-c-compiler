@@ -2917,8 +2917,7 @@ static void gen_cond_branch_inv(Node *cond, char *label) {
     }
     if (cond->kind == ND_LOGOR) {
         int c = ++rcc_label_count;
-        char skip_label[32];
-        sprintf(skip_label, ".L.or_skip.%d", c);
+        const char *skip_label = format(".L.or_skip.%d", c);
         // If lhs is true, skip to end (don't branch to label)
         int lhs = gen(cond->lhs);
         asm_cmp_zero(cg_sec, lhs, cond->lhs->ty->size); // cmp $0, rlhs
@@ -4731,8 +4730,7 @@ static int gen(Node *node) {
     }
     case ND_LOGAND: {
         int c = ++rcc_label_count;
-        char false_label[32];
-        sprintf(false_label, ".L.logand_false.%d", c);
+        const char *false_label = format(".L.logand_false.%d", c);
 #ifdef ARCH_ARM64
         int r = alloc_reg();
         int lhs = gen(node->lhs);
@@ -4763,9 +4761,8 @@ static int gen(Node *node) {
     }
     case ND_LOGOR: {
         int c = ++rcc_label_count;
-        char true_label[32], end_label[32];
-        sprintf(true_label, ".L.logor_true.%d", c);
-        sprintf(end_label, ".L.logor_end.%d", c);
+        const char *true_label = format(".L.logor_true.%d", c);
+        const char *end_label = format(".L.logor_end.%d", c);
 #ifdef ARCH_ARM64
         int r = alloc_reg();
         int lhs = gen(node->lhs);
@@ -4802,9 +4799,8 @@ static int gen(Node *node) {
     }
     case ND_COND: {
         int c = ++rcc_label_count;
-        char else_label[32], end_label[32];
-        sprintf(else_label, ".L.cond_else.%d", c);
-        sprintf(end_label, ".L.cond_end.%d", c);
+        const char *else_label = format(".L.cond_else.%d", c);
+        const char *end_label = format(".L.cond_end.%d", c);
         int r = alloc_reg();
         int cond = gen(node->cond);
 #ifdef ARCH_ARM64
@@ -4910,9 +4906,8 @@ static int gen(Node *node) {
             }
         }
         int c = ++rcc_label_count;
-        char end_label[32], else_label[32];
-        sprintf(end_label, ".L.end.%d", c);
-        sprintf(else_label, ".L.else.%d", c);
+        const char *end_label = format(".L.end.%d", c);
+        const char *else_label = format(".L.else.%d", c);
 
         if (node->els) {
             gen_cond_branch_inv(node->cond, else_label);
@@ -4939,10 +4934,9 @@ static int gen(Node *node) {
     }
     case ND_FOR: {
         int c = ++rcc_label_count;
-        char begin_label[32], end_label[32], cont_label[32];
-        sprintf(begin_label, ".L.begin.%d", c);
-        sprintf(end_label, ".L.end.%d", c);
-        sprintf(cont_label, ".L.continue.%d", c);
+        const char *begin_label = format(".L.begin.%d", c);
+        const char *end_label = format(".L.end.%d", c);
+        const char *cont_label = format(".L.continue.%d", c);
 
         if (node->init) {
             int r = gen(node->init);
@@ -4975,10 +4969,9 @@ static int gen(Node *node) {
     }
     case ND_DO: {
         int c = ++rcc_label_count;
-        char begin_label[32], end_label[32], cont_label[32];
-        sprintf(begin_label, ".L.begin.%d", c);
-        sprintf(end_label, ".L.end.%d", c);
-        sprintf(cont_label, ".L.continue.%d", c);
+        const char *begin_label = format(".L.begin.%d", c);
+        const char *end_label = format(".L.end.%d", c);
+        const char *cont_label = format(".L.continue.%d", c);
         cg_def_label(begin_label); // cmp %s, #0
         break_stack[ctrl_depth] = c;
         continue_stack[ctrl_depth] = c;
