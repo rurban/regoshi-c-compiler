@@ -5,9 +5,9 @@ Generated: May 2026
 ## Summary
 
 - **Total**: 152
-- **Passed**: 90
-- **Failed**: 62
-- **Pass Rate**: 59%
+- **Passed**: 89
+- **Failed**: 63
+- **Pass Rate**: 58%
 
 ## Detailed Results
 
@@ -103,7 +103,7 @@ Generated: May 2026
 | 98_al_ax_extend             | SKIP         | Skipped                       |
 | 99_fastcall                 | SKIP         | Skipped                       |
 | 100_c99array-decls          | PASS         | Output matches                |
-| 101_cleanup                 | EXEC_FAIL    | non-zero exit                 |
+| 101_cleanup                 | COMPILE_FAIL | rcc returned non-zero         |
 | 102_alignas                 | PASS         | Output matches                |
 | 103_implicit_memmove        | PASS         | Output matches                |
 | 104_inline                  | COMPILE_FAIL | rcc returned non-zero         |
@@ -111,7 +111,7 @@ Generated: May 2026
 | 106_versym                  | MISMATCH     | Output does not match .expect |
 | 107_stack_safe              | PASS         | Output matches                |
 | 108_constructor             | MISMATCH     | Output does not match .expect |
-| 109_float_struct_calling    | MISMATCH     | Output does not match .expect |
+| 109_float_struct_calling    | COMPILE_FAIL | rcc returned non-zero         |
 | 110_average                 | MISMATCH     | Output does not match .expect |
 | 111_conversion              | MISMATCH     | Output does not match .expect |
 | 112_backtrace               | SKIP         | Skipped                       |
@@ -121,9 +121,9 @@ Generated: May 2026
 | 116_bound_setjmp2           | SKIP         | Skipped                       |
 | 117_builtins                | EXEC_FAIL    | non-zero exit                 |
 | 118_switch                  | MISMATCH     | Output does not match .expect |
-| 119_random_stuff            | EXEC_FAIL    | non-zero exit                 |
+| 119_random_stuff            | COMPILE_FAIL | rcc returned non-zero         |
 | 120_alias                   | COMPILE_FAIL | rcc returned non-zero         |
-| 121_struct_return           | MISMATCH     | Output does not match .expect |
+| 121_struct_return           | COMPILE_FAIL | rcc returned non-zero         |
 | 122_vla_reuse               | EXEC_FAIL    | non-zero exit                 |
 | 123_vla_bug                 | PASS         | Output matches                |
 | 124_atomic_counter          | MISMATCH     | Output does not match .expect |
@@ -131,13 +131,13 @@ Generated: May 2026
 | 126_bound_global            | SKIP         | Skipped                       |
 | 127_asm_goto                | EXEC_FAIL    | non-zero exit                 |
 | 128_run_atexit              | MISMATCH     | Output does not match .expect |
-| 129_scopes                  | EXEC_FAIL    | non-zero exit                 |
-| 130_large_argument          | MISMATCH     | Output does not match .expect |
-| 131_return_struct_in_reg    | EXEC_FAIL    | non-zero exit                 |
+| 129_scopes                  | COMPILE_FAIL | rcc returned non-zero         |
+| 130_large_argument          | COMPILE_FAIL | rcc returned non-zero         |
+| 131_return_struct_in_reg    | COMPILE_FAIL | rcc returned non-zero         |
 | 132_bound_test              | MISMATCH     | Output does not match .expect |
 | 133_old_func                | MISMATCH     | Output does not match .expect |
 | 134_double_to_signed        | EXEC_FAIL    | non-zero exit                 |
-| 135_func_arg_struct_compare | PASS         | Output matches                |
+| 135_func_arg_struct_compare | COMPILE_FAIL | rcc returned non-zero         |
 | 136_atomic_gcc_style        | MISMATCH     | Output does not match .expect |
 | 137_funcall_struct_args     | MISMATCH     | Output does not match .expect |
 | 138_arm64_encoding          | SKIP         | Skipped                       |
@@ -177,7 +177,7 @@ Generated: May 2026
 | test_ptr                    | PASS         | exit=0                        |
 | test_real                   | PASS         | exit=0                        |
 | test_self_include2          | PASS         | exit=1                        |
-| test_signextend             | PASS         | exit=11                       |
+| test_signextend             | PASS         | exit=1                        |
 | test_simple                 | PASS         | exit=1                        |
 | test_simple2                | PASS         | exit=1                        |
 | test_str                    | PASS         | exit=0                        |
