@@ -4,7 +4,6 @@
 #include "rcc.h"
 
 #include "codegen_asm.h"
-#include <stdarg.h>
 #include <ctype.h>
 #include <time.h>
 
@@ -66,18 +65,6 @@ static size_t asm_lea_rip_reg(SecBuf *s, int r, const char *label) {
     return s->len - off;
 }
 #endif
-
-// Keep cg_emit + printf macro temporarily until all calls are converted.
-// After conversion, the printf macro and cg_emit/cg_stream are removed.
-static FILE *cg_stream;
-static void cg_emit(const char *fmt, ...) {
-    if (!cg_stream) return;
-    va_list ap;
-    va_start(ap, fmt);
-    vfprintf(cg_stream, fmt, ap);
-    va_end(ap);
-}
-#define printf(...) cg_emit(__VA_ARGS__)
 
 static uint64_t cg_now_us(void) {
     struct timespec ts;
@@ -7255,7 +7242,6 @@ struct ObjFile *codegen(Program *prog) {
     cg_set_section(SEC_TEXT);
     cg_dry_run = false;
 
-    cg_stream = NULL;
     all_items = prog->items;
     all_strs = prog->strs;
     alloca_needed = false;
