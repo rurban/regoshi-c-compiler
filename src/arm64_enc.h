@@ -55,13 +55,13 @@ typedef enum {
 // ---------------------------------------------------------------------------
 // Data processing — immediate
 // ---------------------------------------------------------------------------
-uint32_t arm64_movz(int sf, int rd, uint16_t imm16, int shift16);
-uint32_t arm64_movk(int sf, int rd, uint16_t imm16, int shift16);
-uint32_t arm64_movn(int sf, int rd, uint16_t imm16, int shift16);
-uint32_t arm64_add_imm(int sf, int rd, int rn, int32_t imm12, int shift2);
-uint32_t arm64_adds_imm(int sf, int rd, int rn, int32_t imm12, int shift2);
-uint32_t arm64_sub_imm(int sf, int rd, int rn, int32_t imm12, int shift2);
-uint32_t arm64_subs_imm(int sf, int rd, int rn, int32_t imm12, int shift2);
+uint32_t arm64_movz(int sf, int rd, uint16_t imm16, uint16_t shift16);
+uint32_t arm64_movk(int sf, int rd, uint16_t imm16, uint16_t shift16);
+uint32_t arm64_movn(int sf, int rd, uint16_t imm16, uint16_t shift16);
+uint32_t arm64_add_imm(int sf, int rd, int rn, int32_t imm12, uint16_t shift2);
+uint32_t arm64_adds_imm(int sf, int rd, int rn, int32_t imm12, uint32_t shift2);
+uint32_t arm64_sub_imm(int sf, int rd, int rn, int32_t imm12, uint32_t shift2);
+uint32_t arm64_subs_imm(int sf, int rd, int rn, int32_t imm12, uint32_t shift2);
 uint32_t arm64_and_imm(int sf, int rd, int rn, uint64_t imm_enc);
 uint32_t arm64_orr_imm(int sf, int rd, int rn, uint64_t imm_enc);
 uint32_t arm64_eor_imm(int sf, int rd, int rn, uint64_t imm_enc);
