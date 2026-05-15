@@ -3556,18 +3556,8 @@ static int gen(Node *node) {
             // Helper: emit unsigned load of unit_sz bytes
             // Helper: emit unsigned load of unit_sz bytes
 #ifdef ARCH_ARM64
-#define BF_LOAD(sz, ra, rt) do { \
-    if ((sz) == 1) printf("  ldrb %s, [%s]\n", reg32[rt], reg64[ra]); \
-    else if ((sz) == 2) printf("  ldrh %s, [%s]\n", reg32[rt], reg64[ra]); \
-    else if ((sz) == 4) printf("  ldr %s, [%s]\n", reg32[rt], reg64[ra]); \
-    else printf("  ldr %s, [%s]\n", reg64[rt], reg64[ra]); \
-} while (0)
-#define BF_STORE(sz, ra, rt) do { \
-    if ((sz) == 1) printf("  strb %s, [%s]\n", reg32[rt], reg64[ra]); \
-    else if ((sz) == 2) printf("  strh %s, [%s]\n", reg32[rt], reg64[ra]); \
-    else if ((sz) == 4) printf("  str %s, [%s]\n", reg32[rt], reg64[ra]); \
-    else printf("  str %s, [%s]\n", reg64[rt], reg64[ra]); \
-} while (0)
+#define BF_LOAD(sz, ra, rt) do { asm_ldr_reg_off(cg_sec, rt, ra, sz, 0); } while (0)
+#define BF_STORE(sz, ra, rt) do { asm_str_reg_off(cg_sec, rt, ra, sz, 0); } while (0)
 #else
 #define BF_LOAD(sz, ra, rt) do { \
     if ((sz) == 1) asm_movzx_mem_reg(cg_sec, rt, ra, 4, 1); \
@@ -4083,17 +4073,18 @@ static int gen(Node *node) {
         bool is_float = is_flonum(node->lhs->ty);
         if (is_float) {
             int id = add_float_literal(1.0, sz);
-            (void)0 /* TODO: movq to/from xmm */;
-            if (sz == 4)
-                printf("  %s .LF%d(%%rip), %%xmm0\n",
-                       node->kind == ND_POST_INC ? "addss" : "subss", id);
-            else
-                printf("  %s .LF%d(%%rip), %%xmm0\n",
-                       node->kind == ND_POST_INC ? "addsd" : "subsd", id);
-            if (sz == 4)
-                (void)0 /* FIXME: float op */;
-            else
-                (void)0 /* FIXME: float op */;
+            if (sz == 4) {
+                asm_lea_rip_reg(cg_sec, r2, format(".LF%d", id));
+                x86_movss_rm(cg_sec, X86_XMM1, x86_mem(CG_X86_REG(r2), 0));
+                if (node->kind == ND_POST_INC) x86_addss(cg_sec, X86_XMM0, X86_XMM1);
+                else x86_subss(cg_sec, X86_XMM0, X86_XMM1);
+            } else {
+                asm_lea_rip_reg(cg_sec, r2, format(".LF%d", id));
+                x86_movsd_rm(cg_sec, X86_XMM1, x86_mem(CG_X86_REG(r2), 0));
+                if (node->kind == ND_POST_INC) x86_addsd(cg_sec, X86_XMM0, X86_XMM1);
+                else x86_subsd(cg_sec, X86_XMM0, X86_XMM1);
+            }
+            (void)0 /* FIXME: store xmm0 back to memory */;
         } else {
             int delta = 1;
             if (node->lhs->ty->kind == TY_PTR || node->lhs->ty->kind == TY_ARRAY)
@@ -4613,8 +4604,7 @@ static int gen(Node *node) {
                     // Truncate return value to match function return type width
                     if (ret_ty && ret_ty->size < 4) {
                         if (ret_ty->is_unsigned)
-                            printf("  and %s, %s, #0x%x\n", reg32[r], reg32[r],
-                                   (1 << (ret_ty->size * 8)) - 1);
+                            asm_and_imm(cg_sec, r, 4, (1 << (ret_ty->size * 8)) - 1);
                         else if (ret_ty->size == 1)
                             asm_movsx(cg_sec, r, r, 4, 1); // sxtb %s, %s
                         else
@@ -5850,14 +5840,18 @@ static int gen(Node *node) {
             emit_load(node->ty, r, r_addr, 0);
 #else
         if (sz < 4) {
-            if (sz == 1)
-                printf("  %s (%s), %s\n",
-                       use_unsigned(node->ty) ? "movzbl" : "movsbl",
-                       reg64[r_addr], reg(r, 4));
-            else
-                printf("  %s (%s), %s\n",
-                       use_unsigned(node->ty) ? "movzwl" : "movswl",
-                       reg64[r_addr], reg(r, 4));
+            X86Mem m = {CG_X86_REG(r_addr), X86_NOREG, 1, 0};
+            if (sz == 1) {
+                if (use_unsigned(node->ty))
+                    x86_movzx_rm(cg_sec, 4, 1, CG_X86_REG(r), m);
+                else
+                    x86_movsx_rm(cg_sec, 4, 1, CG_X86_REG(r), m);
+            } else {
+                if (use_unsigned(node->ty))
+                    x86_movzx_rm(cg_sec, 4, 2, CG_X86_REG(r), m);
+                else
+                    x86_movsx_rm(cg_sec, 4, 2, CG_X86_REG(r), m);
+            }
         } else if (sz == 4) {
             (void)0 /* FIXME: indirect mov */;
         } else {
@@ -5999,11 +5993,7 @@ static int gen(Node *node) {
         (void)0 /* FIXME: lock */;
         (void)0 /* FIXME: sete */;
         asm_movzx(cg_sec, r_result, r_result, 4, 1); // stxrb w9, %s, [%s]
-        printf("  mov%c %s, (%s)\n", size_suffix(sz),
-               sz == 1 ? "%al" : sz == 2 ? "%ax"
-                   : sz == 4             ? "%eax"
-                                         : "%rax",
-               reg64[r_expectedaddr]);
+        x86_mov_mr(cg_sec, sz, x86_mem(CG_X86_REG(r_expectedaddr), 0), X86_RAX);
         free_reg(r_expected);
 #endif
         free_reg(r_desired);
@@ -6057,13 +6047,13 @@ static int gen(Node *node) {
         else
             (void)0 /* FIXME: atomic */;
         asm_str_fp_imm(cg_sec, r_tmp, 8, old_slot); // .L.atom_fop.%d:
-        const char *rv = (sz == 8) ? "x9" : "w9";
+        int sf = (sz == 8) ? 1 : 0;
         switch (op) {
-        case 0: printf("  add %s, %s, %s\n", reg(r_tmp, sz), reg(r_tmp, sz), rv); break;
-        case 1: printf("  sub %s, %s, %s\n", reg(r_tmp, sz), reg(r_tmp, sz), rv); break;
-        case 2: printf("  orr %s, %s, %s\n", reg(r_tmp, sz), reg(r_tmp, sz), rv); break;
-        case 3: printf("  eor %s, %s, %s\n", reg(r_tmp, sz), reg(r_tmp, sz), rv); break;
-        case 4: printf("  and %s, %s, %s\n", reg(r_tmp, sz), reg(r_tmp, sz), rv); break;
+        case 0: asm_add_reg_reg(cg_sec, r_tmp, 9, sz); break; // add r_tmp, r_tmp, r9
+        case 1: asm_sub_reg_reg(cg_sec, r_tmp, 9, sz); break; // sub r_tmp, r_tmp, r9
+        case 2: asm_or_reg_reg(cg_sec, r_tmp, 9, sz); break;  // orr r_tmp, r_tmp, r9
+        case 3: asm_eor_reg_reg(cg_sec, r_tmp, 9, sz); break; // eor r_tmp, r_tmp, r9
+        case 4: asm_and_reg_reg(cg_sec, r_tmp, 9, sz); break; // and r_tmp, r_tmp, r9
         case 5:
             asm_and_reg_reg(cg_sec, r_tmp, r_tmp, sz); // and %s, %s, %s
             asm_not(cg_sec, r_tmp, sz); // mvn %s, %s
@@ -6131,9 +6121,9 @@ static int gen(Node *node) {
             asm_mov_reg_reg(cg_sec, r_old, r_new, 8); // mov -%d(%%rbp), %s
             char sc = size_suffix(sz);
             switch (op) {
-            case 2: printf("  or%c -%d(%%rbp), %s\n", sc, spill_logand, reg(r_new, sz)); break;
-            case 3: printf("  xor%c -%d(%%rbp), %s\n", sc, spill_logand, reg(r_new, sz)); break;
-            case 4: printf("  and%c -%d(%%rbp), %s\n", sc, spill_logand, reg(r_new, sz)); break;
+            case 2: asm_or_rbp_reg(cg_sec, r_new, sz, spill_logand); break;
+            case 3: asm_xor_rbp_reg(cg_sec, r_new, sz, spill_logand); break;
+            case 4: asm_and_rbp_reg(cg_sec, r_new, sz, spill_logand); break;
             case 5:
                 (void)0 /* FIXME: sized alu op */;
                 asm_not(cg_sec, r_new, sz); // mov -%d(%%rbp), %s
@@ -7297,16 +7287,11 @@ struct ObjFile *codegen(Program *prog) {
             // Handle function aliases (__attribute__((alias)) or __asm__ renaming)
             if (var->is_function && !var->alias_target && var->asm_name) {
                 // __asm__("target") on a function: alias the C name to the asm_name
-                (void)0 /* .globl symbol handled by objfile */;
-                printf(".set %s, %s\n", asm_sym_name(sym_name(var->name)),
-                       asm_sym_name(var->asm_name));
+                (void)0 /* TODO: .set symbol alias via objfile_add_sym */;
                 continue;
             }
             if (var->alias_target) {
-                if (!var->is_static)
-                    (void)0 /* .globl symbol handled by objfile */;
-                printf(".set %s, %s\n", asm_sym_name(sym_name(label)),
-                       asm_sym_name(sym_name(var->alias_target)));
+                (void)0 /* TODO: .set symbol alias via objfile_add_sym */;
                 continue;
             }
             // If a global with this asm_name already emitted, skip (alias target)
