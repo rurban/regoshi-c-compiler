@@ -5,6 +5,10 @@ TARGET = rcc
 MINGW_O =
 OBJ_EXT = .o
 
+ifeq ($(ASAN),1)
+CFLAGS = -std=c11 -Wall -Wextra -g -fsanitize=address
+endif
+
 # Detect clang vs gcc
 IS_CLANG := $(shell $(CC) --version 2>/dev/null | grep -c clang)
 
