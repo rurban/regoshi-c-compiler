@@ -424,10 +424,10 @@ static int arm64_hfa_count(Type *ty, int *elem_size) {
 static void arm64_load_from_fp_minus(int offset, const char *dst) {
     (void)dst;
     if (offset <= 255)
-        secbuf_emit32le(cg_sec, arm64_ldur(1, 16, 29, -offset)); // ldr %s, [%s, #-%d]
+        asm_ldur_x16_fp_minus(cg_sec, offset); // ldr %s, [%s, #-%d]
     else if (offset <= 4095) {
-        secbuf_emit32le(cg_sec, arm64_sub_imm(1, 17, 29, offset, 0)); // sub x17, %s, #%d
-        secbuf_emit32le(cg_sec, arm64_ldr_uoff(1, 16, 17, 0)); // ldr %s, [x17]
+        asm_sub_x17_fp_imm(cg_sec, offset); // sub x17, %s, #%d
+        asm_ldr_x16_x17(cg_sec); // ldr %s, [x17]
     } else {
         int v = offset;
         asm_mov_imm(cg_sec, 17, 8, v & 0xffff); // mov x17, #%d
@@ -438,8 +438,8 @@ static void arm64_load_from_fp_minus(int offset, const char *dst) {
             v >>= 16;
             s += 16;
         }
-        secbuf_emit32le(cg_sec, arm64_sub_reg(1, 17, 29, 17, ARM64_LSL, 0)); // sub x17, %s, x17
-        secbuf_emit32le(cg_sec, arm64_ldr_uoff(1, 16, 17, 0)); // ldr %s, [x17]
+        asm_sub_x17_fp_x17(cg_sec); // sub x17, %s, x17
+        asm_ldr_x16_x17(cg_sec); // ldr %s, [x17]
     }
 }
 
@@ -447,10 +447,10 @@ static void arm64_load_from_fp_minus(int offset, const char *dst) {
 static void arm64_store_to_fp_minus(const char *src, int offset) {
     (void)src;
     if (offset <= 255)
-        secbuf_emit32le(cg_sec, arm64_stur(1, 16, 29, -offset)); // str %s, [%s, #-%d]
+        asm_stur_x16_fp_minus(cg_sec, offset); // str %s, [%s, #-%d]
     else if (offset <= 4095) {
-        secbuf_emit32le(cg_sec, arm64_sub_imm(1, 17, 29, offset, 0)); // sub x17, %s, #%d
-        secbuf_emit32le(cg_sec, arm64_str_uoff(1, 16, 17, 0)); // str %s, [x17]
+        asm_sub_x17_fp_imm(cg_sec, offset); // sub x17, %s, #%d
+        asm_str_x16_x17(cg_sec); // str %s, [x17]
     } else {
         int v = offset;
         asm_mov_imm(cg_sec, 17, 8, v & 0xffff); // mov x17, #%d
@@ -461,8 +461,8 @@ static void arm64_store_to_fp_minus(const char *src, int offset) {
             v >>= 16;
             s += 16;
         }
-        secbuf_emit32le(cg_sec, arm64_sub_reg(1, 17, 29, 17, ARM64_LSL, 0)); // sub x17, %s, x17
-        secbuf_emit32le(cg_sec, arm64_str_uoff(1, 16, 17, 0)); // str %s, [x17]
+        asm_sub_x17_fp_x17(cg_sec); // sub x17, %s, x17
+        asm_str_x16_x17(cg_sec); // str %s, [x17]
     }
 }
 #endif
@@ -477,7 +477,7 @@ static void emit_vla_dealloc(LVar *begin, LVar *end) {
     if (outermost_vla) {
 #ifdef ARCH_ARM64
         arm64_load_from_fp_minus(outermost_vla->offset, "x16");
-        secbuf_emit32le(cg_sec, arm64_mov_reg(1, 31, 16, ARM64_LSL, 0)); // mov sp, x16
+        asm_vla_mov_sp_x16(cg_sec); // mov sp, x16
 #else
         asm_mov_rbp_phyreg(cg_sec, X86_RSP, 8, outermost_vla->offset); // movq -%d(%%rbp), %%rsp
 #endif
@@ -489,10 +489,10 @@ static void emit_vla_dealloc(LVar *begin, LVar *end) {
 static void emit_alloca(void) {
     cg_global_label("__rcc_alloca");
 #ifdef ARCH_ARM64
-    secbuf_emit32le(cg_sec, arm64_add_imm(1, 0, 0, 15, 0)); // \n%s:\n  popq %%rdx\n", sym_name("__rcc_alloca
-    secbuf_emit32le(cg_sec, arm64_and_imm(1, 0, 0, ~15ULL)); // movq %%rcx, %%rax
-    secbuf_emit32le(cg_sec, arm64_sub_reg(1, 31, 31, 0, ARM64_LSL, 0)); // movq %%rdi, %%rax
-    secbuf_emit32le(cg_sec, arm64_add_reg(1, 0, 31, 0, ARM64_LSL, 0)); // addq $15, %%rax\n  andq $-16, %%rax\n  jz .Lalloca3
+    asm_alloca_add(cg_sec); // \n%s:\n  popq %%rdx\n", sym_name("__rcc_alloca
+    asm_alloca_and(cg_sec); // movq %%rcx, %%rax
+    asm_alloca_sub_sp_r0(cg_sec); // movq %%rdi, %%rax
+    asm_alloca_mov_r0_sp(cg_sec); // addq $15, %%rax\n  andq $-16, %%rax\n  jz .Lalloca3
     asm_ret(cg_sec); // .Lalloca1:\n  cmpq $4096, %%rax\n  jb .Lalloca2\n  testq %%rax, -4096(%%rsp)\n  subq $4096, %%rsp\n  subq $4096, %%rax\n  jmp .Lalloca1
 #else
     x86_mov_rr(cg_sec, 8, X86_RAX, X86_RDI); // .Lalloca2:\n  subq %%rax, %%rsp\n  movq %%rsp, %%rax\n.Lalloca3:\n  pushq %%rdx\n  ret
@@ -977,7 +977,7 @@ static int gen_funcall(Node *node, int hidden_ret_reg) {
             int rbuf = gen(node->args);
             int c = ++rcc_label_count;
             int r = alloc_reg();
-            secbuf_emit32le(cg_sec, arm64_str_imm(1, 29, CG_ARM_REG(rbuf), 0, false)); // movq %%rbp, %s
+            asm_str_fp_reg(cg_sec, rbuf); // movq %%rbp, %s
             (void)0 /* FIXME: adrp/adr */;
             (void)0 /* FIXME: ldr/str phy/off */;
             (void)0 /* FIXME: mov phy */;
@@ -994,7 +994,7 @@ static int gen_funcall(Node *node, int hidden_ret_reg) {
             // Inline __builtin_longjmp: restore fp, sp from buf; jump to resume addr with val
             int rbuf = gen(node->args);
             int rval = gen(node->args->next);
-            secbuf_emit32le(cg_sec, arm64_ldr_imm(1, 29, CG_ARM_REG(rbuf), 0, false)); // ldr %s, [%s]
+            asm_ldr_fp_reg(cg_sec, rbuf); // ldr %s, [%s]
             (void)0 /* FIXME: ldr/str phy/off */;
             (void)0 /* FIXME: mov phy */;
             (void)0 /* FIXME: ldr/str phy/off */;
@@ -6314,20 +6314,20 @@ static int gen(Node *node) {
                 asm_movq_zero(cg_sec, r_lhs); // mov %s, #0
             } else {
                 if (node->kind == ND_SHL)
-                    secbuf_emit32le(cg_sec, arm64_lsl_imm(sf, CG_ARM_REG(r_lhs), CG_ARM_REG(r_lhs), s)); // %s %s, %s, #%d
+                    asm_shl_imm(cg_sec, r_lhs, sf=="1" ? 8 : 4, (uint8_t)(s)); // %s %s, %s, #%d
                 else if (use_unsigned(node->ty))
-                    secbuf_emit32le(cg_sec, arm64_lsr_imm(sf, CG_ARM_REG(r_lhs), CG_ARM_REG(r_lhs), s)); // %s %s, %s, %s
+                    asm_shr_imm(cg_sec, r_lhs, sf=="1" ? 8 : 4, (uint8_t)(s)); // %s %s, %s, %s
                 else
-                    secbuf_emit32le(cg_sec, arm64_asr_imm(sf, CG_ARM_REG(r_lhs), CG_ARM_REG(r_lhs), s)); // %s $%d, %s\n", node->kind == ND_SHL ? "shl" : (use_unsigned(node->ty) ? "shr" : "sar
+                    asm_sar_imm(cg_sec, r_lhs, sf=="1" ? 8 : 4, (uint8_t)(s)); // %s $%d, %s\n", node->kind == ND_SHL ? "shl" : (use_unsigned(node->ty) ? "shr" : "sar
             }
         } else {
             int r_rhs = gen(node->rhs);
             if (node->kind == ND_SHL)
-                secbuf_emit32le(cg_sec, arm64_lsl_reg(sf, CG_ARM_REG(r_lhs), CG_ARM_REG(r_lhs), CG_ARM_REG(r_rhs))); // movl %s, %%ecx
+                asm_shl_cl(cg_sec, r_lhs, sf=="1" ? 8 : 4)); // movl %s, %%ecx
             else if (use_unsigned(node->ty))
-                secbuf_emit32le(cg_sec, arm64_lsr_reg(sf, CG_ARM_REG(r_lhs), CG_ARM_REG(r_lhs), CG_ARM_REG(r_rhs))); // %s %%cl, %s\n", node->kind == ND_SHL ? "shl" : (use_unsigned(node->ty) ? "shr" : "sar
+                asm_shr_cl(cg_sec, r_lhs, sf=="1" ? 8 : 4)); // %s %%cl, %s\n", node->kind == ND_SHL ? "shl" : (use_unsigned(node->ty) ? "shr" : "sar
             else
-                secbuf_emit32le(cg_sec, arm64_asr_reg(sf, CG_ARM_REG(r_lhs), CG_ARM_REG(r_lhs), CG_ARM_REG(r_rhs))); // mov %s, #0
+                asm_sar_cl(cg_sec, r_lhs, sf=="1" ? 8 : 4)); // mov %s, #0
             free_reg(r_rhs);
         }
 #else

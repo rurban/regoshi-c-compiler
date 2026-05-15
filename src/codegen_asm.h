@@ -959,6 +959,86 @@ static size_t asm_sub_x0_fp_x16(SecBuf *s) {
     secbuf_emit32le(s, arm64_sub_reg(1, 0, 29, 16, ARM64_LSL, 0));
     return s->len - off;
 }
+static size_t asm_alloca_add(SecBuf *s) {
+    size_t off = s->len;
+    secbuf_emit32le(s, arm64_add_imm(1, 0, 0, 15, 0));
+    return s->len - off;
+}
+static size_t asm_alloca_and(SecBuf *s) {
+    size_t off = s->len;
+    secbuf_emit32le(s, arm64_and_imm(1, 0, 0, ~15ULL));
+    return s->len - off;
+}
+static size_t asm_alloca_sub_sp_r0(SecBuf *s) {
+    size_t off = s->len;
+    secbuf_emit32le(s, arm64_sub_reg(1, 31, 31, 0, ARM64_LSL, 0));
+    return s->len - off;
+}
+static size_t asm_alloca_mov_r0_sp(SecBuf *s) {
+    size_t off = s->len;
+    secbuf_emit32le(s, arm64_add_reg(1, 0, 31, 0, ARM64_LSL, 0));
+    return s->len - off;
+}
+static size_t asm_vla_mov_sp_x16(SecBuf *s) {
+    size_t off = s->len;
+    secbuf_emit32le(s, arm64_add_reg(1, 31, 31, 16, ARM64_LSL, 0));
+    return s->len - off;
+}
+static size_t asm_str_fp_reg(SecBuf *s, int reg) {
+    size_t off = s->len;
+    secbuf_emit32le(s, arm64_str_imm(1, 29, CG_ARM_REG(reg), 0, false));
+    return s->len - off;
+}
+static size_t asm_ldr_fp_reg(SecBuf *s, int reg) {
+    size_t off = s->len;
+    secbuf_emit32le(s, arm64_ldr_imm(1, 29, CG_ARM_REG(reg), 0, false));
+    return s->len - off;
+}
+static size_t asm_ldur_x16_fp_minus(SecBuf *s, int off) {
+    size_t o = s->len;
+    secbuf_emit32le(s, arm64_ldur(1, 16, 29, -off));
+    return s->len - o;
+}
+static size_t asm_sub_x17_fp_imm(SecBuf *s, int imm) {
+    size_t o = s->len;
+    secbuf_emit32le(s, arm64_sub_imm(1, 17, 29, imm, 0));
+    return s->len - o;
+}
+static size_t asm_sub_x17_fp_x17(SecBuf *s) {
+    size_t o = s->len;
+    secbuf_emit32le(s, arm64_sub_reg(1, 17, 29, 17, ARM64_LSL, 0));
+    return s->len - o;
+}
+static size_t asm_ldr_x16_x17(SecBuf *s) {
+    size_t o = s->len;
+    secbuf_emit32le(s, arm64_ldr_uoff(1, 16, 17, 0));
+    return s->len - o;
+}
+static size_t asm_str_x16_x17(SecBuf *s) {
+    size_t o = s->len;
+    secbuf_emit32le(s, arm64_str_uoff(1, 16, 17, 0));
+    return s->len - o;
+}
+static size_t asm_sub_x16_fp_x17(SecBuf *s) {
+    size_t o = s->len;
+    secbuf_emit32le(s, arm64_sub_reg(1, 16, 29, 17, ARM64_LSL, 0));
+    return s->len - o;
+}
+static size_t asm_stur_x16_fp_minus(SecBuf *s, int off) {
+    size_t o = s->len;
+    secbuf_emit32le(s, arm64_stur(1, 16, 29, -off));
+    return s->len - o;
+}
+static size_t asm_asr_x17_63(SecBuf *s, int src) {
+    size_t o = s->len;
+    secbuf_emit32le(s, arm64_asr_imm(1, 17, CG_ARM_REG(src), 63));
+    return s->len - o;
+}
+static size_t asm_cmn_imm(SecBuf *s, int r, int sf, int imm) {
+    size_t o = s->len;
+    secbuf_emit32le(s, arm64_subs_imm(sf, 31, CG_ARM_REG(r), -imm, 0));
+    return s->len - o;
+}
 #endif
 
 // Use codegen register indices (0..7) for these wrappers
