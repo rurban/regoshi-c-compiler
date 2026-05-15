@@ -948,6 +948,18 @@ static size_t asm_movabs_phy(SecBuf *s, X86Reg reg, uint64_t val) {
     asm_record(ASM_MOV_RI, off, s->len - off, (int)reg, -1, -1, 8, (int64_t)val, 0, NULL, 0, -1, false);
     return s->len - off;
 }
+#ifdef ARCH_ARM64
+static size_t asm_add_x0_fp_imm(SecBuf *s, int imm) {
+    size_t off = s->len;
+    secbuf_emit32le(s, arm64_add_imm(1, 0, 29, imm, 0));
+    return s->len - off;
+}
+static size_t asm_sub_x0_fp_x16(SecBuf *s) {
+    size_t off = s->len;
+    secbuf_emit32le(s, arm64_sub_reg(1, 0, 29, 16, ARM64_LSL, 0));
+    return s->len - off;
+}
+#endif
 
 // Use codegen register indices (0..7) for these wrappers
 static size_t asm_mov_rbp_reg(SecBuf *s, int r, int size, int offset) {
