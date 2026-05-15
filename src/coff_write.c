@@ -257,6 +257,13 @@ static void patch_addends(uint8_t *buf, size_t len,
                           ObjReloc *relocs, int reloc_count) {
     for (int i = 0; i < reloc_count; i++) {
         ObjReloc *r = &relocs[i];
+        // Skip PC-relative relocations: the in-place addend is 0 (placeholder)
+        // and the linker will compute the correct displacement.
+        if (r->type == R_X86_64_PC32 || r->type == R_X86_64_PLT32 ||
+            r->type == R_X86_64_GOTPCREL || r->type == R_X86_64_PC64 ||
+            r->type == R_AARCH64_CALL26 || r->type == R_AARCH64_JUMP26 ||
+            r->type == R_AARCH64_ADR_PREL_PG_HI21)
+            continue;
         uint64_t off = r->offset;
         int width = addend_byte_width(r->type);
         if (off + (size_t)width > len)
@@ -426,6 +433,14 @@ int coff_write(ObjFile *obj, const char *path) {
         symarr_push(&syms, es);
     }
 
+    // Build coff_sym_idx: syms.data index → COFF symbol table index (counting aux)
+    int *coff_sym_idx = calloc((size_t)syms.len, sizeof(int));
+    int ci = 0;
+    for (int j = 0; j < syms.len; j++) {
+        coff_sym_idx[j] = ci;
+        ci += 1 + syms.data[j].num_aux;
+    }
+
     // -------------------------------------------------------------------
     // Compute file layout
     // -------------------------------------------------------------------
@@ -494,7 +509,8 @@ int coff_write(ObjFile *obj, const char *path) {
     // -------------------------------------------------------------------
     FILE *f = fopen(path, "wb");
     if (!f) {
-        free(sym_map);
+    free(sym_map);
+    free(coff_sym_idx);
         free(syms.data);
         free(strtab.data);
         free(text_copy);
@@ -544,7 +560,8 @@ int coff_write(ObjFile *obj, const char *path) {
     for (int i = 0; i < num_sec; i++) {
         for (int j = 0; j < sections[i].reloc_count; j++) {
             ObjReloc *r = &sections[i].relocs[j];
-            int sym_idx = (r->sym_idx >= 0) ? sym_map[r->sym_idx] : 0;
+            int sym_idx = (r->sym_idx >= 0 && r->sym_idx < obj->sym_count)
+                ? coff_sym_idx[sym_map[r->sym_idx]] : 0;
             uint16_t coff_type;
 #ifdef ARCH_ARM64
             coff_type = reloc_to_coff_arm64(r->type);
@@ -572,6 +589,7 @@ int coff_write(ObjFile *obj, const char *path) {
     fclose(f);
 
     free(sym_map);
+    free(coff_sym_idx);
     free(syms.data);
     free(strtab.data);
     free(text_copy);
