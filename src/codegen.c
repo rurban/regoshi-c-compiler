@@ -4544,9 +4544,9 @@ static int gen(Node *node) {
         }
         emit_cleanup_range(node->cleanup_begin, node->cleanup_end);
 #ifdef ARCH_ARM64
-        printf("  b .L.return.%s\n", current_fn);
+        printf("  b %s\n", asm_sym_name(format(".L.return.%s", current_fn)));
 #else
-        printf("  jmp .L.return.%s\n", current_fn);
+        printf("  jmp %s\n", asm_sym_name(format(".L.return.%s", current_fn)));
 #endif
         return -1;
     }
@@ -5047,9 +5047,9 @@ static int gen(Node *node) {
         emit_cleanup_range(node->cleanup_begin, node->cleanup_end);
         emit_vla_dealloc(node->cleanup_begin, node->cleanup_end);
 #ifdef ARCH_ARM64
-        printf("  b .L.label.%s.%s\n", current_fn, node->label_name);
+        printf("  b %s\n", asm_sym_name(format(".L.label.%s.%s", current_fn, node->label_name)));
 #else
-        printf("  jmp .L.label.%s.%s\n", current_fn, node->label_name);
+        printf("  jmp %s\n", asm_sym_name(format(".L.label.%s.%s", current_fn, node->label_name)));
 #endif
         return -1;
     case ND_GOTO_IND: {
@@ -5063,15 +5063,15 @@ static int gen(Node *node) {
         return -1;
     }
     case ND_LABEL: {
-        printf(".L.label.%s.%s:\n", current_fn, node->label_name);
+        printf("%s:\n", asm_sym_name(format(".L.label.%s.%s", current_fn, node->label_name)));
         return gen(node->lhs);
     }
     case ND_LABEL_VAL: {
         int r = alloc_reg();
 #ifdef ARCH_ARM64
-        emit_adrp_add(reg64[r], format(".L.label.%s.%s", current_fn, node->label_name));
+        emit_adrp_add(reg64[r], asm_sym_name(format(".L.label.%s.%s", current_fn, node->label_name)));
 #else
-        printf("  lea .L.label.%s.%s(%%rip), %s\n", current_fn, node->label_name, reg64[r]);
+        printf("  lea %s(%%rip), %s\n", asm_sym_name(format(".L.label.%s.%s", current_fn, node->label_name)), reg64[r]);
 #endif
         return r;
     }
@@ -7788,7 +7788,7 @@ void codegen(Program *prog) {
         free(body_text);
 
         // === ARM64 epilogue ===
-        printf(".L.return.%s:\n", fn->name);
+        printf("%s:\n", asm_sym_name(format(".L.return.%s", fn->name)));
 
         // Cleanup calls
         bool has_cleanup = false;
@@ -7972,7 +7972,7 @@ void codegen(Program *prog) {
         free(body_text);
 
         // Emit epilogue
-        printf(".L.return.%s:\n", fn->name);
+        printf("%s:\n", asm_sym_name(format(".L.return.%s", fn->name)));
 
         // Emit __cleanup__ calls (LIFO: locals list is in reverse declaration order)
         bool has_cleanup = false;
