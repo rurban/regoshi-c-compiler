@@ -30,6 +30,7 @@ struct OutPath {
 };
 static OutPath *out_paths;
 static OutPath *obj_paths;
+static OutPath *input_paths;
 
 OutPath *reverse(OutPath *head) {
     OutPath *prev = NULL;
@@ -301,179 +302,187 @@ int main(int argc, char **argv) {
         } else if (argv[i][0] == '-' && argv[i][1] != '\0') {
             fprintf(stderr, "rcc: warning: ignored unknown option %s\n", argv[i]);
         } else {
-            in_path = argv[i];
-
-            // Default output for -c without -o: <basename>.o
-            if (opt_c && !opt_o) {
-                char *base = path_basename(in_path);
-                char *dot = strrchr(base, '.');
-                if (dot)
-                    out_path = format("%.*s.o", (int)(dot - base), base);
-                else
-                    out_path = format("%s.o", base);
-            }
-
-            // Object files skip compilation and go directly to linker input
-            size_t in_len = strlen(in_path);
-            if ((in_len >= 2 && !strcmp(in_path + in_len - 2, ".o")) || (in_len >= 3 && !strcmp(in_path + in_len - 3, ".so"))
-#ifdef __APPLE__
-                || (in_len >= 6 && !strcmp(in_path + in_len - 6, ".dylib"))
-#endif
-#ifdef _WIN32
-                || (in_len >= 4 && !strcmp(in_path + in_len - 4, ".obj")) || (in_len >= 4 && !strcmp(in_path + in_len - 4, ".dll"))
-#endif
-            ) {
-                OutPath *p = arena_alloc(sizeof(OutPath));
-                p->path = in_path;
-                p->next = obj_paths;
-                obj_paths = p;
-                continue;
-            }
-
-            char *asm_path = opt_S
-                ? opt_o ? out_path : format("%s.s", path_basename(in_path))
-                : format("rcc_tmp_%d_%d_%s.s", _getpid(), i, path_basename(in_path));
-
-            // Tokenize and Parse
-            char *contents = read_file(in_path);
-
-            // Always preprocess - opt_E just outputs preprocessed result
-            uint64_t t0 = opt_time ? now_us() : 0;
-            char *preprocessed = preprocess(in_path, contents);
-            if (opt_time)
-                fprintf(stderr, "  preprocess  %s: %6lu us\n", in_path,
-                        (unsigned long)(now_us() - t0));
-
-            if (opt_E) {
-                printf("%s", preprocessed);
-                continue;
-            }
-
-            t0 = opt_time ? now_us() : 0;
-            Token *tok = tokenize(in_path, preprocessed);
-            if (opt_time)
-                fprintf(stderr, "  lex         %s: %6lu us\n", in_path,
-                        (unsigned long)(now_us() - t0));
-
-            t0 = opt_time ? now_us() : 0;
-            Program *prog = parse(tok);
-            prog->in_path = in_path;
-            if (opt_time)
-                fprintf(stderr, "  parse       %s: %6lu us\n", in_path,
-                        (unsigned long)(now_us() - t0));
-
-            if (opt_fdump_ast)
-                dump_ast(prog);
-
-            // Type system / Semantic checks
-            t0 = opt_time ? now_us() : 0;
-#ifdef DEBUG
-            TLItem *tfast = prog->items;
-#endif
-            for (TLItem *item = prog->items; item; item = item->next) {
-#ifdef DEBUG
-                if (tfast) {
-                    tfast = tfast->next;
-                    if (tfast) tfast = tfast->next;
-                }
-                if (tfast && item == tfast) {
-                    fprintf(stderr, "  typecheck   %s: CYCLE in prog->items chain!\n", in_path);
-                    break;
-                }
-#endif
-                if (item->kind != TL_FUNC)
-                    continue;
-                Node *n = item->fn->body;
-                // try to find a cycle in the linked list. switch case_next looped
-#ifdef DEBUG
-                uint64_t f0 = opt_time ? now_us() : 0;
-                uint64_t ncount = 0;
-                Node *fast = n;
-#endif
-                while (n) {
-#ifdef DEBUG
-                    if (opt_time && opt_v && (ncount % 10) == 0) {
-                        fprintf(stderr, "  typecheck   %s: %-20s %5lu nodes...\n", in_path,
-                                item->fn->name, (unsigned long)ncount);
-                        fflush(stderr);
-                    }
-#endif
-                    check_type(n);
-                    n = n->next;
-#ifdef DEBUG
-                    ncount++;
-                    if (fast) {
-                        fast = fast->next;
-                        if (fast) fast = fast->next;
-                    }
-                    if (fast && n && n == fast) {
-                        fprintf(stderr, "  typecheck   %s: CYCLE in %s body next chain!\n",
-                                in_path, item->fn->name);
-                        break;
-                    }
-#endif
-                }
-#ifdef DEBUG
-                fflush(stderr);
-                if (opt_time && opt_v)
-                    fprintf(stderr, "  typecheck   %s: %-20s %5lu nodes %6lu us\n", in_path,
-                            item->fn->name, (unsigned long)ncount,
-                            (unsigned long)(now_us() - f0));
-#endif
-            }
-            //fflush(stderr);
-            if (opt_time)
-                fprintf(stderr, "  typecheck   %s: %6lu us\n", in_path,
-                        (unsigned long)(now_us() - t0));
-            fflush(stderr);
-
-            // CTFE runs only with -O1; peephole skipped with -O0.
-            if (opt_O1) {
-                t0 = opt_time ? now_us() : 0;
-                optimize(prog);
-                if (opt_time)
-                    fprintf(stderr, "  opt(CTFE)   %s: %6lu us\n", in_path,
-                            (unsigned long)(now_us() - t0));
-            }
-
-            if (!opt_dryrun) {
-                // Redirect stdout to our assembly file (append for multi-file)
-                if (!freopen(asm_path, first_input ? "w" : "a", stdout)) {
-                    fprintf(stderr, "rcc: error: cannot open output file %s\n", asm_path);
-                    return 1;
-                }
-                first_input = false;
-                // Code generation (prints assembly to stdout, which is now asm_path)
-                time_peep_us = 0;
-                t0 = opt_time ? now_us() : 0;
-                codegen(prog);
-                if (opt_time) {
-                    uint64_t cg_total = now_us() - t0;
-                    fprintf(stderr, "  codegen     %s: %6lu us\n", in_path,
-                            (unsigned long)(cg_total - time_peep_us));
-                    if (!opt_O0)
-                        fprintf(stderr, "  peephole    %s: %6lu us\n", in_path,
-                                (unsigned long)time_peep_us);
-                }
-                fflush(stdout);
-                // Restore stdout to console if we want to print further, but we are done.
-                fclose(stdout);
-            } else {
-                first_input = false;
-            }
-
-            if (!opt_S && !opt_dryrun) {
-                OutPath *p = arena_alloc(sizeof(OutPath));
-                p->path = asm_path;
-                p->next = out_paths;
-                out_paths = p;
-            }
+            OutPath *p = arena_alloc(sizeof(OutPath));
+            p->path = argv[i];
+            p->next = input_paths;
+            input_paths = p;
         }
     }
 
-    if (!in_path) {
+    if (!input_paths) {
         fprintf(stderr, "rcc: fatal error: no input files\n");
         return 1;
+    }
+
+    int file_index = 0;
+    for (OutPath *ip = reverse(input_paths); ip; ip = ip->next, file_index++) {
+        in_path = ip->path;
+
+        // Default output for -c without -o: <basename>.o
+        if (opt_c && !opt_o) {
+            char *base = path_basename(in_path);
+            char *dot = strrchr(base, '.');
+            if (dot)
+                out_path = format("%.*s.o", (int)(dot - base), base);
+            else
+                out_path = format("%s.o", base);
+        }
+
+        // Object files skip compilation and go directly to linker input
+        size_t in_len = strlen(in_path);
+        if ((in_len >= 2 && !strcmp(in_path + in_len - 2, ".o")) || (in_len >= 3 && !strcmp(in_path + in_len - 3, ".so"))
+#ifdef __APPLE__
+            || (in_len >= 6 && !strcmp(in_path + in_len - 6, ".dylib"))
+#endif
+#ifdef _WIN32
+            || (in_len >= 4 && !strcmp(in_path + in_len - 4, ".obj")) || (in_len >= 4 && !strcmp(in_path + in_len - 4, ".dll"))
+#endif
+        ) {
+            OutPath *p = arena_alloc(sizeof(OutPath));
+            p->path = in_path;
+            p->next = obj_paths;
+            obj_paths = p;
+            continue;
+        }
+
+        char *asm_path = opt_S
+            ? opt_o ? out_path : format("%s.s", path_basename(in_path))
+            : format("rcc_tmp_%d_%d_%s.s", _getpid(), file_index, path_basename(in_path));
+
+        // Tokenize and Parse
+        char *contents = read_file(in_path);
+
+        // Always preprocess - opt_E just outputs preprocessed result
+        uint64_t t0 = opt_time ? now_us() : 0;
+        char *preprocessed = preprocess(in_path, contents);
+        if (opt_time)
+            fprintf(stderr, "  preprocess  %s: %6lu us\n", in_path,
+                    (unsigned long)(now_us() - t0));
+
+        if (opt_E) {
+            printf("%s", preprocessed);
+            continue;
+        }
+
+        t0 = opt_time ? now_us() : 0;
+        Token *tok = tokenize(in_path, preprocessed);
+        if (opt_time)
+            fprintf(stderr, "  lex         %s: %6lu us\n", in_path,
+                    (unsigned long)(now_us() - t0));
+
+        t0 = opt_time ? now_us() : 0;
+        Program *prog = parse(tok);
+        prog->in_path = in_path;
+        if (opt_time)
+            fprintf(stderr, "  parse       %s: %6lu us\n", in_path,
+                    (unsigned long)(now_us() - t0));
+
+        if (opt_fdump_ast)
+            dump_ast(prog);
+
+        // Type system / Semantic checks
+        t0 = opt_time ? now_us() : 0;
+#ifdef DEBUG
+        TLItem *tfast = prog->items;
+#endif
+        for (TLItem *item = prog->items; item; item = item->next) {
+#ifdef DEBUG
+            if (tfast) {
+                tfast = tfast->next;
+                if (tfast) tfast = tfast->next;
+            }
+            if (tfast && item == tfast) {
+                fprintf(stderr, "  typecheck   %s: CYCLE in prog->items chain!\n", in_path);
+                break;
+            }
+#endif
+            if (item->kind != TL_FUNC)
+                continue;
+            Node *n = item->fn->body;
+            // try to find a cycle in the linked list. switch case_next looped
+#ifdef DEBUG
+            uint64_t f0 = opt_time ? now_us() : 0;
+            uint64_t ncount = 0;
+            Node *fast = n;
+#endif
+            while (n) {
+#ifdef DEBUG
+                if (opt_time && opt_v && (ncount % 10) == 0) {
+                    fprintf(stderr, "  typecheck   %s: %-20s %5lu nodes...\n", in_path,
+                            item->fn->name, (unsigned long)ncount);
+                    fflush(stderr);
+                }
+#endif
+                check_type(n);
+                n = n->next;
+#ifdef DEBUG
+                ncount++;
+                if (fast) {
+                    fast = fast->next;
+                    if (fast) fast = fast->next;
+                }
+                if (fast && n && n == fast) {
+                    fprintf(stderr, "  typecheck   %s: CYCLE in %s body next chain!\n",
+                            in_path, item->fn->name);
+                    break;
+                }
+#endif
+            }
+#ifdef DEBUG
+            fflush(stderr);
+            if (opt_time && opt_v)
+                fprintf(stderr, "  typecheck   %s: %-20s %5lu nodes %6lu us\n", in_path,
+                        item->fn->name, (unsigned long)ncount,
+                        (unsigned long)(now_us() - f0));
+#endif
+        }
+        //fflush(stderr);
+        if (opt_time)
+            fprintf(stderr, "  typecheck   %s: %6lu us\n", in_path,
+                    (unsigned long)(now_us() - t0));
+        fflush(stderr);
+
+        // CTFE runs only with -O1; peephole skipped with -O0.
+        if (opt_O1) {
+            t0 = opt_time ? now_us() : 0;
+            optimize(prog);
+            if (opt_time)
+                fprintf(stderr, "  opt(CTFE)   %s: %6lu us\n", in_path,
+                        (unsigned long)(now_us() - t0));
+        }
+
+        if (!opt_dryrun) {
+            // Redirect stdout to our assembly file (append for multi-file)
+            if (!freopen(asm_path, first_input ? "w" : "a", stdout)) {
+                fprintf(stderr, "rcc: error: cannot open output file %s\n", asm_path);
+                return 1;
+            }
+            first_input = false;
+            // Code generation (prints assembly to stdout, which is now asm_path)
+            time_peep_us = 0;
+            t0 = opt_time ? now_us() : 0;
+            codegen(prog);
+            if (opt_time) {
+                uint64_t cg_total = now_us() - t0;
+                fprintf(stderr, "  codegen     %s: %6lu us\n", in_path,
+                        (unsigned long)(cg_total - time_peep_us));
+                if (!opt_O0)
+                    fprintf(stderr, "  peephole    %s: %6lu us\n", in_path,
+                            (unsigned long)time_peep_us);
+            }
+            fflush(stdout);
+            // Restore stdout to console if we want to print further, but we are done.
+            fclose(stdout);
+        } else {
+            first_input = false;
+        }
+
+        if (!opt_S && !opt_dryrun) {
+            OutPath *p = arena_alloc(sizeof(OutPath));
+            p->path = asm_path;
+            p->next = out_paths;
+            out_paths = p;
+        }
     }
 
     // Assemble / Link if not just compiling to assembly or preprocessing

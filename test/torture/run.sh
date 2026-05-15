@@ -172,6 +172,7 @@ if [ -n "$1" ]; then
         *)   run_test "$1.c" ;;
     esac
 else
+    LC_COLLATE=C
     for f in *.c; do
         run_test "$f"
     done
