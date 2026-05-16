@@ -476,18 +476,32 @@ static void emit_vla_dealloc(LVar *begin, LVar *end) {
 static void emit_alloca(void) {
     cg_global_label("__rcc_alloca");
 #ifdef ARCH_ARM64
+    // alloca(size): x0=size → round up, sub sp, return new sp
     asm_add_x0_x0_imm(cg_sec, 15); // add x0, x0, #15
-    asm_and_x0_x0_imm(cg_sec, ~16ULL); // and x0, x0, #~16
+    asm_and_x0_x0_imm(cg_sec, (uint64_t)(int64_t)(-16)); // and x0, x0, #-16
     asm_sub_sp_sp_x0(cg_sec); // sub sp, sp, x0
     asm_mov_x0_sp(cg_sec); // mov x0, sp
     asm_ret(cg_sec); // ret
 #else
-    x86_mov_rr(cg_sec, 8, X86_RAX, X86_RDI); // .Lalloca2:\n  subq %%rax, %%rsp\n  movq %%rsp, %%rax\n.Lalloca3:\n  pushq %%rdx\n  ret
-    x86_add_ri(cg_sec, 8, X86_RAX, 15); // \n%s:\n  popq %%rdx\n", sym_name("__rcc_alloca
-    x86_and_ri(cg_sec, 8, X86_RAX, -16); // movq %%rcx, %%rax
-    x86_sub_rr(cg_sec, 8, X86_RSP, X86_RAX); // movq %%rdi, %%rax
-    x86_mov_rr(cg_sec, 8, X86_RAX, X86_RSP); // addq $15, %%rax\n  andq $-16, %%rax\n  jz .Lalloca3
-    x86_ret(cg_sec); // .Lalloca1:\n  cmpq $4096, %%rax\n  jb .Lalloca2\n  testq %%rax, -4096(%%rsp)\n  subq $4096, %%rsp\n  subq $4096, %%rax\n  jmp .Lalloca1
+    // alloca via call: return addr was pushed; pop it, adjust rsp, push back
+    asm_pop_phy(cg_sec, X86_RDX); // popq %rdx  (save return addr)
+#ifdef _WIN32
+    x86_mov_rr(cg_sec, 8, X86_RAX, X86_RCX); // movq %rcx, %rax  (Windows: arg in rcx)
+#else
+    x86_mov_rr(cg_sec, 8, X86_RAX, X86_RDI); // movq %rdi, %rax  (Linux: arg in rdi)
+#endif
+    x86_add_ri(cg_sec, 8, X86_RAX, 15); // addq $15, %rax
+    x86_and_ri(cg_sec, 8, X86_RAX, -16); // andq $-16, %rax
+    {
+        int c = ++rcc_label_count;
+        size_t jz_off = asm_jcc_label(cg_sec, X86_E); // jz .Lalloca_end (size=0)
+        x86_sub_rr(cg_sec, 8, X86_RSP, X86_RAX); // subq %rax, %rsp
+        x86_mov_rr(cg_sec, 8, X86_RAX, X86_RSP); // movq %rsp, %rax
+        asm_fixup_add(cg_sec, jz_off, format(".Lalloca_end.%d", c), 1);
+        cg_def_label(format(".Lalloca_end.%d", c));
+    }
+    asm_push_phy(cg_sec, X86_RDX); // pushq %rdx  (restore return addr)
+    asm_ret(cg_sec); // ret
 #endif
 }
 
