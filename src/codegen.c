@@ -1668,25 +1668,13 @@ static int gen_funcall(Node *node, int hidden_ret_reg) {
             continue;
         }
         if (arg_is_float[i] && arg_fp_idx[i] >= 0) {
-            (void)0 /* FIXME: fmov */;
-            // Convert double->float only if callee param is known float,
-            // not for variadic args (which stay promoted to double)
-            bool var_double = (is_variadic && i >= named_count) ||
-                (fn_type && (fn_type->is_oldstyle || !fn_type->param_types));
-            if (!var_double) {
-                if (argv[i]->ty->size == 4)
-                    (void)0 /* FIXME: float op */;
-                else if (fn_type && fn_type->param_types && i < named_count) {
-                    Type *pt = fn_type->param_types;
-                    for (int j = 0; j < i && pt; j++) pt = pt->param_next;
-                    if (pt && pt->kind == TY_FLOAT)
-                        (void)0 /* FIXME: float op */;
-                }
-            }
+            // Move float bits from virtual int reg to FP arg register
+            asm_fmov_i2f(cg_sec, arg_fp_idx[i], arg_regs[i], 1); // fmov d{fp_idx}, x{arg_reg}
+            // For variadic float args, also pass in GP register (printf-style)
             if (arg_gp_idx[i] >= 0)
-                secbuf_emit32le(cg_sec, arm64_add_reg(1, arg_gp_idx[i], 31, CG_ARM_REG(arg_regs[i]), ARM64_LSL, 0)); // fmov %s, %s
+                secbuf_emit32le(cg_sec, arm64_add_reg(1, arg_gp_idx[i], 31, CG_ARM_REG(arg_regs[i]), ARM64_LSL, 0)); // mov x{gp_idx}, x{arg_reg}
         } else if (arg_is_float[i] && arg_gp_idx[i] >= 0) {
-            secbuf_emit32le(cg_sec, arm64_add_reg(1, arg_gp_idx[i], 31, CG_ARM_REG(arg_regs[i]), ARM64_LSL, 0)); // fcvt s%d, %s
+            secbuf_emit32le(cg_sec, arm64_add_reg(1, arg_gp_idx[i], 31, CG_ARM_REG(arg_regs[i]), ARM64_LSL, 0)); // mov x{gp_idx}, x{arg_reg}
         } else if (arg_sizes[i] == 1 || arg_sizes[i] == 2) {
             secbuf_emit32le(cg_sec, arm64_add_reg(1, arg_gp_idx[i], 31, CG_ARM_REG(arg_regs[i]), ARM64_LSL, 0)); // fcvt s%d, %s
         } else if (arg_sizes[i] == 4) {
@@ -1752,8 +1740,8 @@ static int gen_funcall(Node *node, int hidden_ret_reg) {
     int r = alloc_reg();
     if (node->ty && is_flonum(node->ty)) {
         if (node->ty->kind == TY_FLOAT)
-            (void)0 /* arm64 fcvt d0,s0 */;
-        (void)0 /* FIXME: fmov */;
+            asm_fcvt(cg_sec, 3, 0, 0, 0); // fcvt d0, s0 (widen float return to double)
+        asm_fmov_f2i(cg_sec, r, 0, 1); // fmov x{r}, d0 (store float return as int bits)
     } else {
         int sz = node->ty ? (node->ty->size < 8 ? 4 : 8) : 8;
         asm_mov_retval(cg_sec, r, sz); // mov x{r}, x0 (return value)
@@ -4275,13 +4263,13 @@ static int gen(Node *node) {
         Type *to = node->ty;
         if (is_flonum(from) && is_integer(to)) {
 #ifdef ARCH_ARM64
-            (void)0 /* FIXME: fmov */;
+            asm_fmov_i2f(cg_sec, 0, r, 1); // fmov d0, x{r}
             {
-                const char *dst = (to->size >= 8) ? reg64[r] : reg32[r];
+                int sf = (to->size == 8) ? 1 : 0;
                 if (to->is_unsigned)
-                    (void)0 /* FIXME: float op */;
+                    secbuf_emit32le(cg_sec, arm64_fcvtzu(sf, 1, CG_ARM_REG(r), 0)); // fcvtzu w/x{r}, d0
                 else
-                    (void)0 /* FIXME: float op */;
+                    asm_cvttsd2si(cg_sec, r, to->size); // fcvtzs w/x{r}, d0
             }
 #else
             (void)0 /* TODO: movq to/from xmm */;
@@ -4329,16 +4317,14 @@ static int gen(Node *node) {
 #endif
         } else if (is_integer(from) && is_flonum(to)) {
 #ifdef ARCH_ARM64
-            if (from->is_unsigned) {
-                (void)0 /* FIXME: float op */;
-            } else {
-                (void)0 /* FIXME: float op */;
-            }
-            if (to->kind == TY_FLOAT) {
-                (void)0 /* arm64 fcvt s0,d0 */;
-                (void)0 /* arm64 fcvt d0,s0 */;
-            }
-            (void)0 /* FIXME: fmov */;
+            int sf = (from->size == 8) ? 1 : 0;
+            if (from->is_unsigned)
+                asm_ucvtf(cg_sec, 0, r, sf); // ucvtf d0, w/x{r}
+            else
+                asm_scvtf(cg_sec, 0, r, sf); // scvtf d0, w/x{r}
+            if (to->kind == TY_FLOAT)
+                asm_fcvt(cg_sec, 1, 0, 0, 0); // fcvt s0, d0 then back to d0
+            asm_fmov_f2i(cg_sec, r, 0, 1); // fmov x{r}, d0 (store as int bits)
 #else
             if (from->is_unsigned && from->size == 8) {
                 int c = ++rcc_label_count;
@@ -6183,8 +6169,8 @@ static int gen(Node *node) {
     if (is_flonum(node->ty) && (node->kind == ND_ADD || node->kind == ND_SUB || node->kind == ND_MUL || node->kind == ND_DIV)) {
         int r_rhs = gen(node->rhs);
 #ifdef ARCH_ARM64
-        (void)0 /* FIXME: fmov */;
-        (void)0 /* FIXME: fmov */;
+        asm_fmov_i2f(cg_sec, 0, r_lhs, 1); // fmov d0, x{r_lhs}
+        asm_fmov_i2f(cg_sec, 1, r_rhs, 1); // fmov d1, x{r_rhs}
         char *inst = "";
         if (node->kind == ND_ADD) inst = "fadd";
         else if (node->kind == ND_SUB)
@@ -6239,8 +6225,8 @@ static int gen(Node *node) {
         node->lhs->ty && node->rhs->ty && (is_flonum(node->lhs->ty) || is_flonum(node->rhs->ty))) {
         int r_rhs = gen(node->rhs);
 #ifdef ARCH_ARM64
-        (void)0 /* FIXME: fmov */;
-        (void)0 /* FIXME: fmov */;
+        asm_fmov_i2f(cg_sec, 0, r_lhs, 1); // fmov d0, x{r_lhs}
+        asm_fmov_i2f(cg_sec, 1, r_rhs, 1); // fmov d1, x{r_rhs}
         asm_fcmp(cg_sec, 1); // fcmp d0, d1
         if (node->kind == ND_EQ) asm_cset(cg_sec, r_lhs, ARM64_EQ); // cset rr_lhs
         else if (node->kind == ND_NE)
@@ -8205,17 +8191,16 @@ struct ObjFile *codegen(Program *prog) {
         cg_set_section(SEC_RODATA);
         (void)0 /* directive: .balign */;
         for (FloatLit *fl = float_lits; fl; fl = fl->next) {
-            cg_def_label_sec(format(".LF%d", fl->id), SEC_RODATA); // \n.section .rdata,\"dr\"
+            cg_def_label_sec(format(".LF%d", fl->id), SEC_RODATA);
             if (fl->size == 4) {
                 float f = (float)fl->val;
-                unsigned int bits;
+                uint32_t bits;
                 memcpy(&bits, &f, 4);
-                (void)0 /* directive: .long */;
-                (void)0 /* directive: .long */;
+                secbuf_emit32le(cg_sec, bits);
             } else {
-                unsigned long long bits;
+                uint64_t bits;
                 memcpy(&bits, &fl->val, 8);
-                (void)0 /* directive: .quad */;
+                secbuf_emit64le(cg_sec, bits);
             }
         }
     }

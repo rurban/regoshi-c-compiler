@@ -481,11 +481,11 @@ uint32_t arm64_prfm_imm(int prfop, int rn, uint32_t uimm) {
 // ftype: 0=single, 1=double (most common for rcc)
 uint32_t arm64_fmov_f2i(int sf, int rd, int rn) {
     uint32_t ftype = sf ? 1u : 0u;
-    return 0x1e260000u | BITS(23, 22, ftype) | BITS(9, 5, rn) | BITS(4, 0, rd);
+    return SF(sf) | 0x1e260000u | BITS(23, 22, ftype) | BITS(9, 5, rn) | BITS(4, 0, rd);
 }
 uint32_t arm64_fmov_i2f(int sf, int rd, int rn) {
     uint32_t ftype = sf ? 1u : 0u;
-    return 0x1e270000u | BITS(23, 22, ftype) | BITS(9, 5, rn) | BITS(4, 0, rd);
+    return SF(sf) | 0x1e270000u | BITS(23, 22, ftype) | BITS(9, 5, rn) | BITS(4, 0, rd);
 }
 uint32_t arm64_fmov_imm(int ftype, int rd, uint8_t imm8) {
     return 0x1e201000u | BITS(23, 22, ftype) | BITS(20, 13, imm8) | BITS(4, 0, rd);
@@ -522,12 +522,22 @@ uint32_t arm64_fcvtzu(int sf, int ftype, int rd, int rn) {
     return SF(sf) | 0x1e390000u | BITS(23, 22, ftype) | BITS(9, 5, rn) | BITS(4, 0, rd);
 }
 
-// FP load/store: opc = 0→8bit, 1→16bit, 2→32bit, 3→64bit, 4→128bit
-uint32_t arm64_ldr_fp(int opc, int rt, int rn, uint32_t uimm) {
-    return 0x3d400000u | BITS(31, 30, opc >> 1) | BITS(23, 23, opc & 1) | BITS(21, 10, uimm) | BITS(9, 5, rn) | BITS(4, 0, rt);
+// FP load/store unsigned offset: sz=2→S(32bit), sz=3→D(64bit), sz=4→Q(128bit)
+// LDR S: 0xBD400000, LDR D: 0xFD400000, LDR Q: 0x3DC00000
+// uimm is byte offset; auto-scaled to element size
+uint32_t arm64_ldr_fp(int sz, int rt, int rn, uint32_t uimm) {
+    switch (sz) {
+    case 2: return 0xBD400000u | BITS(21, 10, uimm / 4) | BITS(9, 5, rn) | BITS(4, 0, rt);
+    case 3: return 0xFD400000u | BITS(21, 10, uimm / 8) | BITS(9, 5, rn) | BITS(4, 0, rt);
+    default: return 0x3DC00000u | BITS(21, 10, uimm / 16) | BITS(9, 5, rn) | BITS(4, 0, rt);
+    }
 }
-uint32_t arm64_str_fp(int opc, int rt, int rn, uint32_t uimm) {
-    return 0x3d000000u | BITS(31, 30, opc >> 1) | BITS(23, 23, opc & 1) | BITS(21, 10, uimm) | BITS(9, 5, rn) | BITS(4, 0, rt);
+uint32_t arm64_str_fp(int sz, int rt, int rn, uint32_t uimm) {
+    switch (sz) {
+    case 2: return 0xBD000000u | BITS(21, 10, uimm / 4) | BITS(9, 5, rn) | BITS(4, 0, rt);
+    case 3: return 0xFD000000u | BITS(21, 10, uimm / 8) | BITS(9, 5, rn) | BITS(4, 0, rt);
+    default: return 0x3D800000u | BITS(21, 10, uimm / 16) | BITS(9, 5, rn) | BITS(4, 0, rt);
+    }
 }
 uint32_t arm64_ldp_fp(int opc, int rt1, int rt2, int rn, int32_t imm7, bool pre, bool post) {
     uint32_t base = 0x2c400000u | BITS(31, 30, opc);
