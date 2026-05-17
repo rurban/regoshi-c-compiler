@@ -1176,7 +1176,7 @@ static int gen_funcall(Node *node, int hidden_ret_reg) {
                 int dst_r = gen(dst);
                 int v2_r = gen(v2);
                 int len_r = gen(len);
-                asm_mov_reg_reg(cg_sec, dst_r, r, 8); // mov rr -> rdst_r
+                asm_mov_reg_reg(cg_sec, r, dst_r, 8); // mov rdst_r -> rr (return dst)
 
                 asm_nop(cg_sec); // cld
                 asm_push_phy(cg_sec, X86_RDI); // pushq %%rdi
@@ -1239,7 +1239,7 @@ static int gen_funcall(Node *node, int hidden_ret_reg) {
                 free_reg(len_r);
 
                 int r = alloc_reg();
-                asm_mov_reg_reg(cg_sec, r, 0, 4); // subl %%ecx, %%eax
+                x86_mov_rr(cg_sec, 4, CG_X86_REG(r), X86_RAX); // subl %%ecx, %%eax
                 return r;
             }
         }
@@ -1256,9 +1256,9 @@ static int gen_funcall(Node *node, int hidden_ret_reg) {
                 x86_xor_rr(cg_sec, 1, X86_RAX, X86_RAX); // xorb %%al, %%al
                 x86_mov_ri(cg_sec, 8, X86_RCX, -1); // movq $-1, %%rcx
                 x86_repne_prefix(cg_sec); // repne scasb
-                secbuf_emit8(cg_sec, 0xae); /* scasb */ /* notq %%rcx\n */
-                (void)0 /* FIXME: notq */;
-                asm_dec(cg_sec, 1, 8); // decq %%rcx
+                secbuf_emit8(cg_sec, 0xae); /* scasb */
+                x86_not_r(cg_sec, 8, X86_RCX); // notq %%rcx
+                x86_dec_r(cg_sec, 8, X86_RCX); // decq %%rcx
                 x86_mov_rr(cg_sec, 8, X86_RAX, X86_RCX);
                 asm_pop_phy(cg_sec, X86_RCX); // popq %%rcx
                 asm_pop_phy(cg_sec, X86_RDI); // popq %%rdi
@@ -1266,7 +1266,7 @@ static int gen_funcall(Node *node, int hidden_ret_reg) {
                 free_reg(str_r);
 
                 int r = alloc_reg();
-                asm_mov_reg_reg(cg_sec, r, 0, 8); // mov r0 -> rr
+                x86_mov_rr(cg_sec, 8, CG_X86_REG(r), X86_RAX); // movq %%rcx, %%rax
                 return r;
             }
         }
@@ -1305,7 +1305,7 @@ static int gen_funcall(Node *node, int hidden_ret_reg) {
                 free_reg(r);
                 free_reg(r2);
                 int ret = alloc_reg();
-                asm_mov_reg_reg(cg_sec, ret, 0, 4); // movzbl (%%rsi), %%ecx
+                x86_mov_rr(cg_sec, 4, CG_X86_REG(ret), X86_RAX); // movzbl (%%rsi), %%ecx
                 return ret;
             }
         }
@@ -1324,7 +1324,7 @@ static int gen_funcall(Node *node, int hidden_ret_reg) {
                 cg_def_label(format(".L.strchr.%d", cl)); // .L.strchr_loop.%d:
                 x86_cmp_rm(cg_sec, 1, X86_RAX, x86_mem(X86_RDI, 0)); // cmpb %%al, (%%rdi)
                 asm_jcc_label(cg_sec, X86_E); // jcc label
-                x86_cmp_ri(cg_sec, 1, X86_RAX, 0); // cmpb $0, (%%rdi)
+                x86_cmp_mi(cg_sec, 1, x86_mem(X86_RDI, 0), 0); // cmpb $0, (%%rdi)
                 asm_jcc_label(cg_sec, X86_E); // jcc label
                 x86_inc_r(cg_sec, 8, X86_RDI); // incq %%rdi
                 asm_jmp_label(cg_sec); // jmp .L.strchr_loop.%d

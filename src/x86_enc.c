@@ -205,8 +205,21 @@ void x86_or_mi(SecBuf *s, int size, X86Mem dst, int32_t imm) {
     emit1(s, opsize(0x80, size));
     emit_mem(s, dst.base, dst.index, dst.scale, dst.disp, 1);
     if (size == 1) emit1(s, (uint8_t)imm);
-    else if (size == 2) secbuf_emit16le(s, (uint16_t)imm);
-    else emit_imm32(s, imm);
+    else if (size == 2)
+        secbuf_emit16le(s, (uint16_t)imm);
+    else
+        emit_imm32(s, imm);
+}
+void x86_cmp_mi(SecBuf *s, int size, X86Mem dst, int32_t imm) {
+    int needrex = (size == 8) || dst.base > 7 || (dst.index != X86_NOREG && dst.index > 7);
+    if (needrex) emit1(s, rex(size == 8, 0, dst.index > 7, dst.base > 7));
+    emit1(s, opsize(0x80, size));
+    emit_mem(s, dst.base, dst.index, dst.scale, dst.disp, 7);
+    if (size == 1) emit1(s, (uint8_t)imm);
+    else if (size == 2)
+        secbuf_emit16le(s, (uint16_t)imm);
+    else
+        emit_imm32(s, imm);
 }
 void x86_movsx(SecBuf *s, int dst_sz, int src_sz, X86Reg dst, X86Reg src) {
     if (dst_sz == 4 && src_sz == 1) {
