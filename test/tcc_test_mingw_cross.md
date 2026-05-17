@@ -129,7 +129,7 @@ Generated: May 2026
 | 124_atomic_counter          | EXEC_FAIL    | non-zero exit                 |
 | 125_atomic_misc             | MISMATCH     | Output differs                |
 | 126_bound_global            | SKIP         | Skipped                       |
-| 127_asm_goto                | MISMATCH     | Output does not match .expect |
+| 127_asm_goto                | EXEC_FAIL    | non-zero exit                 |
 | 128_run_atexit              | MISMATCH     | Output does not match .expect |
 | 129_scopes                  | EXEC_FAIL    | non-zero exit                 |
 | 130_large_argument          | MISMATCH     | Output does not match .expect |

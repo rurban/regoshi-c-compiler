@@ -406,7 +406,7 @@ static size_t asm_mov_reg_to_retval(SecBuf *s, int r, int size) {
 #endif
     return s->len - off;
 }
-static size_t asm_mov_imm(SecBuf *s, VReg r, int size, int64_t imm) {
+static size_t asm_mov_imm(SecBuf *s, int r, int size, int64_t imm) {
     size_t off = s->len;
 #ifdef ARCH_ARM64
     bool is_w = (size <= 4);
@@ -460,7 +460,7 @@ static size_t asm_movq_zero(SecBuf *s, VReg r) { return asm_xor_reg_reg(s, r, r,
 static size_t asm_movl_zero(SecBuf *s, VReg r) { return asm_xor_reg_reg(s, r, r, 4); }
 
 #ifdef ARCH_ARM64
-static size_t asm_movk(SecBuf *s, VReg r, int sf, uint16_t imm16, int shift) {
+static size_t asm_movk(SecBuf *s, int r, int sf, uint16_t imm16, int shift) {
     size_t off = s->len;
     secbuf_emit32le(s, arm64_movk(sf, CG_ARM_REG(r), imm16, shift));
     return 4;
@@ -536,7 +536,7 @@ static size_t asm_add_reg_reg(SecBuf *s, VReg dst, VReg src, int size) {
 #endif
 }
 
-static size_t asm_add_imm(SecBuf *s, VReg r, int size, int32_t imm) {
+static size_t asm_add_imm(SecBuf *s, int r, int size, int32_t imm) {
     size_t off = s->len;
 #ifdef ARCH_ARM64
     int sf = (size == 8) ? 1 : 0;
@@ -595,7 +595,7 @@ static size_t asm_sub_reg3(SecBuf *s, int dst, int src1, int src2, int size) {
 #endif
 }
 
-static size_t asm_sub_imm(SecBuf *s, VReg r, int size, int32_t imm) {
+static size_t asm_sub_imm(SecBuf *s, int r, int size, int32_t imm) {
     size_t off = s->len;
 #ifdef ARCH_ARM64
     int sf = (size == 8) ? 1 : 0;
@@ -1286,16 +1286,22 @@ static size_t asm_mov_sp_x16(SecBuf *s) {
     secbuf_emit32le(s, arm64_add_imm(1, 31, 16, 0, 0)); // mov sp, x16
     return s->len - off;
 }
-// str x16, [x{base}, #uimm8] — store x16 to virtual base reg + scaled offset
-static size_t asm_str_x16_reg_uoff(SecBuf *s, int base_r, int uimm8) {
+// mov x16, x{base}  — move virtual reg to x16 scratch
+static size_t asm_mov_x16_reg(SecBuf *s, int base_r) {
     size_t off = s->len;
-    secbuf_emit32le(s, arm64_str_uoff(3, 16, CG_ARM_REG(base_r), (uint32_t)(uimm8 / 8))); // str x16, [base, #uimm8]
+    secbuf_emit32le(s, arm64_orr_reg(1, 16, ARM64_XZR, CG_ARM_REG(base_r), ARM64_LSL, 0)); // mov x16, x{base_r}
+    return s->len - off;
+}
+// str x16, [x{base}, #uimm8] — store x16 to virtual base reg + scaled offset
+static size_t asm_str_x16_reg_uoff(SecBuf *s, int base_r, int byte_off) {
+    size_t off = s->len;
+    secbuf_emit32le(s, arm64_str_uoff(3, 16, CG_ARM_REG(base_r), (uint32_t)(byte_off / 8))); // str x16, [base, #byte_off]
     return s->len - off;
 }
 // ldr x16, [x{base}, #uimm8] — load x16 from virtual base reg + scaled offset
-static size_t asm_ldr_x16_reg_uoff(SecBuf *s, int base_r, int uimm8) {
+static size_t asm_ldr_x16_reg_uoff(SecBuf *s, int base_r, int byte_off) {
     size_t off = s->len;
-    secbuf_emit32le(s, arm64_ldr_uoff(3, 16, CG_ARM_REG(base_r), (uint32_t)(uimm8 / 8))); // ldr x16, [base, #uimm8]
+    secbuf_emit32le(s, arm64_ldr_uoff(3, 16, CG_ARM_REG(base_r), (uint32_t)(byte_off / 8))); // ldr x16, [base, #byte_off]
     return s->len - off;
 }
 static size_t asm_str_fp_reg(SecBuf *s, VReg reg) {
@@ -2146,12 +2152,10 @@ static size_t asm_xor_imm(SecBuf *s, VReg r, int size, int32_t imm) {
 #endif
     return s->len - off;
 }
-static size_t asm_movz(SecBuf *s, VReg r, int sf, uint16_t imm16, int shift) {
+static size_t asm_movz(SecBuf *s, int r, int sf, uint16_t imm16, int shift) {
     size_t off = s->len;
 #ifdef ARCH_ARM64
     secbuf_emit32le(s, arm64_movz(sf, CG_ARM_REG(r), imm16, shift));
-#else
-    asm_mov_imm(s, r, sf ? 8 : 4, (int64_t)(uint64_t)imm16 << shift);
 #endif
     return s->len - off;
 }
@@ -3109,9 +3113,6 @@ static size_t asm_ldr_x11_fp_off(SecBuf *s, int32_t spoff) {
 // strb w11, [x29, #-offset]  — store byte to frame
 static size_t asm_strb_w11_fp_neg(SecBuf *s, int32_t offset) {
     size_t off = s->len;
-    secbuf_emit32le(s, arm64_stur(0, 11, 29, -offset)); // sturb w11, [x29, #-offset]  (use stur w/ sf=0 for byte? No)
-    // Actually sturb is separate: use arm64_sturb
-    s->len = off;
     secbuf_emit32le(s, arm64_sturb(11, 29, -offset)); // sturb w11, [x29, #-offset]
     return s->len - off;
 }

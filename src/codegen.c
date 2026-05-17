@@ -478,7 +478,7 @@ static void emit_vla_dealloc(LVar *begin, LVar *end) {
     if (outermost_vla) {
 #ifdef ARCH_ARM64
         arm64_load_from_fp_minus(outermost_vla->offset, "x16");
-        asm_add_sp_sp_x16(cg_sec); // mov sp, x16
+        asm_mov_sp_x16(cg_sec); // mov sp, x16
 #else
         asm_mov_rbp_phyreg(cg_sec, X86_RSP, 8, outermost_vla->offset); // mov [rbp-outermost_vla->offse], X86_RSP
 #endif
@@ -2465,7 +2465,7 @@ static void emit_load(Type *ty, int r, int base, int off) {
 #ifdef ARCH_ARM64
     // ARM64: ldr wN,[xN] is CONSTRAINED UNPREDICTABLE — avoid base==dest
     if (arm64_base_conflicts(base, r)) {
-        asm_mov_reg_reg(cg_sec, ARM64_BASE_X16, base, 8); // mov x16, x{base}
+        asm_mov_x16_reg(cg_sec, base); // mov x16, x{base}
         base = ARM64_BASE_X16;
     }
     if (off > -256 && off < 256) {
