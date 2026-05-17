@@ -1225,19 +1225,22 @@ static int gen_funcall(Node *node, int hidden_ret_reg) {
                 x86_cmp_ri(cg_sec, 8, X86_RCX, 0); // test rcx, rcx
                 {
                     size_t o = asm_jcc_label(cg_sec, X86_E);
-                    asm_fixup_add(cg_sec, o, format(".L.memcmp_eq.%d", cl), 0);
+                    asm_fixup_add(cg_sec, o, format(".L.memcmp_eq.%d", cl), 1);
                 }
                 x86_rep_prefix(cg_sec); // repe cmpsb
                 secbuf_emit8(cg_sec, 0xa6); /* cmpsb */
-                asm_jcc_label(cg_sec, X86_NE); // jne .L.memcmp_ne.%d
+                {
+                    size_t o = asm_jcc_label(cg_sec, X86_NE);
+                    asm_fixup_add(cg_sec, o, format(".L.memcmp_ne.%d", cl), 1);
+                }
                 // equal path (rcx=0, all bytes matched)
-                asm_movl_zero(cg_sec, 0); // xor r0, r0
+                x86_xor_rr(cg_sec, 4, X86_RAX, X86_RAX); // xorl %%eax, %%eax
                 {
                     size_t o = asm_jmp_label(cg_sec);
                     asm_fixup_add(cg_sec, o, format(".L.memcmp_done.%d", cl), 0);
                 }
                 cg_def_label(format(".L.memcmp_eq.%d", cl));
-                asm_movl_zero(cg_sec, 0);
+                x86_xor_rr(cg_sec, 4, X86_RAX, X86_RAX); // xorl %%eax, %%eax
                 {
                     size_t o = asm_jmp_label(cg_sec);
                     asm_fixup_add(cg_sec, o, format(".L.memcmp_done.%d", cl), 0);
