@@ -558,6 +558,10 @@ void x86_lock_prefix(SecBuf *s) { emit1(s, 0xf0); }
 void x86_rep_prefix(SecBuf *s) { emit1(s, 0xf3); }
 void x86_repne_prefix(SecBuf *s) { emit1(s, 0xf2); }
 void x86_cld(SecBuf *s) { emit1(s, 0xfc); }
+void x86_stosb(SecBuf *s) { emit1(s, 0xaa); }
+void x86_movsb(SecBuf *s) { emit1(s, 0xa4); }
+void x86_cmpsb(SecBuf *s) { emit1(s, 0xa6); }
+void x86_scasb(SecBuf *s) { emit1(s, 0xae); }
 void x86_mfence(SecBuf *s) { emit3(s, 0x0f, 0xae, 0xf0); }
 void x86_cpuid(SecBuf *s) { emit2(s, 0x0f, 0xa2); }
 

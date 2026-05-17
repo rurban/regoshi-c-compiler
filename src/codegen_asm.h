@@ -296,6 +296,7 @@ typedef enum {
     ASM_CAS,
     ASM_FENCE,
     ASM_LOCK,
+    ASM_CLD,
     ASM_NOP,
     ASM_LEAVE,
     ASM_LABEL,
@@ -1114,6 +1115,75 @@ static size_t asm_movabs_phy(SecBuf *s, X86Reg reg, uint64_t val) {
     asm_record(ASM_MOV_RI, off, s->len - off, (int)reg, -1, -1, 8, (int64_t)val, 0, NULL, 0, -1, false);
     return s->len - off;
 }
+// movq %rsp, %rbp  (function prologue)
+static size_t asm_mov_rsp_rbp(SecBuf *s) {
+    size_t off = s->len;
+    x86_mov_rr(s, 8, X86_RBP, X86_RSP); // movq %rsp, %rbp
+    asm_record(ASM_MOV_RR, off, s->len - off, (int)X86_RBP, (int)X86_RSP, -1, 8, 0, 0, NULL, 0, -1, false);
+    return s->len - off;
+}
+// subq $imm, %rsp  (function prologue stack allocation)
+static size_t asm_sub_rsp_imm(SecBuf *s, int32_t imm) {
+    size_t off = s->len;
+    x86_sub_ri(s, 8, X86_RSP, imm); // subq $imm, %rsp
+    asm_record(ASM_SUB_RI, off, s->len - off, (int)X86_RSP, -1, -1, 8, imm, 0, NULL, 0, -1, false);
+    return s->len - off;
+}
+// store immediate to rbp-relative: movb/movl/movq $imm, -offset(%rbp)
+static size_t asm_mov_rbp_imm(SecBuf *s, int size, int offset, int32_t imm) {
+    size_t off = s->len;
+    X86Mem m = {CG_X86_FP, X86_NOREG, 1, -offset};
+    x86_mov_mi(s, size, m, imm); // movb/movl/movq $imm, -offset(%rbp)
+    asm_record(ASM_MOV_RI, off, s->len - off, -1, -1, -1, size, imm, offset, NULL, 0, -1, true);
+    return s->len - off;
+}
+// movzbl/movzwl -offset(%rbp), dst: zero-extending load from rbp-relative
+static size_t asm_movzx_rbp_reg(SecBuf *s, VReg dst, int dst_sz, int src_sz, int offset) {
+    size_t off = s->len;
+    X86Mem m = {CG_X86_FP, X86_NOREG, 1, -offset};
+    x86_movzx_rm(s, dst_sz, src_sz, CG_X86_REG(dst), m); // movzbl/movzwl -off(%rbp), dst
+    asm_record(ASM_MOVZX, off, s->len - off, dst, -1, -1, dst_sz, 0, offset, NULL, 0, -1, false);
+    return s->len - off;
+}
+// movsbl/movswl -offset(%rbp), dst: sign-extending load from rbp-relative
+static size_t asm_movsx_rbp_reg(SecBuf *s, VReg dst, int dst_sz, int src_sz, int offset) {
+    size_t off = s->len;
+    X86Mem m = {CG_X86_FP, X86_NOREG, 1, -offset};
+    x86_movsx_rm(s, dst_sz, src_sz, CG_X86_REG(dst), m); // movsbl/movswl -off(%rbp), dst
+    asm_record(ASM_MOVSX, off, s->len - off, dst, -1, -1, dst_sz, 0, offset, NULL, 0, -1, false);
+    return s->len - off;
+}
+// movzbl/movzwl off(base), dst: zero-extending load from base+offset
+static size_t asm_movzx_base_off_reg(SecBuf *s, VReg dst, VReg base, int64_t disp, int dst_sz, int src_sz) {
+    size_t off = s->len;
+    X86Mem m = {CG_X86_REG(base), X86_NOREG, 1, disp};
+    x86_movzx_rm(s, dst_sz, src_sz, CG_X86_REG(dst), m); // movzbl/movzwl disp(base), dst
+    asm_record(ASM_MOVZX, off, s->len - off, dst, base, -1, dst_sz, 0, disp, NULL, 0, -1, false);
+    return s->len - off;
+}
+// movsbl/movswl off(base), dst: sign-extending load from base+offset
+static size_t asm_movsx_base_off_reg(SecBuf *s, VReg dst, VReg base, int64_t disp, int dst_sz, int src_sz) {
+    size_t off = s->len;
+    X86Mem m = {CG_X86_REG(base), X86_NOREG, 1, disp};
+    x86_movsx_rm(s, dst_sz, src_sz, CG_X86_REG(dst), m); // movsbl/movswl disp(base), dst
+    asm_record(ASM_MOVSX, off, s->len - off, dst, base, -1, dst_sz, 0, disp, NULL, 0, -1, false);
+    return s->len - off;
+}
+// movl/movq disp(base), dst: regular load from base+offset
+static size_t asm_mov_base_off_reg(SecBuf *s, VReg dst, VReg base, int64_t disp, int sz) {
+    size_t off = s->len;
+    X86Mem m = {CG_X86_REG(base), X86_NOREG, 1, disp};
+    x86_mov_rm(s, sz, CG_X86_REG(dst), m); // movl/movq disp(base), dst
+    asm_record(ASM_MOV_RR, off, s->len - off, dst, base, -1, sz, 0, disp, NULL, 0, -1, false);
+    return s->len - off;
+}
+// setcc to physical reg (e.g. sete %al for compare+setne into RAX)
+static size_t asm_setcc_phy(SecBuf *s, X86Cond cond, X86Reg reg) {
+    size_t off = s->len;
+    x86_setcc(s, cond, reg); // setne %al etc.
+    asm_record(ASM_SETCC, off, s->len - off, (int)reg, -1, -1, 1, 0, 0, NULL, (int)cond, -1, false);
+    return s->len - off;
+}
 #endif
 #ifdef ARCH_ARM64
 // x0 = x29 + imm (handles negative and large |imm| via scratch x16)
@@ -1758,8 +1828,19 @@ static size_t asm_dmb_ishst(SecBuf *s) { return asm_dmb(s); }
 #endif
 
 // ============================================================================
-// NOP
+// CLD / NOP
 // ============================================================================
+
+static size_t asm_cld(SecBuf *s) {
+    size_t off = s->len;
+#ifndef ARCH_ARM64
+    x86_cld(s); // cld (clear direction flag)
+    asm_record(ASM_CLD, off, (size_t)(s->len - off), -1, -1, -1, 0, 0, 0, NULL, 0, -1, false);
+#else
+    (void)s;
+#endif
+    return (size_t)(s->len - off);
+}
 
 static size_t asm_nop(SecBuf *s) {
     size_t off = s->len;

@@ -196,6 +196,10 @@ void x86_lock_prefix(SecBuf *s);
 void x86_rep_prefix(SecBuf *s);
 void x86_repne_prefix(SecBuf *s);
 void x86_cld(SecBuf *s);
+void x86_stosb(SecBuf *s);
+void x86_movsb(SecBuf *s);
+void x86_cmpsb(SecBuf *s);
+void x86_scasb(SecBuf *s);
 void x86_mfence(SecBuf *s);
 void x86_cpuid(SecBuf *s);
 
