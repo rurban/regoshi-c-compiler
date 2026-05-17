@@ -5,9 +5,9 @@ Generated: May 2026
 ## Summary
 
 - **Total**: 151
-- **Passed**: 106
-- **Failed**: 45
-- **Pass Rate**: 70%
+- **Passed**: 105
+- **Failed**: 46
+- **Pass Rate**: 69%
 
 ## Detailed Results
 
@@ -109,7 +109,7 @@ Generated: May 2026
 | 104_inline                  | COMPILE_FAIL | rcc returned non-zero         |
 | 105_local_extern            | PASS         | Output matches                |
 | 106_versym                  | PASS         | Output matches                |
-| 107_stack_safe              | PASS         | Output matches                |
+| 107_stack_safe              | MISMATCH     | Output does not match .expect |
 | 108_constructor             | MISMATCH     | Output does not match .expect |
 | 109_float_struct_calling    | MISMATCH     | Output does not match .expect |
 | 110_average                 | PASS         | Output matches                |

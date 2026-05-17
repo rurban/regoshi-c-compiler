@@ -5,9 +5,9 @@ Generated: May 2026
 ## Summary
 
 - **Total**: 151
-- **Passed**: 108
-- **Failed**: 43
-- **Pass Rate**: 71%
+- **Passed**: 109
+- **Failed**: 42
+- **Pass Rate**: 72%
 
 ## Detailed Results
 
@@ -30,7 +30,7 @@ Generated: May 2026
 | 14_if                       | PASS         | Output matches                |
 | 15_recursion                | PASS         | Output matches                |
 | 16_nesting                  | PASS         | Output matches                |
-| 17_enum                     | MISMATCH     | Output does not match .expect |
+| 17_enum                     | PASS         | Output matches                |
 | 18_include                  | PASS         | Output matches                |
 | 19_pointer_arithmetic       | PASS         | Output matches                |
 | 20_pointer_comparison       | PASS         | Output matches                |
@@ -76,7 +76,7 @@ Generated: May 2026
 | 71_macro_empty_arg          | PASS         | Output matches                |
 | 72_long_long_constant       | PASS         | Output matches                |
 | 73_arm64                    | SKIP         | Skipped                       |
-| 75_array_in_struct_init     | EXEC_FAIL    | non-zero exit                 |
+| 75_array_in_struct_init     | MISMATCH     | Output does not match .expect |
 | 76_dollars_in_identifiers   | PASS         | Output matches                |
 | 77_push_pop_macro           | PASS         | Output matches                |
 | 78_vla_label                | PASS         | Output matches                |
