@@ -1222,45 +1222,30 @@ static int gen_funcall(Node *node, int hidden_ret_reg) {
                 x86_mov_rr(cg_sec, 8, X86_RDI, CG_X86_REG(s1_r));
                 x86_mov_rr(cg_sec, 8, X86_RSI, CG_X86_REG(s2_r));
                 x86_mov_rr(cg_sec, 8, X86_RCX, CG_X86_REG(len_r));
-                x86_cmp_ri(cg_sec, 8, X86_RCX, 0); // test rcx, rcx
-                {
-                    size_t o = asm_jcc_label(cg_sec, X86_E);
-                    asm_fixup_add(cg_sec, o, format(".L.memcmp_eq.%d", cl), 1);
-                }
                 x86_rep_prefix(cg_sec); // repe cmpsb
                 secbuf_emit8(cg_sec, 0xa6); /* cmpsb */
                 {
                     size_t o = asm_jcc_label(cg_sec, X86_NE);
-                    asm_fixup_add(cg_sec, o, format(".L.memcmp_ne.%d", cl), 1);
+                    asm_fixup_add(cg_sec, o, format(".L.memcmp_diff.%d", cl), 1);
                 }
-                // equal path (rcx=0, all bytes matched)
-                x86_xor_rr(cg_sec, 4, X86_RAX, X86_RAX); // xorl %%eax, %%eax
+                x86_xor_rr(cg_sec, 4, X86_RAX, X86_RAX); // xorl %%eax, %%eax (equal)
                 {
                     size_t o = asm_jmp_label(cg_sec);
-                    asm_fixup_add(cg_sec, o, format(".L.memcmp_done.%d", cl), 0);
+                    asm_fixup_add(cg_sec, o, format(".L.memcmp_end.%d", cl), 0);
                 }
-                cg_def_label(format(".L.memcmp_eq.%d", cl));
-                x86_xor_rr(cg_sec, 4, X86_RAX, X86_RAX); // xorl %%eax, %%eax
-                {
-                    size_t o = asm_jmp_label(cg_sec);
-                    asm_fixup_add(cg_sec, o, format(".L.memcmp_done.%d", cl), 0);
-                }
-                // not-equal: compute difference
-                /* FIXME: load bytes and subtract - placeholder */
-                x86_movzx_rm(cg_sec, 4, 1, X86_RAX, x86_mem(X86_RDI, -1));
-                x86_movzx_rm(cg_sec, 4, 1, X86_RCX, x86_mem(X86_RSI, -1));
-                x86_sub_rr(cg_sec, 4, X86_RAX, X86_RCX);
-                cg_def_label(format(".L.memcmp_done.%d", cl));
+                cg_def_label(format(".L.memcmp_diff.%d", cl));
+                x86_movsx_rm(cg_sec, 4, 1, X86_RAX, x86_mem(X86_RDI, -1)); // movsbl -1(%%rdi),%%eax
+                x86_movsx_rm(cg_sec, 4, 1, X86_RCX, x86_mem(X86_RSI, -1)); // movsbl -1(%%rsi),%%ecx
+                x86_sub_rr(cg_sec, 4, X86_RAX, X86_RCX); // subl %%ecx, %%eax
+                cg_def_label(format(".L.memcmp_end.%d", cl));
                 asm_pop_phy(cg_sec, X86_RCX);
                 asm_pop_phy(cg_sec, X86_RSI);
                 asm_pop_phy(cg_sec, X86_RDI);
-
                 free_reg(s1_r);
                 free_reg(s2_r);
                 free_reg(len_r);
-
                 int r = alloc_reg();
-                x86_mov_rr(cg_sec, 4, CG_X86_REG(r), X86_RAX); // subl %%ecx, %%eax
+                x86_mov_rr(cg_sec, 4, CG_X86_REG(r), X86_RAX); // movl %%eax, rr
                 return r;
             }
         }
@@ -1303,40 +1288,41 @@ static int gen_funcall(Node *node, int hidden_ret_reg) {
                 asm_push_phy(cg_sec, X86_RSI); // pushq %%rsi
                 x86_mov_rr(cg_sec, 8, X86_RDI, CG_X86_REG(r));
                 x86_mov_rr(cg_sec, 8, X86_RSI, CG_X86_REG(r2));
-                cg_def_label(format(".L.strcmp.%d", cl)); // .L.strcmp_loop:
-                x86_movsx_rm(cg_sec, 4, 1, X86_RAX, x86_mem(X86_RDI, 0)); // movsbl (%rdi), %eax
-                x86_movsx_rm(cg_sec, 4, 1, X86_RCX, x86_mem(X86_RSI, 0)); // movsbl (%rsi), %ecx
-                x86_sub_rr(cg_sec, 4, X86_RAX, X86_RCX); // subl %%ecx, %%eax
+                cg_def_label(format(".L.strcmp_loop.%d", cl));
+                x86_movzx_rm(cg_sec, 4, 1, X86_RAX, x86_mem(X86_RDI, 0)); // movb (%%rdi),%%al
+                x86_cmp_rm(cg_sec, 1, X86_RAX, x86_mem(X86_RSI, 0)); // cmpb (%%rsi),%%al
                 {
                     size_t o = asm_jcc_label(cg_sec, X86_NE);
-                    asm_fixup_add(cg_sec, o, format(".L.strcmp_end.%d", cl), 1);
+                    asm_fixup_add(cg_sec, o, format(".L.strcmp_diff.%d", cl), 1);
                 }
-                x86_test_rr(cg_sec, 1, X86_RAX, X86_RAX); // testb %%al, %%al
+                x86_test_rr(cg_sec, 1, X86_RAX, X86_RAX); // testb %%al,%%al
                 {
                     size_t o = asm_jcc_label(cg_sec, X86_Z);
-                    asm_fixup_add(cg_sec, o, format(".L.strcmp_end.%d", cl), 1);
+                    asm_fixup_add(cg_sec, o, format(".L.strcmp_eq.%d", cl), 1);
                 }
                 x86_inc_r(cg_sec, 8, X86_RDI); // incq %%rdi
                 x86_inc_r(cg_sec, 8, X86_RSI); // incq %%rsi
                 {
                     size_t o = asm_jmp_label(cg_sec);
-                    asm_fixup_add(cg_sec, o, format(".L.strcmp.%d", cl), 0);
+                    asm_fixup_add(cg_sec, o, format(".L.strcmp_loop.%d", cl), 0);
                 }
-                cg_def_label(format(".L.strcmp_end.%d", cl)); // .L.strcmp_end:
-                x86_sub_rr(cg_sec, 4, X86_RAX, X86_RCX); // subl %%ecx, %%eax
+                cg_def_label(format(".L.strcmp_diff.%d", cl));
+                x86_movzx(cg_sec, 4, 1, X86_RAX, X86_RAX); // movzbl %%al,%%eax
+                x86_movzx_rm(cg_sec, 4, 1, X86_RCX, x86_mem(X86_RSI, 0)); // movzbl (%%rsi),%%ecx
+                x86_sub_rr(cg_sec, 4, X86_RAX, X86_RCX); // subl %%ecx,%%eax
                 {
                     size_t o = asm_jmp_label(cg_sec);
-                    asm_fixup_add(cg_sec, o, format(".L.strcmp_done.%d", cl), 0);
+                    asm_fixup_add(cg_sec, o, format(".L.strcmp_end.%d", cl), 0);
                 }
-                cg_def_label(format(".L.strcmp_eq.%d", cl)); // .L.strcmp_eq:
-                asm_movl_zero(cg_sec, 0); // xorl %%eax, %%eax
-                cg_def_label(format(".L.strcmp_done.%d", cl)); // .L.strcmp_done:
+                cg_def_label(format(".L.strcmp_eq.%d", cl));
+                x86_xor_rr(cg_sec, 4, X86_RAX, X86_RAX); // xorl %%eax,%%eax
+                cg_def_label(format(".L.strcmp_end.%d", cl));
                 asm_pop_phy(cg_sec, X86_RSI); // popq %%rsi
                 asm_pop_phy(cg_sec, X86_RDI); // popq %%rdi
                 free_reg(r);
                 free_reg(r2);
                 int ret = alloc_reg();
-                x86_mov_rr(cg_sec, 4, CG_X86_REG(ret), X86_RAX); // movzbl (%%rsi), %%ecx
+                x86_mov_rr(cg_sec, 4, CG_X86_REG(ret), X86_RAX); // movl %%eax, rret
                 return ret;
             }
         }
