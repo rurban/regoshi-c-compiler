@@ -1372,14 +1372,14 @@ static int gen_funcall(Node *node, int hidden_ret_reg) {
                     asm_fixup_add(cg_sec, o, format(".L.strchr_done.%d", cl), 0);
                 }
                 cg_def_label(format(".L.strchr_ret.%d", cl)); // .L.strchr_null.%d:
-                asm_movl_zero(cg_sec, 0); // xorl %%eax, %%eax
+                x86_xor_rr(cg_sec, 4, X86_RAX, X86_RAX); // xorl %%eax, %%eax
                 cg_def_label(format(".L.strchr_done.%d", cl)); // .L.strchr_end.%d:
                 asm_pop_phy(cg_sec, X86_RCX); // popq %%rcx
                 asm_pop_phy(cg_sec, X86_RDI); // popq %%rdi
                 free_reg(sr);
                 free_reg(cr);
                 int ret = alloc_reg();
-                asm_mov_reg_reg(cg_sec, ret, 0, 8); // mov r0 -> rret
+                x86_mov_rr(cg_sec, 8, CG_X86_REG(ret), X86_RAX); // movq %%rax, rret
                 return ret;
             }
         }
