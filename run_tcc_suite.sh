@@ -183,7 +183,7 @@ run_exe() {
 		# shellcheck disable=SC2086
 		timeout 5s $RUN_PREFIX "$@"
 	else
-		"$@"
+		timeout 5s "$@"
 	fi
 }
 trap 'rm -f "$TMP_OUT" "$TMP_EXE"' EXIT INT TERM
@@ -388,7 +388,7 @@ while IFS= read -r src; do
             for tname in $(extract_dt_tests "$src" 2>/dev/null); do
                 echo "[$tname]" >>"$TMP_OUT"
                 # Try to compile and run; capture both stdout and stderr
-                if timeout 5 "$RCC" $RCCFLAGS -D$tname -o "$TMP_EXE" \
+                if timeout 5s "$RCC" $RCCFLAGS -D$tname -o "$TMP_EXE" \
                     "$src" >"$TMP_OUT".err 2>&1; then
                     # Also include any warnings emitted during successful compilation
                     if [ -s "$TMP_OUT".err ]; then

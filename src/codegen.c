@@ -4798,35 +4798,73 @@ static int gen(Node *node) {
     }
     case ND_LOGAND: {
         int c = ++rcc_label_count;
-        const char *false_label = format(".L.logand_false.%d", c);
+#ifdef ARCH_ARM64
+        int r = alloc_reg();
+        int lhs = gen(node->lhs);
+        asm_cmp_zero(cg_sec, lhs, node->lhs->ty->size);
+        asm_movq_zero(cg_sec, r);
+        {
+            size_t o = asm_jcc_label(cg_sec, ARM64_EQ);
+            asm_fixup_add(cg_sec, o, format(".L.end.%d", c), 1);
+        }
+        free_reg(lhs);
+        int rhs = gen(node->rhs);
+        asm_cmp_zero(cg_sec, rhs, node->rhs->ty->size);
+        asm_cset(cg_sec, r, ARM64_NE);
+        free_reg(rhs);
+#else
+        int lhs = gen(node->lhs);
+        asm_cmp_zero(cg_sec, lhs, node->lhs->ty->size);
+        x86_mov_mi(cg_sec, 1, x86_mem(CG_X86_FP, -spill_logand), 0);
+        {
+            size_t o = asm_jcc_label(cg_sec, X86_E);
+            asm_fixup_add(cg_sec, o, format(".L.end.%d", c), 1);
+        }
+        free_reg(lhs);
+        int rhs = gen(node->rhs);
+        asm_cmp_zero(cg_sec, rhs, node->rhs->ty->size);
+        x86_setcc(cg_sec, X86_NE, X86_RAX);
+        x86_mov_mr(cg_sec, 1, x86_mem(CG_X86_FP, -spill_logand), X86_RAX);
+        free_reg(rhs);
+        cg_def_label(format(".L.end.%d", c));
+        int r = alloc_reg();
+        x86_movzx_rm(cg_sec, 4, 1, CG_X86_REG(r), x86_mem(CG_X86_FP, -spill_logand));
+#endif
+        return r;
+    }
+    case ND_LOGOR: {
+        int c = ++rcc_label_count;
 #ifdef ARCH_ARM64
         int r = alloc_reg();
         int lhs = gen(node->lhs);
         asm_cmp_zero(cg_sec, lhs, node->lhs->ty->size); // cmp $0, rlhs
-        asm_movq_zero(cg_sec, r); // xor rr, rr
-        size_t ja1 = asm_jcc_label(cg_sec, ARM64_EQ); // jcc label
-        asm_fixup_add(cg_sec, ja1, false_label, 1); // fixup add for forward branch
+        asm_mov_imm(cg_sec, r, 4, 1); // mov r, #1
+        size_t o = asm_jcc_label(cg_sec, ARM64_NE);
+        asm_fixup_add(cg_sec, o, format(".L.end.%d", c), 1);
         free_reg(lhs);
         int rhs = gen(node->rhs);
         asm_cmp_zero(cg_sec, rhs, node->rhs->ty->size); // cmp $0, rrhs
         asm_cset(cg_sec, r, ARM64_NE); // cset rr
+        free_reg(rhs);
 #else
-        int r = alloc_reg();
         int lhs = gen(node->lhs);
         asm_cmp_zero(cg_sec, lhs, node->lhs->ty->size); // cmp $0, rlhs
-        asm_movl_zero(cg_sec, r); // xor rr, rr
-        size_t ja1 = asm_jcc_label(cg_sec, X86_E); // jcc label
-        asm_fixup_add(cg_sec, ja1, false_label, 1); // setne %%al
+        x86_mov_mi(cg_sec, 1, x86_mem(CG_X86_FP, -spill_logand), 1); // movb, $1, -logand(%rpb)
+        size_t o = asm_jcc_label(cg_sec, X86_NE); // jne -L.end.%d
+        asm_fixup_add(cg_sec, o, format(".L.end.%d", c), 1);
         free_reg(lhs);
         int rhs = gen(node->rhs);
         asm_cmp_zero(cg_sec, rhs, node->rhs->ty->size); // cmp $0, rrhs
-        asm_setcc(cg_sec, r, X86_NE); // setcc rr
-        asm_movzx(cg_sec, r, r, 4, 1); // movzx4->r rr, rr
-#endif
+        x86_setcc(cg_sec, X86_NE, X86_RAX); // setne %al
+        x86_mov_mr(cg_sec, 1, x86_mem(CG_X86_FP, -spill_logand), X86_RAX); // movb %al, -loggand(%rpb)
         free_reg(rhs);
-        cg_def_label(false_label); // cmp %s, #0
+        cg_def_label(format(".L.end.%d", c));
+        int r = alloc_reg();
+        x86_movzx_rm(cg_sec, 4, 1, CG_X86_REG(r), x86_mem(CG_X86_FP, -spill_logand)); // movzbl -logand(%rpb), r
+#endif
         return r;
     }
+/*
     case ND_LOGOR: {
         int c = ++rcc_label_count;
         const char *true_label = format(".L.logor_true.%d", c);
@@ -4865,6 +4903,7 @@ static int gen(Node *node) {
         cg_def_label(end_label); // je .L.else.%d
         return r;
     }
+*/
     case ND_COND: {
         int c = ++rcc_label_count;
         const char *else_label = format(".L.cond_else.%d", c);
