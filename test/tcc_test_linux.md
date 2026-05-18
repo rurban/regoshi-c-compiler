@@ -5,9 +5,9 @@ Generated: May 2026
 ## Summary
 
 - **Total**: 151
-- **Passed**: 120
-- **Failed**: 31
-- **Pass Rate**: 79%
+- **Passed**: 119
+- **Failed**: 32
+- **Pass Rate**: 78%
 
 ## Detailed Results
 
@@ -93,7 +93,7 @@ Generated: May 2026
 | 89_nocode_wanted            | PASS         | Output matches                |
 | 90_struct-init              | EXEC_FAIL    | non-zero exit                 |
 | 91_ptr_longlong_arith32     | PASS         | Output matches                |
-| 92_enum_bitfield            | PASS         | Output matches                |
+| 92_enum_bitfield            | MISMATCH     | Output does not match .expect |
 | 93_integer_promotion        | MISMATCH     | Output does not match .expect |
 | 94_generic                  | PASS         | Output matches                |
 | 95_bitfields                | EXEC_FAIL    | non-zero exit                 |
@@ -123,7 +123,7 @@ Generated: May 2026
 | 118_switch                  | MISMATCH     | Output does not match .expect |
 | 119_random_stuff            | EXEC_FAIL    | non-zero exit                 |
 | 120_alias                   | COMPILE_FAIL | rcc returned non-zero         |
-| 121_struct_return           | MISMATCH     | Output does not match .expect |
+| 121_struct_return           | EXEC_FAIL    | non-zero exit                 |
 | 122_vla_reuse               | PASS         | Output matches                |
 | 123_vla_bug                 | PASS         | Output matches                |
 | 124_atomic_counter          | EXEC_FAIL    | non-zero exit                 |

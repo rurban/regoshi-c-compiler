@@ -42,7 +42,7 @@ typedef enum {
     ARM64_X26,
     ARM64_X27,
     ARM64_X28,
-    ARM64_XX29 = 29, // FP / X29
+    ARM64_X29 = 29, // FP / X29
     ARM64_X30 = 30, // LR
     ARM64_X31 = 31, // SP or XZR depending on context
 } Arm64Reg;
@@ -91,120 +91,120 @@ typedef enum {
 // ---------------------------------------------------------------------------
 // Data processing — immediate
 // ---------------------------------------------------------------------------
-uint32_t arm64_movz(int sf, int rd, uint16_t imm16, uint16_t shift16);
-uint32_t arm64_movk(int sf, int rd, uint16_t imm16, uint16_t shift16);
-uint32_t arm64_movn(int sf, int rd, uint16_t imm16, uint16_t shift16);
-uint32_t arm64_add_imm(int sf, int rd, int rn, int32_t imm12, uint16_t shift2);
-uint32_t arm64_adds_imm(int sf, int rd, int rn, int32_t imm12, uint32_t shift2);
-uint32_t arm64_sub_imm(int sf, int rd, int rn, int32_t imm12, uint32_t shift2);
-uint32_t arm64_subs_imm(int sf, int rd, int rn, int32_t imm12, uint32_t shift2);
-uint32_t arm64_and_imm(int sf, int rd, int rn, uint64_t imm_enc);
-uint32_t arm64_orr_imm(int sf, int rd, int rn, uint64_t imm_enc);
-uint32_t arm64_eor_imm(int sf, int rd, int rn, uint64_t imm_enc);
-uint32_t arm64_ands_imm(int sf, int rd, int rn, uint64_t imm_enc);
+uint32_t arm64_movz(int sf, Arm64Reg rd, uint16_t imm16, uint16_t shift16);
+uint32_t arm64_movk(int sf, Arm64Reg rd, uint16_t imm16, uint16_t shift16);
+uint32_t arm64_movn(int sf, Arm64Reg rd, uint16_t imm16, uint16_t shift16);
+uint32_t arm64_add_imm(int sf, Arm64Reg rd, Arm64Reg rn, int32_t imm12, uint16_t shift2);
+uint32_t arm64_adds_imm(int sf, Arm64Reg rd, Arm64Reg rn, int32_t imm12, uint32_t shift2);
+uint32_t arm64_sub_imm(int sf, Arm64Reg rd, Arm64Reg rn, int32_t imm12, uint32_t shift2);
+uint32_t arm64_subs_imm(int sf, Arm64Reg rd, Arm64Reg rn, int32_t imm12, uint32_t shift2);
+uint32_t arm64_and_imm(int sf, Arm64Reg rd, Arm64Reg rn, uint64_t imm_enc);
+uint32_t arm64_orr_imm(int sf, Arm64Reg rd, Arm64Reg rn, uint64_t imm_enc);
+uint32_t arm64_eor_imm(int sf, Arm64Reg rd, Arm64Reg rn, uint64_t imm_enc);
+uint32_t arm64_ands_imm(int sf, Arm64Reg rd, Arm64Reg rn, uint64_t imm_enc);
 
 // ---------------------------------------------------------------------------
 // Data processing — register
 // ---------------------------------------------------------------------------
-uint32_t arm64_add_reg(int sf, int rd, int rn, int rm, Arm64Shift sh, int imm6);
-uint32_t arm64_adds_reg(int sf, int rd, int rn, int rm, Arm64Shift sh, int imm6);
-uint32_t arm64_sub_reg(int sf, int rd, int rn, int rm, Arm64Shift sh, int imm6);
-uint32_t arm64_subs_reg(int sf, int rd, int rn, int rm, Arm64Shift sh, int imm6);
-uint32_t arm64_and_reg(int sf, int rd, int rn, int rm, Arm64Shift sh, int imm6);
-uint32_t arm64_orr_reg(int sf, int rd, int rn, int rm, Arm64Shift sh, int imm6);
-uint32_t arm64_eor_reg(int sf, int rd, int rn, int rm, Arm64Shift sh, int imm6);
-uint32_t arm64_ands_reg(int sf, int rd, int rn, int rm, Arm64Shift sh, int imm6);
-uint32_t arm64_bic_reg(int sf, int rd, int rn, int rm, Arm64Shift sh, int imm6);
-uint32_t arm64_mul(int sf, int rd, int rn, int rm); // MADD xd,xn,xm,xzr
-uint32_t arm64_smull(int rd, int rn, int rm); // SMADDL
-uint32_t arm64_umull(int rd, int rn, int rm); // UMADDL
-uint32_t arm64_smulh(int rd, int rn, int rm);
-uint32_t arm64_umulh(int rd, int rn, int rm);
-uint32_t arm64_sdiv(int sf, int rd, int rn, int rm);
-uint32_t arm64_udiv(int sf, int rd, int rn, int rm);
-uint32_t arm64_lsl_reg(int sf, int rd, int rn, int rm);
-uint32_t arm64_lsr_reg(int sf, int rd, int rn, int rm);
-uint32_t arm64_asr_reg(int sf, int rd, int rn, int rm);
-uint32_t arm64_ror_reg(int sf, int rd, int rn, int rm);
-uint32_t arm64_lsl_imm(int sf, int rd, int rn, int shift);
-uint32_t arm64_lsr_imm(int sf, int rd, int rn, int shift);
-uint32_t arm64_asr_imm(int sf, int rd, int rn, int shift);
-uint32_t arm64_neg(int sf, int rd, int rm);
-uint32_t arm64_mvn(int sf, int rd, int rm, Arm64Shift sh, int imm6);
-uint32_t arm64_clz(int sf, int rd, int rn);
-uint32_t arm64_cls(int sf, int rd, int rn);
-uint32_t arm64_rbit(int sf, int rd, int rn);
-uint32_t arm64_rev(int sf, int rd, int rn);
-uint32_t arm64_rev16(int sf, int rd, int rn);
-uint32_t arm64_rev32(int rd, int rn);
-uint32_t arm64_sxtb(int sf, int rd, int rn);
-uint32_t arm64_sxth(int sf, int rd, int rn);
-uint32_t arm64_sxtw(int rd, int rn);
-uint32_t arm64_uxtb(int rd, int rn);
-uint32_t arm64_uxth(int rd, int rn);
-uint32_t arm64_ubfx(int sf, int rd, int rn, int lsb, int width);
-uint32_t arm64_sbfx(int sf, int rd, int rn, int lsb, int width);
-uint32_t arm64_csel(int sf, int rd, int rn, int rm, Arm64Cond cond);
-uint32_t arm64_csinc(int sf, int rd, int rn, int rm, Arm64Cond cond);
-uint32_t arm64_csneg(int sf, int rd, int rn, int rm, Arm64Cond cond);
-uint32_t arm64_cset(int sf, int rd, Arm64Cond cond);
-uint32_t arm64_cneg(int sf, int rd, int rn, Arm64Cond cond);
-uint32_t arm64_adc(int sf, int rd, int rn, int rm);
-uint32_t arm64_sbc(int sf, int rd, int rn, int rm);
+uint32_t arm64_add_reg(int sf, Arm64Reg rd, Arm64Reg rn, Arm64Reg rm, Arm64Shift sh, int imm6);
+uint32_t arm64_adds_reg(int sf, Arm64Reg rd, Arm64Reg rn, Arm64Reg rm, Arm64Shift sh, int imm6);
+uint32_t arm64_sub_reg(int sf, Arm64Reg rd, Arm64Reg rn, Arm64Reg rm, Arm64Shift sh, int imm6);
+uint32_t arm64_subs_reg(int sf, Arm64Reg rd, Arm64Reg rn, Arm64Reg rm, Arm64Shift sh, int imm6);
+uint32_t arm64_and_reg(int sf, Arm64Reg rd, Arm64Reg rn, Arm64Reg rm, Arm64Shift sh, int imm6);
+uint32_t arm64_orr_reg(int sf, Arm64Reg rd, Arm64Reg rn, Arm64Reg rm, Arm64Shift sh, int imm6);
+uint32_t arm64_eor_reg(int sf, Arm64Reg rd, Arm64Reg rn, Arm64Reg rm, Arm64Shift sh, int imm6);
+uint32_t arm64_ands_reg(int sf, Arm64Reg rd, Arm64Reg rn, Arm64Reg rm, Arm64Shift sh, int imm6);
+uint32_t arm64_bic_reg(int sf, Arm64Reg rd, Arm64Reg rn, Arm64Reg rm, Arm64Shift sh, int imm6);
+uint32_t arm64_mul(int sf, Arm64Reg rd, Arm64Reg rn, Arm64Reg rm); // MADD xd,xn,xm,xzr
+uint32_t arm64_smull(Arm64Reg rd, Arm64Reg rn, Arm64Reg rm); // SMADDL
+uint32_t arm64_umull(Arm64Reg rd, Arm64Reg rn, Arm64Reg rm); // UMADDL
+uint32_t arm64_smulh(Arm64Reg rd, Arm64Reg rn, Arm64Reg rm);
+uint32_t arm64_umulh(Arm64Reg rd, Arm64Reg rn, Arm64Reg rm);
+uint32_t arm64_sdiv(int sf, Arm64Reg rd, Arm64Reg rn, Arm64Reg rm);
+uint32_t arm64_udiv(int sf, Arm64Reg rd, Arm64Reg rn, Arm64Reg rm);
+uint32_t arm64_lsl_reg(int sf, Arm64Reg rd, Arm64Reg rn, Arm64Reg rm);
+uint32_t arm64_lsr_reg(int sf, Arm64Reg rd, Arm64Reg rn, Arm64Reg rm);
+uint32_t arm64_asr_reg(int sf, Arm64Reg rd, Arm64Reg rn, Arm64Reg rm);
+uint32_t arm64_ror_reg(int sf, Arm64Reg rd, Arm64Reg rn, Arm64Reg rm);
+uint32_t arm64_lsl_imm(int sf, Arm64Reg rd, Arm64Reg rn, int shift);
+uint32_t arm64_lsr_imm(int sf, Arm64Reg rd, Arm64Reg rn, int shift);
+uint32_t arm64_asr_imm(int sf, Arm64Reg rd, Arm64Reg rn, int shift);
+uint32_t arm64_neg(int sf, Arm64Reg rd, Arm64Reg rm);
+uint32_t arm64_mvn(int sf, Arm64Reg rd, Arm64Reg rm, Arm64Shift sh, int imm6);
+uint32_t arm64_clz(int sf, Arm64Reg rd, Arm64Reg rn);
+uint32_t arm64_cls(int sf, Arm64Reg rd, Arm64Reg rn);
+uint32_t arm64_rbit(int sf, Arm64Reg rd, Arm64Reg rn);
+uint32_t arm64_rev(int sf, Arm64Reg rd, Arm64Reg rn);
+uint32_t arm64_rev16(int sf, Arm64Reg rd, Arm64Reg rn);
+uint32_t arm64_rev32(Arm64Reg rd, Arm64Reg rn);
+uint32_t arm64_sxtb(int sf, Arm64Reg rd, Arm64Reg rn);
+uint32_t arm64_sxth(int sf, Arm64Reg rd, Arm64Reg rn);
+uint32_t arm64_sxtw(Arm64Reg rd, Arm64Reg rn);
+uint32_t arm64_uxtb(Arm64Reg rd, Arm64Reg rn);
+uint32_t arm64_uxth(Arm64Reg rd, Arm64Reg rn);
+uint32_t arm64_ubfx(int sf, Arm64Reg rd, Arm64Reg rn, int lsb, int width);
+uint32_t arm64_sbfx(int sf, Arm64Reg rd, Arm64Reg rn, int lsb, int width);
+uint32_t arm64_csel(int sf, Arm64Reg rd, Arm64Reg rn, Arm64Reg rm, Arm64Cond cond);
+uint32_t arm64_csinc(int sf, Arm64Reg rd, Arm64Reg rn, Arm64Reg rm, Arm64Cond cond);
+uint32_t arm64_csneg(int sf, Arm64Reg rd, Arm64Reg rn, Arm64Reg rm, Arm64Cond cond);
+uint32_t arm64_cset(int sf, Arm64Reg rd, Arm64Cond cond);
+uint32_t arm64_cneg(int sf, Arm64Reg rd, Arm64Reg rn, Arm64Cond cond);
+uint32_t arm64_adc(int sf, Arm64Reg rd, Arm64Reg rn, Arm64Reg rm);
+uint32_t arm64_sbc(int sf, Arm64Reg rd, Arm64Reg rn, Arm64Reg rm);
 
 // ---------------------------------------------------------------------------
 // PC-relative addressing
 // ---------------------------------------------------------------------------
 // These encode 0 offset; caller adds reloc
-uint32_t arm64_adrp(int rd, int32_t page_imm);
-uint32_t arm64_adr(int rd, int32_t imm);
+uint32_t arm64_adrp(Arm64Reg rd, int32_t page_imm);
+uint32_t arm64_adr(Arm64Reg rd, int32_t imm);
 
 // ---------------------------------------------------------------------------
 // Load/Store
 // ---------------------------------------------------------------------------
-uint32_t arm64_ldr_imm(int sf, int rt, int rn, int32_t imm9, bool pre);
-uint32_t arm64_ldr_uoff(int sz, int rt, int rn, uint32_t uimm);
-uint32_t arm64_ldrb_uoff(int rt, int rn, uint32_t uimm);
-uint32_t arm64_ldrh_uoff(int rt, int rn, uint32_t uimm);
-uint32_t arm64_ldrb_imm(int rt, int rn, int32_t imm9);
-uint32_t arm64_ldrh_imm(int rt, int rn, int32_t imm9);
-uint32_t arm64_ldrsb(int sf, int rt, int rn, int32_t imm9);
-uint32_t arm64_ldrsh(int sf, int rt, int rn, int32_t imm9);
-uint32_t arm64_ldrsw_imm(int rt, int rn, int32_t imm9);
-uint32_t arm64_ldrsw_uoff(int rt, int rn, uint32_t uimm);
-uint32_t arm64_str_imm(int sf, int rt, int rn, int32_t imm9, bool pre);
-uint32_t arm64_str_uoff(int sz, int rt, int rn, uint32_t uimm);
-uint32_t arm64_strb_uoff(int rt, int rn, uint32_t uimm);
-uint32_t arm64_strh_uoff(int rt, int rn, uint32_t uimm);
-uint32_t arm64_strb_imm(int rt, int rn, int32_t imm9);
-uint32_t arm64_strh_imm(int rt, int rn, int32_t imm9);
+uint32_t arm64_ldr_imm(int sf, Arm64Reg rt, Arm64Reg rn, int32_t imm9, bool pre);
+uint32_t arm64_ldr_uoff(int sz, Arm64Reg rt, Arm64Reg rn, uint32_t uimm);
+uint32_t arm64_ldrb_uoff(Arm64Reg rt, Arm64Reg rn, uint32_t uimm);
+uint32_t arm64_ldrh_uoff(Arm64Reg rt, Arm64Reg rn, uint32_t uimm);
+uint32_t arm64_ldrb_imm(Arm64Reg rt, Arm64Reg rn, int32_t imm9);
+uint32_t arm64_ldrh_imm(Arm64Reg rt, Arm64Reg rn, int32_t imm9);
+uint32_t arm64_ldrsb(int sf, Arm64Reg rt, Arm64Reg rn, int32_t imm9);
+uint32_t arm64_ldrsh(int sf, Arm64Reg rt, Arm64Reg rn, int32_t imm9);
+uint32_t arm64_ldrsw_imm(Arm64Reg rt, Arm64Reg rn, int32_t imm9);
+uint32_t arm64_ldrsw_uoff(Arm64Reg rt, Arm64Reg rn, uint32_t uimm);
+uint32_t arm64_str_imm(int sf, Arm64Reg rt, Arm64Reg rn, int32_t imm9, bool pre);
+uint32_t arm64_str_uoff(int sz, Arm64Reg rt, Arm64Reg rn, uint32_t uimm);
+uint32_t arm64_strb_uoff(Arm64Reg rt, Arm64Reg rn, uint32_t uimm);
+uint32_t arm64_strh_uoff(Arm64Reg rt, Arm64Reg rn, uint32_t uimm);
+uint32_t arm64_strb_imm(Arm64Reg rt, Arm64Reg rn, int32_t imm9);
+uint32_t arm64_strh_imm(Arm64Reg rt, Arm64Reg rn, int32_t imm9);
 // Pair: LDP/STP
-uint32_t arm64_ldp(int sf, int rt1, int rt2, int rn, int32_t imm7, bool pre, bool post);
-uint32_t arm64_stp(int sf, int rt1, int rt2, int rn, int32_t imm7, bool pre, bool post);
+uint32_t arm64_ldp(int sf, Arm64Reg rt1, Arm64Reg rt2, Arm64Reg rn, int32_t imm7, bool pre, bool post);
+uint32_t arm64_stp(int sf, Arm64Reg rt1, Arm64Reg rt2, Arm64Reg rn, int32_t imm7, bool pre, bool post);
 // Register offset
-uint32_t arm64_ldr_reg(int sz, int rt, int rn, int rm, bool ext, int s);
-uint32_t arm64_str_reg(int sz, int rt, int rn, int rm, bool ext, int s);
+uint32_t arm64_ldr_reg(int sz, Arm64Reg rt, Arm64Reg rn, Arm64Reg rm, bool ext, int s);
+uint32_t arm64_str_reg(int sz, Arm64Reg rt, Arm64Reg rn, Arm64Reg rm, bool ext, int s);
 // Unscaled immediate (LDUR/STUR)
-uint32_t arm64_ldur(int sf, int rt, int rn, int32_t imm9);
-uint32_t arm64_ldurb(int rt, int rn, int32_t imm9);
-uint32_t arm64_ldurh(int rt, int rn, int32_t imm9);
-uint32_t arm64_stur(int sf, int rt, int rn, int32_t imm9);
-uint32_t arm64_sturb(int rt, int rn, int32_t imm9);
-uint32_t arm64_sturh(int rt, int rn, int32_t imm9);
+uint32_t arm64_ldur(int sf, Arm64Reg rt, Arm64Reg rn, int32_t imm9);
+uint32_t arm64_ldurb(Arm64Reg rt, Arm64Reg rn, int32_t imm9);
+uint32_t arm64_ldurh(Arm64Reg rt, Arm64Reg rn, int32_t imm9);
+uint32_t arm64_stur(int sf, Arm64Reg rt, Arm64Reg rn, int32_t imm9);
+uint32_t arm64_sturb(Arm64Reg rt, Arm64Reg rn, int32_t imm9);
+uint32_t arm64_sturh(Arm64Reg rt, Arm64Reg rn, int32_t imm9);
 // Load-exclusive / store-exclusive
-uint32_t arm64_ldxr(int sf, int rt, int rn);
-uint32_t arm64_ldxrb(int rt, int rn);
-uint32_t arm64_ldxrh(int rt, int rn);
-uint32_t arm64_stxr(int sf, int rs, int rt, int rn);
-uint32_t arm64_stxrb(int rs, int rt, int rn);
-uint32_t arm64_stxrh(int rs, int rt, int rn);
+uint32_t arm64_ldxr(int sf, Arm64Reg rt, Arm64Reg rn);
+uint32_t arm64_ldxrb(Arm64Reg rt, Arm64Reg rn);
+uint32_t arm64_ldxrh(Arm64Reg rt, Arm64Reg rn);
+uint32_t arm64_stxr(int sf, Arm64Reg rs, Arm64Reg rt, Arm64Reg rn);
+uint32_t arm64_stxrb(Arm64Reg rs, Arm64Reg rt, Arm64Reg rn);
+uint32_t arm64_stxrh(Arm64Reg rs, Arm64Reg rt, Arm64Reg rn);
 // Load/store acquire-release
-uint32_t arm64_ldar(int sf, int rt, int rn);
-uint32_t arm64_ldarb(int rt, int rn);
-uint32_t arm64_ldarh(int rt, int rn);
-uint32_t arm64_stlr(int sf, int rt, int rn);
-uint32_t arm64_stlrb(int rt, int rn);
-uint32_t arm64_stlrh(int rt, int rn);
+uint32_t arm64_ldar(int sf, Arm64Reg rt, Arm64Reg rn);
+uint32_t arm64_ldarb(Arm64Reg rt, Arm64Reg rn);
+uint32_t arm64_ldarh(Arm64Reg rt, Arm64Reg rn);
+uint32_t arm64_stlr(int sf, Arm64Reg rt, Arm64Reg rn);
+uint32_t arm64_stlrb(Arm64Reg rt, Arm64Reg rn);
+uint32_t arm64_stlrh(Arm64Reg rt, Arm64Reg rn);
 
 // ---------------------------------------------------------------------------
 // Branches
@@ -212,14 +212,14 @@ uint32_t arm64_stlrh(int rt, int rn);
 // imm26 / imm19 in instruction units (4 bytes each); caller scales
 uint32_t arm64_b(int32_t imm26);
 uint32_t arm64_bl(int32_t imm26);
-uint32_t arm64_br(int rn);
-uint32_t arm64_blr(int rn);
-uint32_t arm64_ret(int rn); // rn=30 for normal return
+uint32_t arm64_br(Arm64Reg rn);
+uint32_t arm64_blr(Arm64Reg rn);
+uint32_t arm64_ret(Arm64Reg rn); // rn=30 for normal return
 uint32_t arm64_bcond(Arm64Cond cond, int32_t imm19);
-uint32_t arm64_cbz(int sf, int rt, int32_t imm19);
-uint32_t arm64_cbnz(int sf, int rt, int32_t imm19);
-uint32_t arm64_tbz(int rt, int imm6, int32_t imm14);
-uint32_t arm64_tbnz(int rt, int imm6, int32_t imm14);
+uint32_t arm64_cbz(int sf, Arm64Reg rt, int32_t imm19);
+uint32_t arm64_cbnz(int sf, Arm64Reg rt, int32_t imm19);
+uint32_t arm64_tbz(Arm64Reg rt, int imm6, int32_t imm14);
+uint32_t arm64_tbnz(Arm64Reg rt, int imm6, int32_t imm14);
 
 // ---------------------------------------------------------------------------
 // System / Misc
@@ -228,30 +228,30 @@ uint32_t arm64_nop(void);
 uint32_t arm64_dmb(int opt); // opt=0xb=ish
 uint32_t arm64_dsb(int opt);
 uint32_t arm64_isb(void);
-uint32_t arm64_prfm_imm(int prfop, int rn, uint32_t uimm);
+uint32_t arm64_prfm_imm(int prfop, Arm64Reg rn, uint32_t uimm);
 
 // ---------------------------------------------------------------------------
 // FP / SIMD
 // ---------------------------------------------------------------------------
-uint32_t arm64_fmov_f2i(int sf, int rd, int rn);
-uint32_t arm64_fmov_i2f(int sf, int rd, int rn);
-uint32_t arm64_fmov_imm(int ftype, int rd, uint8_t imm8);
-uint32_t arm64_fadd(int ftype, int rd, int rn, int rm);
-uint32_t arm64_fsub(int ftype, int rd, int rn, int rm);
-uint32_t arm64_fmul(int ftype, int rd, int rn, int rm);
-uint32_t arm64_fdiv(int ftype, int rd, int rn, int rm);
-uint32_t arm64_fneg(int ftype, int rd, int rn);
-uint32_t arm64_fabs(int ftype, int rd, int rn);
-uint32_t arm64_fcmp(int ftype, int rn, int rm);
-uint32_t arm64_fcvt(int opc, int ftype, int rd, int rn); // ftype→opc conversion
-uint32_t arm64_scvtf(int sf, int ftype, int rd, int rn);
-uint32_t arm64_ucvtf(int sf, int ftype, int rd, int rn);
-uint32_t arm64_fcvtzs(int sf, int ftype, int rd, int rn);
-uint32_t arm64_fcvtzu(int sf, int ftype, int rd, int rn);
-uint32_t arm64_ldr_fp(int opc, int rt, int rn, uint32_t uimm);
-uint32_t arm64_str_fp(int opc, int rt, int rn, uint32_t uimm);
-uint32_t arm64_ldp_fp(int opc, int rt1, int rt2, int rn, int32_t imm7, bool pre, bool post);
-uint32_t arm64_stp_fp(int opc, int rt1, int rt2, int rn, int32_t imm7, bool pre, bool post);
+uint32_t arm64_fmov_f2i(int sf, Arm64Reg rd, Arm64Reg rn);
+uint32_t arm64_fmov_i2f(int sf, Arm64Reg rd, Arm64Reg rn);
+uint32_t arm64_fmov_imm(int ftype, Arm64Reg rd, uint8_t imm8);
+uint32_t arm64_fadd(int ftype, Arm64Reg rd, Arm64Reg rn, Arm64Reg rm);
+uint32_t arm64_fsub(int ftype, Arm64Reg rd, Arm64Reg rn, Arm64Reg rm);
+uint32_t arm64_fmul(int ftype, Arm64Reg rd, Arm64Reg rn, Arm64Reg rm);
+uint32_t arm64_fdiv(int ftype, Arm64Reg rd, Arm64Reg rn, Arm64Reg rm);
+uint32_t arm64_fneg(int ftype, Arm64Reg rd, Arm64Reg rn);
+uint32_t arm64_fabs(int ftype, Arm64Reg rd, Arm64Reg rn);
+uint32_t arm64_fcmp(int ftype, Arm64Reg rn, Arm64Reg rm);
+uint32_t arm64_fcvt(int opc, int ftype, Arm64Reg rd, Arm64Reg rn); // ftype→opc conversion
+uint32_t arm64_scvtf(int sf, int ftype, Arm64Reg rd, Arm64Reg rn);
+uint32_t arm64_ucvtf(int sf, int ftype, Arm64Reg rd, Arm64Reg rn);
+uint32_t arm64_fcvtzs(int sf, int ftype, Arm64Reg rd, Arm64Reg rn);
+uint32_t arm64_fcvtzu(int sf, int ftype, Arm64Reg rd, Arm64Reg rn);
+uint32_t arm64_ldr_fp(int opc, Arm64Reg rt, Arm64Reg rn, uint32_t uimm);
+uint32_t arm64_str_fp(int opc, Arm64Reg rt, Arm64Reg rn, uint32_t uimm);
+uint32_t arm64_ldp_fp(int opc, Arm64Reg rt1, Arm64Reg rt2, Arm64Reg rn, int32_t imm7, bool pre, bool post);
+uint32_t arm64_stp_fp(int opc, Arm64Reg rt1, Arm64Reg rt2, Arm64Reg rn, int32_t imm7, bool pre, bool post);
 
 // Helpers to build encode-immediate field from N/immr/imms bits
 uint64_t arm64_encode_logic_imm(int sf, uint64_t val, int *N, int *immr, int *imms);

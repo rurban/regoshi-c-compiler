@@ -100,27 +100,27 @@ static inline X86Mem x86_mem_idx(X86Reg base, X86Reg idx, int scale, int64_t dis
 // ---------------------------------------------------------------------------
 void x86_mov_rr(SecBuf *s, int size, X86Reg dst, X86Reg src);
 void x86_mov_ri(SecBuf *s, int size, X86Reg dst, int64_t imm);
-void x86_mov_rm(SecBuf *s, int size, X86Reg dst, X86Mem src);
-void x86_mov_mr(SecBuf *s, int size, X86Mem dst, X86Reg src);
-void x86_mov_mi(SecBuf *s, int size, X86Mem dst, int32_t imm);
-void x86_or_mi(SecBuf *s, int size, X86Mem dst, int32_t imm);
-void x86_cmp_mi(SecBuf *s, int size, X86Mem dst, int32_t imm);
-void x86_add_mi(SecBuf *s, int size, X86Mem dst, int32_t imm);
+void x86_mov_rm(SecBuf *s, int size, X86Reg dst, X86Mem srcm);
+void x86_mov_mr(SecBuf *s, int size, X86Mem dstm, X86Reg src);
+void x86_mov_mi(SecBuf *s, int size, X86Mem dstm, int32_t imm);
+void x86_or_mi(SecBuf *s, int size, X86Mem dstm, int32_t imm);
+void x86_cmp_mi(SecBuf *s, int size, X86Mem dstm, int32_t imm);
+void x86_add_mi(SecBuf *s, int size, X86Mem dstm, int32_t imm);
 void x86_movabs(SecBuf *s, X86Reg dst, uint64_t imm64); // 64-bit immediate
 void x86_movsx(SecBuf *s, int dst_sz, int src_sz, X86Reg dst, X86Reg src);
 void x86_movzx(SecBuf *s, int dst_sz, int src_sz, X86Reg dst, X86Reg src);
-void x86_movsx_rm(SecBuf *s, int dst_sz, int src_sz, X86Reg dst, X86Mem src);
-void x86_movzx_rm(SecBuf *s, int dst_sz, int src_sz, X86Reg dst, X86Mem src);
+void x86_movsx_rm(SecBuf *s, int dst_sz, int src_sz, X86Reg dst, X86Mem srcm);
+void x86_movzx_rm(SecBuf *s, int dst_sz, int src_sz, X86Reg dst, X86Mem srcm);
 
 void x86_lea(SecBuf *s, int size, X86Reg dst, X86Mem src);
 
 // Arithmetic
 void x86_add_rr(SecBuf *s, int size, X86Reg dst, X86Reg src);
 void x86_add_ri(SecBuf *s, int size, X86Reg dst, int32_t imm);
-void x86_add_rm(SecBuf *s, int size, X86Reg dst, X86Mem src);
+void x86_add_rm(SecBuf *s, int size, X86Reg dst, X86Mem srcm);
 void x86_sub_rr(SecBuf *s, int size, X86Reg dst, X86Reg src);
 void x86_sub_ri(SecBuf *s, int size, X86Reg dst, int32_t imm);
-void x86_sub_rm(SecBuf *s, int size, X86Reg dst, X86Mem src);
+void x86_sub_rm(SecBuf *s, int size, X86Reg dst, X86Mem srcm);
 void x86_imul_rr(SecBuf *s, int size, X86Reg dst, X86Reg src);
 void x86_imul_rri(SecBuf *s, int size, X86Reg dst, X86Reg src, int32_t imm);
 void x86_imul_r(SecBuf *s, int size, X86Reg src); // RDX:RAX = RAX*src
@@ -136,13 +136,13 @@ void x86_cqo(SecBuf *s); // sign-extend RAX to RDX:RAX
 // Logical
 void x86_and_rr(SecBuf *s, int size, X86Reg dst, X86Reg src);
 void x86_and_ri(SecBuf *s, int size, X86Reg dst, int32_t imm);
-void x86_and_rm(SecBuf *s, int size, X86Reg dst, X86Mem src);
+void x86_and_rm(SecBuf *s, int size, X86Reg dst, X86Mem srcm);
 void x86_or_rr(SecBuf *s, int size, X86Reg dst, X86Reg src);
 void x86_or_ri(SecBuf *s, int size, X86Reg dst, int32_t imm);
-void x86_or_rm(SecBuf *s, int size, X86Reg dst, X86Mem src);
+void x86_or_rm(SecBuf *s, int size, X86Reg dst, X86Mem srcm);
 void x86_xor_rr(SecBuf *s, int size, X86Reg dst, X86Reg src);
 void x86_xor_ri(SecBuf *s, int size, X86Reg dst, int32_t imm);
-void x86_xor_rm(SecBuf *s, int size, X86Reg dst, X86Mem src);
+void x86_xor_rm(SecBuf *s, int size, X86Reg dst, X86Mem srcm);
 
 // Shifts
 void x86_shl_ri(SecBuf *s, int size, X86Reg r, uint8_t imm);
@@ -157,8 +157,8 @@ void x86_rol_ri(SecBuf *s, int size, X86Reg r, uint8_t imm);
 // Compare / test
 void x86_cmp_rr(SecBuf *s, int size, X86Reg a, X86Reg b);
 void x86_cmp_ri(SecBuf *s, int size, X86Reg a, int32_t imm);
-void x86_cmp_rm(SecBuf *s, int size, X86Reg a, X86Mem b);
-void x86_cmp_mr(SecBuf *s, int size, X86Mem a, X86Reg b);
+void x86_cmp_rm(SecBuf *s, int size, X86Reg a, X86Mem bm);
+void x86_cmp_mr(SecBuf *s, int size, X86Mem am, X86Reg b);
 void x86_test_rr(SecBuf *s, int size, X86Reg a, X86Reg b);
 void x86_test_ri(SecBuf *s, int size, X86Reg a, int32_t imm);
 
@@ -206,11 +206,11 @@ void x86_cpuid(SecBuf *s);
 
 // SSE / FP
 void x86_movsd_rr(SecBuf *s, X86XmmReg dst, X86XmmReg src);
-void x86_movsd_rm(SecBuf *s, X86XmmReg dst, X86Mem src);
-void x86_movsd_mr(SecBuf *s, X86Mem dst, X86XmmReg src);
+void x86_movsd_rm(SecBuf *s, X86XmmReg dst, X86Mem srcm);
+void x86_movsd_mr(SecBuf *s, X86Mem dstm, X86XmmReg src);
 void x86_movss_rr(SecBuf *s, X86XmmReg dst, X86XmmReg src);
 void x86_movss_rm(SecBuf *s, X86XmmReg dst, X86Mem src);
-void x86_movss_mr(SecBuf *s, X86Mem dst, X86XmmReg src);
+void x86_movss_mr(SecBuf *s, X86Mem dstm, X86XmmReg src);
 void x86_addsd(SecBuf *s, X86XmmReg dst, X86XmmReg src);
 void x86_subsd(SecBuf *s, X86XmmReg dst, X86XmmReg src);
 void x86_mulsd(SecBuf *s, X86XmmReg dst, X86XmmReg src);
@@ -233,11 +233,11 @@ void x86_cvtss2sd(SecBuf *s, X86XmmReg dst, X86XmmReg src);
 void x86_xorpd(SecBuf *s, X86XmmReg dst, X86XmmReg src);
 void x86_xorps(SecBuf *s, X86XmmReg dst, X86XmmReg src);
 void x86_movaps(SecBuf *s, X86XmmReg dst, X86XmmReg src);
-void x86_movaps_mr(SecBuf *s, X86Mem dst, X86XmmReg src);
+void x86_movaps_mr(SecBuf *s, X86Mem dstm, X86XmmReg src);
 void x86_pxor(SecBuf *s, X86XmmReg dst, X86XmmReg src);
 
 // x87 (legacy, for long double)
-void x86_fldl_m(SecBuf *s, X86Mem src);
-void x86_fstpt_m(SecBuf *s, X86Mem dst);
+void x86_fldl_m(SecBuf *s, X86Mem srcm);
+void x86_fstpt_m(SecBuf *s, X86Mem dstm);
 
 #endif // X86_ENC_H
