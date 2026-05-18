@@ -1793,7 +1793,7 @@ static int gen_funcall(Node *node, int hidden_ret_reg) {
         } else if (arg_sizes[i] == 1 || arg_sizes[i] == 2) {
             asm_mov_phy_reg(cg_sec, arg_gp_idx[i], arg_regs[i], 1); // mov x{gp_idx}, x{arg_reg}
         } else if (arg_sizes[i] == 4) {
-            asm_mov_phy_reg(cg_sec, arg_gp_idx[i], arg_regs[i], 0); // mov w{gp_idx}, w{arg_reg}
+            asm_mov_phy_reg(cg_sec, arg_gp_idx[i], arg_regs[i], 1); // mov x{gp_idx}, x{arg_reg}
         } else {
             asm_mov_phy_reg(cg_sec, arg_gp_idx[i], arg_regs[i], 1); // mov x{gp_idx}, x{arg_reg}
         }

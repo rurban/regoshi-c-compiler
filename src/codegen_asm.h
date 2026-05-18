@@ -389,7 +389,7 @@ static size_t asm_mov_retval(SecBuf *s, int r, int size) {
     size_t off = s->len;
 #ifdef ARCH_ARM64
     int sf = (size == 8) ? 1 : 0;
-    secbuf_emit32le(s, arm64_orr_reg(sf, CG_ARM_REG(r), ARM64_XZR, 0, ARM64_LSL, 0)); // mov x{r}, x0
+    secbuf_emit32le(s, arm64_orr_reg(1, CG_ARM_REG(r), ARM64_XZR, 0, ARM64_LSL, 0)); // mov x{r}, x0
 #else
     x86_mov_rr(s, size, CG_X86_REG(r), X86_RAX); // mov %rax/%eax, rr
 #endif
@@ -400,7 +400,7 @@ static size_t asm_mov_reg_to_retval(SecBuf *s, int r, int size) {
     size_t off = s->len;
 #ifdef ARCH_ARM64
     int sf = (size == 8) ? 1 : 0;
-    secbuf_emit32le(s, arm64_orr_reg(sf, 0, ARM64_XZR, CG_ARM_REG(r), ARM64_LSL, 0)); // mov x0, x{r}
+    secbuf_emit32le(s, arm64_orr_reg(1, 0, ARM64_XZR, CG_ARM_REG(r), ARM64_LSL, 0)); // mov x0, x{r}
 #else
     x86_mov_rr(s, size, X86_RAX, CG_X86_REG(r)); // mov rr, %rax
 #endif
@@ -409,15 +409,15 @@ static size_t asm_mov_reg_to_retval(SecBuf *s, int r, int size) {
 static size_t asm_mov_imm(SecBuf *s, int r, int size, int64_t imm) {
     size_t off = s->len;
 #ifdef ARCH_ARM64
-    bool is_w = (size <= 4);
-    uint64_t uval = is_w ? (uint64_t)(uint32_t)imm : (uint64_t)imm;
+    bool is_w = false; // always use 64-bit (x-reg) to match original printf codegen
+    uint64_t uval = (uint64_t)imm;
     int rd = CG_ARM_REG(r);
-    int sf = is_w ? 0 : 1;
+    int sf = 1;
     secbuf_emit32le(s, arm64_movz(sf, rd, (uint16_t)(uval & 0xffff), 0));
     size_t count = 1;
     uint64_t v = uval >> 16;
     int shift = 16;
-    int max_shift = is_w ? 16 : 48;
+    int max_shift = 48;
     while (v && shift <= max_shift) {
         secbuf_emit32le(s, arm64_movk(sf, rd, v & 0xffff, shift));
         v >>= 16;
