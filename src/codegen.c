@@ -3563,14 +3563,14 @@ static int gen(Node *node) {
 #else
                     asm_mov_imm(cg_sec, 1, 8, copy_len); // movq $copy_len, %%rcx (via r1)
                     cg_def_label(format(".L.strcpy.%d", c));
-                    asm_cmp_zero(cg_sec, 1, 8); // cmpq $0, %%rcx
+                    x86_cmp_ri(cg_sec, 8, X86_RCX, 0); // cmpq $0, %rcx
                     {
                         size_t o = asm_jcc_label(cg_sec, X86_E); // je .L.strcpy_end.c
                         asm_fixup_add(cg_sec, o, format(".L.strcpy_end.%d", c), 1);
                     }
                     asm_movb_rbp_r10_al(cg_sec, 0); // movb -1(src,%%rcx), %%al -- approximate: use r1 as rcx
                     asm_movb_al_rbp_r10(cg_sec, 0); // movb %%al, -1(dst,%%rcx)
-                    asm_dec(cg_sec, 1, 8); // subq $1, %%rcx
+                    x86_dec_r(cg_sec, 8, X86_RCX); // subq $1, %rcx
                     {
                         size_t o = asm_jmp_label(cg_sec); // jmp .L.strcpy.c
                         asm_fixup_add(cg_sec, o, format(".L.strcpy.%d", c), 0);
@@ -3581,13 +3581,13 @@ static int gen(Node *node) {
                     asm_mov_imm(cg_sec, 1, 8, lhs_size - copy_len); // movq $count, %%rcx
                     int c2 = ++rcc_label_count;
                     cg_def_label(format(".L.strzero.%d", c2));
-                    asm_cmp_zero(cg_sec, 1, 8); // cmpq $0, %%rcx
+                    x86_cmp_ri(cg_sec, 8, X86_RCX, 0); // cmpq $0, %rcx
                     {
                         size_t o = asm_jcc_label(cg_sec, X86_E); // je .L.strzero_end.c2
                         asm_fixup_add(cg_sec, o, format(".L.strzero_end.%d", c2), 1);
                     }
                     asm_movb_al_rbp_r10(cg_sec, copy_len); // movb $0, copy_len-1(dst,%%rcx) -- approximate
-                    asm_dec(cg_sec, 1, 8); // subq $1, %%rcx
+                    x86_dec_r(cg_sec, 8, X86_RCX); // subq $1, %rcx
                     {
                         size_t o = asm_jmp_label(cg_sec); // jmp .L.strzero.c2
                         asm_fixup_add(cg_sec, o, format(".L.strzero.%d", c2), 0);
@@ -3650,7 +3650,7 @@ static int gen(Node *node) {
             else
                 asm_mov_imm(cg_sec, 1, 8, node->lhs->ty->size); // mov $node->lhs->ty->size, r1
             cg_def_label(format(".L.copy.%d", c)); // strb w16, [%s, x9]
-            asm_cmp_zero(cg_sec, 1, 8); // cmp $0, r1
+            x86_cmp_ri(cg_sec, 8, X86_RCX, 0); // cmp $0, rcx
             size_t cj1 = asm_jcc_label(cg_sec, X86_E); // jcc label
             asm_fixup_add(cg_sec, cj1, format(".L.copy_end.%d", c), 1); // fixup add for forward branch
             {
@@ -3659,7 +3659,7 @@ static int gen(Node *node) {
                 x86_mov_rm(cg_sec, 1, X86_RAX, msrc); // cmpq $0, %%rcx
                 x86_mov_mr(cg_sec, 1, mdst, X86_RAX); // je .L.copy_end.%d
             }
-            asm_dec(cg_sec, 1, 8); // dec r1
+            x86_dec_r(cg_sec, 8, X86_RCX); // dec rcx
             size_t cj2 = asm_jmp_label(cg_sec); // movb %%al, -1(%s,%%rcx)
             asm_fixup_add(cg_sec, cj2, format(".L.copy.%d", c), 0); // subq $1, %%rcx
             cg_def_label(format(".L.copy_end.%d", c)); // jmp .L.copy.%d
@@ -4090,11 +4090,11 @@ static int gen(Node *node) {
 #else
         asm_mov_imm(cg_sec, 1, 8, var->ty->size); // mov $var->ty->size, r1
         cg_def_label(format(".L.zero.%d", c)); // movq $%d, %%rcx
-        asm_cmp_zero(cg_sec, 1, 8); // cmp $0, r1
+        x86_cmp_ri(cg_sec, 8, X86_RCX, 0); // cmp $0, rcx
         size_t zj1 = asm_jcc_label(cg_sec, X86_E); // cmpq $0, %%rcx
         asm_fixup_add(cg_sec, zj1, format(".L.zero_end.%d", c), 1); // fixup add for forward branch
         x86_mov_mi(cg_sec, 1, x86_mem_idx(X86_RBP, CG_X86_REG(1), 1, -var->offset - 1), 0); // movb $0, -%d-1(%%rbp,%%rcx)
-        asm_dec(cg_sec, 1, 8); // subq $1, %%rcx
+        x86_dec_r(cg_sec, 8, X86_RCX); // subq $1, %rcx
         size_t zj2 = asm_jmp_label(cg_sec); // jmp .L.zero.%d
         asm_fixup_add(cg_sec, zj2, format(".L.zero.%d", c), 0); // fixup label
         cg_def_label(format(".L.zero_end.%d", c)); // sub x11, %s, #%d
@@ -4717,14 +4717,14 @@ static int gen(Node *node) {
                 asm_mov_rbp_phyreg(cg_sec, X86_R11, 8, retbuf_offset); // mov [rbp-retbuf_offset], X86_R11
                 asm_mov_imm(cg_sec, 1, 8, node->lhs->ty->size); // sub x9, x9, #1
                 cg_def_label(format(".L.retcopy.%d", c));
-                asm_cmp_zero(cg_sec, 1, 8); // cmp $0, r1
+                x86_cmp_ri(cg_sec, 8, X86_RCX, 0); // cmp $0, rcx
                 {
                     size_t o = asm_jcc_label(cg_sec, X86_E); // strb w16, [x11, x9]
                     asm_fixup_add(cg_sec, o, format(".L.retcopy_end.%d", c), 1);
                 }
                 (void)0 /* FIXME: sized mov */;
                 (void)0 /* FIXME: sized mov */;
-                asm_dec(cg_sec, 1, 8); // dec r1
+                x86_dec_r(cg_sec, 8, X86_RCX); // dec rcx
                 {
                     size_t o = asm_jmp_label(cg_sec); // .L.retcopy_end.%d:
                     asm_fixup_add(cg_sec, o, format(".L.retcopy.%d", c), 0);
@@ -7880,15 +7880,15 @@ struct ObjFile *codegen(Program *prog) {
                 // Structs > 8 bytes are passed by pointer; copy to local stack
                 if ((var->ty->kind == TY_STRUCT || var->ty->kind == TY_UNION) && var->ty->size > 8) {
                     int c = ++rcc_label_count;
-                    asm_mov_preg_r11(cg_sec, preg); // movq preg, %%r11
+                    asm_mov_preg_r11(cg_sec, cg_x86_paramreg[param_index]); // movq preg, %%r11
                     x86_mov_ri(cg_sec, 8, X86_R10, var->ty->size); // movq $size, %%r10
                     cg_def_label(format(".L.param.%d", c));
-                    asm_cmp_zero(cg_sec, 10, 8); // cmpq $0, %%r10
+                    x86_cmp_ri(cg_sec, 8, X86_R10, 0); // cmpq $0, %%r10
                     size_t jze1 = asm_jcc_label(cg_sec, X86_E);
                     asm_fixup_add(cg_sec, jze1, format(".L.param_end.%d", c), 0);
                     asm_movb_r11_r10_al(cg_sec, -1); // movb -1(%%r11,%%r10), %%al
                     asm_movb_al_rbp_r10(cg_sec, var->offset); // movb %%al, -(off)-1(%%rbp,%%r10)
-                    asm_dec(cg_sec, 10, 8); // subq $1, %%r10
+                    x86_dec_r(cg_sec, 8, X86_R10); // subq $1, %%r10
                     size_t jmp1 = asm_jmp_label(cg_sec);
                     asm_fixup_add(cg_sec, jmp1, format(".L.param.%d", c), 0);
                     cg_def_label(format(".L.param_end.%d", c));
@@ -7943,15 +7943,15 @@ struct ObjFile *codegen(Program *prog) {
                                                                       : 8;
                 if ((var->ty->kind == TY_STRUCT || var->ty->kind == TY_UNION) && var->ty->size > 8) {
                     int c = ++rcc_label_count;
-                    asm_mov_preg_r11(cg_sec, preg); // movq preg, %%r11
+                    asm_mov_preg_r11(cg_sec, cg_x86_paramreg[param_index]); // movq preg, %r11
                     x86_mov_ri(cg_sec, 8, X86_R10, var->ty->size); // movq $size, %%r10
                     cg_def_label(format(".L.param.%d", c));
-                    asm_cmp_zero(cg_sec, 10, 8); // cmpq $0, %%r10
+                    x86_cmp_ri(cg_sec, 8, X86_R10, 0); // cmpq $0, %r10
                     size_t jze2 = asm_jcc_label(cg_sec, X86_E);
                     asm_fixup_add(cg_sec, jze2, format(".L.param_end.%d", c), 0);
                     asm_movb_r11_r10_al(cg_sec, -1); // movb -1(%%r11,%%r10), %%al
                     asm_movb_al_rbp_r10(cg_sec, var->offset); // movb %%al, -(off)-1(%%rbp,%%r10)
-                    asm_dec(cg_sec, 10, 8); // subq $1, %%r10
+                    x86_dec_r(cg_sec, 8, X86_R10); // subq $1, %r10
                     size_t jmp2 = asm_jmp_label(cg_sec);
                     asm_fixup_add(cg_sec, jmp2, format(".L.param.%d", c), 0);
                     cg_def_label(format(".L.param_end.%d", c));
@@ -7965,12 +7965,12 @@ struct ObjFile *codegen(Program *prog) {
                     int stack_off2 = 16 + stack_param_index * 8;
                     x86_mov_ri(cg_sec, 8, X86_R10, var->ty->size); // movq $size, %%r10
                     cg_def_label(format(".L.param.%d", c));
-                    asm_cmp_zero(cg_sec, 10, 8); // cmpq $0, %%r10
+                    x86_cmp_ri(cg_sec, 8, X86_R10, 0); // cmpq $0, %r10
                     size_t jze3 = asm_jcc_label(cg_sec, X86_E);
                     asm_fixup_add(cg_sec, jze3, format(".L.param_end.%d", c), 0);
                     asm_movb_rbp_r10_al(cg_sec, stack_off2); // movb stack_off-1(%%rbp,%%r10), %%al
                     asm_movb_al_rbp_r10(cg_sec, var->offset); // movb %%al, -(off)-1(%%rbp,%%r10)
-                    asm_dec(cg_sec, 10, 8); // subq $1, %%r10
+                    x86_dec_r(cg_sec, 8, X86_R10); // subq $1, %r10
                     size_t jmp3 = asm_jmp_label(cg_sec);
                     asm_fixup_add(cg_sec, jmp3, format(".L.param.%d", c), 0);
                     cg_def_label(format(".L.param_end.%d", c));
