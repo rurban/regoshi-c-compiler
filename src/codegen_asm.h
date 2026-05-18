@@ -28,7 +28,7 @@ static const Arm64Reg cg_arm_reg[12] = {ARM64_X10, ARM64_X11, ARM64_X12,
                                         ARM64_X19, ARM64_X20, ARM64_X21,
                                         ARM64_X22, ARM64_X23, ARM64_X24};
 // convert VReg => Arm64Reg
-#define CG_ARM_REG(r)  (((r) < 0 || (r) >= 12) ? (abort(),0) : cg_arm_reg[r])
+#define CG_ARM_REG(r)  ((Arm64Reg)(((r) >= 0 && (r) < 12) ? cg_arm_reg[r] : (r)))
 #define CG_ARM_FP      ARM64_X29
 #define CG_ARM_LR      ARM64_X30
 #define CG_ARM_SP      ARM64_X31

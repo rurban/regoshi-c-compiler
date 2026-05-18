@@ -1686,14 +1686,7 @@ static int gen_funcall(Node *node, int hidden_ret_reg) {
                 asm_add_reg_fp_imm(cg_sec, temp_ret_reg, -temp_ret_slot); // add temp_ret_reg, x29, #-temp_ret_slot
             else {
                 int v = temp_ret_slot;
-                asm_mov_imm(cg_sec, ARM64_X16, 8, v & 0xffff); // mov x16, #v
-                v >>= 16;
-                int s = 16;
-                while (v) {
-                    asm_movk(cg_sec, ARM64_X16, 1, (uint16_t)(v & 0xffff), s); // movk x16, #v, lsl #s
-                    v >>= 16;
-                    s += 16;
-                }
+                emit_mov_imm64(ARM64_X16, (uint64_t)v); // mov x16, #v
                 asm_sub_reg_fp_reg(cg_sec, temp_ret_reg, ARM64_X16, 8); // sub temp_ret_reg, x29, x16
             }
             hidden_ret_reg = temp_ret_reg;
@@ -8122,8 +8115,8 @@ struct ObjFile *codegen(Program *prog) {
             asm_stp_q_sp(cg_sec, 4, 5, 128); // stp q4, q5, [sp, #128]
             asm_stp_q_sp(cg_sec, 6, 7, 160); // stp q6, q7, [sp, #160]
             // Save original sp so va_start can find the reg_save_area even after alloca
-            asm_mov_reg_reg(cg_sec, ARM64_X16, CG_ARM_SP, 8); // mov x16, sp
-            asm_stur_fp(cg_sec, ARM64_X16, 8); // stur x16, [x29, #-8]
+            secbuf_emit32le(cg_sec, arm64_add_imm(1, ARM64_X16, ARM64_SP, 0, 0)); // mov x16, sp
+            secbuf_emit32le(cg_sec, arm64_stur(3, ARM64_X16, ARM64_X29, -8)); // stur x16, [x29, #-8]
         }
 
         // Save callee-saved regs
@@ -8148,15 +8141,8 @@ struct ObjFile *codegen(Program *prog) {
                 asm_stur_fp(cg_sec, 8, retbuf_offset); // stur x8, [x29, #-retbuf_offset]
             else {
                 int v = retbuf_offset;
-                asm_mov_imm(cg_sec, ARM64_X16, 8, v & 0xffff); // mov x16, #v_lo
-                v >>= 16;
-                int s = 16;
-                while (v) {
-                    asm_movk(cg_sec, ARM64_X16, 1, (uint16_t)(v & 0xffff), s); // movk x16, #v_hi, lsl #s
-                    v >>= 16;
-                    s += 16;
-                }
-                asm_sub_reg3(cg_sec, ARM64_X16, 29, ARM64_X16, 8); // sub x16, x29, x16
+                emit_mov_imm64(ARM64_X16, (uint64_t)v); // mov x16, #v
+                secbuf_emit32le(cg_sec, arm64_sub_reg(1, ARM64_X16, ARM64_X29, ARM64_X16, ARM64_LSL, 0)); // sub x16, x29, x16
                 asm_str_reg_off(cg_sec, 8, ARM64_X16, 8, 0); // str x8, [x16]
             }
         }
@@ -8179,14 +8165,7 @@ struct ObjFile *codegen(Program *prog) {
                         asm_sub_x16_fp_imm(cg_sec, var->offset); // sub x16, x29, #var->offset
                     else {
                         int v = var->offset;
-                        asm_mov_imm(cg_sec, ARM64_X16, 8, v & 0xffff); // mov x16, #v_lo
-                        v >>= 16;
-                        int s = 16;
-                        while (v) {
-                            asm_movk(cg_sec, ARM64_X16, 1, (uint16_t)(v & 0xffff), s); // movk x16, #v_hi, lsl #s
-                            v >>= 16;
-                            s += 16;
-                        }
+                        emit_mov_imm64(ARM64_X16, (uint64_t)v); // mov x16, #v
                         asm_sub_x16_fp_x16(cg_sec); // sub x16, x29, x16
                     }
                     for (int j = 0; j < hfa_count; j++) {
@@ -8213,22 +8192,14 @@ struct ObjFile *codegen(Program *prog) {
                 } else if (gp_param < 8) {
                     if ((var->ty->kind == TY_STRUCT || var->ty->kind == TY_UNION) && var->ty->size > 8) {
                         int c = ++rcc_label_count;
-                        asm_mov_reg_reg(cg_sec, ARM64_X16, gp_param, 8); // mov x16, x{gp_param}
+                        secbuf_emit32le(cg_sec, arm64_add_imm(1, ARM64_X16, CG_ARM_REG(gp_param), 0, 0)); // mov x16, x{gp_param}
                         if (var->offset <= 4095)
-                            asm_sub_reg_fp_imm(cg_sec, ARM64_X17, var->offset); // sub x17, x29, #var->offset
+                            secbuf_emit32le(cg_sec, arm64_sub_imm(1, ARM64_X17, ARM64_X29, var->offset, 0)); // sub x17, x29, #var->offset
                         else {
-                            int v = var->offset;
-                            asm_mov_imm(cg_sec, ARM64_X17, 8, v & 0xffff); // mov x17, #v_lo
-                            v >>= 16;
-                            int s = 16;
-                            while (v) {
-                                asm_movk(cg_sec, ARM64_X17, 1, (uint16_t)(v & 0xffff), s); // movk x17, #v_hi, lsl #s
-                                v >>= 16;
-                                s += 16;
-                            }
-                            asm_sub_reg3(cg_sec, ARM64_X17, ARM64_X29, ARM64_X17, 8); // sub x17, x29, x17
+                            emit_mov_imm64(ARM64_X17, (uint64_t)var->offset); // mov x17, #var->offset
+                            secbuf_emit32le(cg_sec, arm64_sub_reg(1, ARM64_X17, ARM64_X29, ARM64_X17, ARM64_LSL, 0)); // sub x17, x29, x17
                         }
-                        asm_mov_imm(cg_sec, ARM64_X9, 8, var->ty->size); // mov x9, #var->ty->size
+                        emit_mov_imm64(ARM64_X9, (uint64_t)var->ty->size); // mov x9, #var->ty->size
                         cg_def_label(format(".L.param_copy.%d", c));
                         secbuf_emit32le(cg_sec, arm64_subs_imm(1, ARM64_XZR, ARM64_X9, 0, 0)); // cmp x9, #0
                         size_t cj = asm_jcc_label(cg_sec, ARM64_EQ); // beq .L.param_copy_end.%d
@@ -8236,8 +8207,8 @@ struct ObjFile *codegen(Program *prog) {
                         secbuf_emit32le(cg_sec, arm64_sub_imm(1, ARM64_X9, ARM64_X9, 1, 0)); // sub x9, x9, #1
                         asm_ldur_phy(cg_sec, ARM64_X18, ARM64_X16, 0, 0); // ldurb w18, [x16]
                         asm_stur_phy(cg_sec, ARM64_X18, ARM64_X17, 0, 0); // sturb w18, [x17]
-                        asm_add_imm(cg_sec, ARM64_X16, 8, 1); // add x16, x16, #1
-                        asm_add_imm(cg_sec, ARM64_X17, 8, 1); // add x17, x17, #1
+                        secbuf_emit32le(cg_sec, arm64_add_imm(1, ARM64_X16, ARM64_X16, 1, 0)); // add x16, x16, #1
+                        secbuf_emit32le(cg_sec, arm64_add_imm(1, ARM64_X17, ARM64_X17, 1, 0)); // add x17, x17, #1
                         size_t cj2 = asm_jmp_label(cg_sec); // b .L.param_copy.%d
                         asm_fixup_add(cg_sec, cj2, format(".L.param_copy.%d", c), 0);
                         cg_def_label(format(".L.param_copy_end.%d", c));
@@ -8318,14 +8289,7 @@ struct ObjFile *codegen(Program *prog) {
                 asm_sub_imm(cg_sec, CG_ARM_SP, 8, frame_size); // sub sp, sp, #frame_size
             else {
                 int fs = frame_size;
-                asm_mov_imm(cg_sec, ARM64_X16, 8, fs & 0xffff); // mov x16, #fs_lo
-                fs >>= 16;
-                int s = 16;
-                while (fs) {
-                    asm_movk(cg_sec, ARM64_X16, 1, (uint16_t)(fs & 0xffff), s); // movk x16, #fs_hi, lsl #s
-                    fs >>= 16;
-                    s += 16;
-                }
+                emit_mov_imm64(ARM64_X16, (uint64_t)frame_size); // mov x16, #frame_size
                 asm_sub_reg_reg(cg_sec, CG_ARM_SP, ARM64_X16, 8); // sub sp, sp, x16
             }
         }
@@ -8343,14 +8307,7 @@ struct ObjFile *codegen(Program *prog) {
             asm_add_imm(cg_sec, CG_ARM_SP, 8, frame_size); // add sp, sp, #frame_size
         else {
             int fs = frame_size;
-            asm_mov_imm(cg_sec, ARM64_X16, 8, fs & 0xffff); // mov x16, #fs_lo
-            fs >>= 16;
-            int s = 16;
-            while (fs) {
-                asm_movk(cg_sec, ARM64_X16, 1, (uint16_t)(fs & 0xffff), s); // movk x16, #fs_hi, lsl #s
-                fs >>= 16;
-                s += 16;
-            }
+            emit_mov_imm64(ARM64_X16, (uint64_t)frame_size); // mov x16, #frame_size
             asm_add_reg_reg(cg_sec, CG_ARM_SP, ARM64_X16, 8); // add sp, sp, x16
         }
         asm_ldp_fp_lr(cg_sec); // ldp x29, x30, [sp], #16
