@@ -5,8 +5,8 @@ Generated: May 2026
 ## Summary
 
 - **Total**: 154
-- **Passed**: 108
-- **Failed**: 46
+- **Passed**: 109
+- **Failed**: 45
 - **Pass Rate**: 70%
 
 ## Detailed Results
@@ -119,7 +119,7 @@ Generated: May 2026
 | 114_bound_signal            | SKIP         | Skipped                       |
 | 115_bound_setjmp            | SKIP         | Skipped                       |
 | 116_bound_setjmp2           | SKIP         | Skipped                       |
-| 117_builtins                | EXEC_FAIL    | non-zero exit                 |
+| 117_builtins                | PASS         | Output matches                |
 | 118_switch                  | PASS         | Output matches                |
 | 119_random_stuff            | COMPILE_FAIL | rcc returned non-zero         |
 | 120_alias                   | COMPILE_FAIL | rcc returned non-zero         |
